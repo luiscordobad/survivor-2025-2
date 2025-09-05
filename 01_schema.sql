@@ -1,0 +1,4 @@
+-- (igual que antes) Usa este SQL para crear tablas y triggers
+-- Copia el completo desde el canvas anterior si lo necesitas.
+-- Aquí dejamos un recordatorio de ejecutar grant_admin para tu correo:
+-- select public.grant_admin('tu@email');
