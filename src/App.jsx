@@ -9,11 +9,11 @@ const ADMIN_EMAILS = (import.meta.env.VITE_ADMIN_EMAILS || '')
   .split(',').map(s=>s.trim().toLowerCase()).filter(Boolean);
 const isAdminEmail = (email) => ADMIN_EMAILS.includes((email||'').toLowerCase());
 
-// ---------- utilidades compartidas ----------
+// ---------- utilidades ----------
 const logisticP = (spread) => {
   if (spread == null) return null;
-  const k = 0.23; // pendiente simple para convertir spread -> win%
-  const p = 1 / (1 + Math.exp(-(-k * spread))); // spread_home negativo => local favorito
+  const k = 0.23;
+  const p = 1 / (1 + Math.exp(-(-k * spread)));
   return Math.round(p * 100);
 };
 function downloadCSV(filename, rows) {
@@ -146,12 +146,12 @@ export default function App() {
   );
 }
 
-// ---------- AppAuthed (toda la lógica de juego y UI mejorada) ----------
+// ---------- AppAuthed ----------
 function AppAuthed({ session }) {
   const [me, setMe] = useState(null);
   const [week, setWeek] = useState(()=>Number(localStorage.getItem('week'))||1);
   const [games, setGames] = useState([]);
-  const [oddsPairs, setOddsPairs] = useState({}); // { game_id: {last, prev} }
+  const [oddsPairs, setOddsPairs] = useState({});
   const [picks, setPicks] = useState([]);
   const [standings, setStandings] = useState([]);
   const [leaguePicks, setLeaguePicks] = useState([]);
@@ -164,13 +164,12 @@ function AppAuthed({ session }) {
   const [dayFilter, setDayFilter] = useState(localStorage.getItem('dayFilter')||'ALL');
   const [teamQuery, setTeamQuery] = useState(localStorage.getItem('teamQuery')||'');
 
-  // teams (logos y nombres completos)
+  // teams
   const [teamsMap, setTeamsMap] = useState({});
   const loadTeams = async ()=>{
     const { data: ts } = await supabase.from('teams').select('*');
     const map={}; (ts||[]).forEach(t=>{ map[t.id]=t; }); setTeamsMap(map);
   };
-  const teamName = (id)=> teamsMap[id]?.name || id;
   const TeamMini = ({ id })=>{
     const t=teamsMap[id]||{};
     return (
@@ -190,7 +189,6 @@ function AppAuthed({ session }) {
     );
   };
 
-  // data loads
   const loadGames = async (w)=>{
     const { data: gs } = await supabase.from('games').select('*').eq('week',w).order('start_time');
     setGames(gs||[]);
@@ -259,7 +257,6 @@ function AppAuthed({ session }) {
     return mins<=90 && mins>0;
   },[myPickThisWeek,nextKickoffISO]);
 
-  // odds helpers y permisos
   const favFromOdds = (g, last) => {
     if (!last) return { fav:null, basis:null };
     if (last.spread_home != null && last.spread_away != null) {
@@ -293,9 +290,7 @@ function AppAuthed({ session }) {
   };
 
   const popPct = (teamId)=> popularity.find(p=>p.team_id===teamId)?.pct ?? 0;
-  const isDiff = (teamId)=> popPct(teamId) < 15;
 
-  // filtros
   const gamesByDay = useMemo(()=>{
     if (dayFilter==='ALL') return games;
     const map={THU:4,FRI:5,SAT:6,SUN:7,MON:1};
@@ -313,7 +308,6 @@ function AppAuthed({ session }) {
     if (wd===7) return 'Sun'; if (wd===1) return 'MNF'; return '';
   };
 
-  // UI boxes de selección
   const TeamBox = ({ game, teamId, last })=>{
     const disabled = !canPick(game, teamId).ok;
     const selected = myPickThisWeek?.game_id===game.id && myPickThisWeek?.team_id===teamId;
@@ -359,7 +353,6 @@ function AppAuthed({ session }) {
       if (g.neutral_site) return 'Neutral';
       return null;
     })();
-
     return (
       <div>
         <div className="text-sm flex items-center gap-2 flex-wrap">
@@ -412,7 +405,7 @@ function AppAuthed({ session }) {
       <div className="max-w-6xl mx-auto">
         <header className="flex items-center justify-between gap-4 py-3 sticky top-0 bg-gradient-to-b from-slate-50/95 to-white/95 backdrop-blur z-10">
           <div>
-            <h1 className="text-3xl font-extrabold tracking-tight">{import.meta.env.VITE_LEAGUE_NAME || 'Survivor 2025'}</h1>
+            <h1 className="text-3xl font-extrabold tracking-tight">{import.meta.env.VITE_LEAGUE_NAME || '2025'}</h1>
             <p className="text-sm text-gray-600">Hola, <b>{me?.display_name}</b> · Vidas: <span className="inline-block px-2 py-0.5 rounded bg-emerald-100 text-emerald-800">{me?.lives}</span></p>
           </div>
           <button className="text-sm underline hover:text-red-600" onClick={()=>supabase.auth.signOut()}>Salir</button>
@@ -474,7 +467,7 @@ function AppAuthed({ session }) {
                 {top3.map((r,idx)=>(
                   <div key={idx} className="p-2 border rounded bg-white text-sm">
                     <div className="flex items-center justify-between">
-                      <span className="font-medium"><TeamMini id={r.team}/> {teamName(r.team)}</span>
+                      <span className="font-medium"><TeamMini id={r.team}/></span>
                       <span className="text-xs text-gray-500">Score {Math.round(r.score)}</span>
                     </div>
                     <div className="text-xs text-gray-600">Win%: <b>{r.wp}%</b> · Liga: <b>{r.pct}%</b> {r.pct<15 && <span className="ml-1 px-1 rounded bg-indigo-100 text-indigo-800">DIF</span>}</div>
@@ -502,45 +495,22 @@ function AppAuthed({ session }) {
           <div className="space-y-3">
             {gamesFiltered.map(g=>{
               const locked = DateTime.fromISO(g.start_time) <= DateTime.now();
-              const { last, prev } = oddsPairs[g.id] || {};
-              const { fav, basis } = favFromOdds(g, last);
-              const wpHome = logisticP(last?.spread_home);
-              const wpAway = (last?.spread_away!=null) ? logisticP(-last.spread_away) : null;
-              const spreadMoved = prev?.spread_home!=null && last?.spread_home!=null
-                ? (last.spread_home - prev.spread_home) : null;
-              const arrow = spreadMoved==null ? '' : (spreadMoved<0 ? '↑' : (spreadMoved>0 ? '↓' : '→'));
+              const { last } = oddsPairs[g.id] || {};
+              const pctHome = popPct(g.home_team);
+              const pctAway = popPct(g.away_team);
 
               return (
                 <div key={g.id} className={`p-4 border rounded-xl ${locked?'opacity-60':'bg-white'} shadow-sm`}>
-                  {/* Encabezado con nombres completos */}
+                  {/* Encabezado: nombres completos */}
                   <GameHeader g={g} />
 
-                  {/* Odds visibles */}
-                  {last && (
-                    <div className="mt-2 text-xs">
-                      <div className="inline-flex items-center gap-2 px-2 py-1 rounded bg-gray-50 border">
-                        <span className="text-gray-600">Odds:</span>
-                        <span className="font-mono">ML {g.home_team}: {last.ml_home ?? '-'}</span>
-                        <span className="font-mono">ML {g.away_team}: {last.ml_away ?? '-'}</span>
-                        <span className="font-mono">Spread {g.home_team}: {last.spread_home ?? '-'}</span>
-                        {arrow && <span title="Movimiento de spread (home) vs previo">{arrow}</span>}
-                        <span className="font-mono">Total: {last.total ?? '-'}</span>
-                        <span className="text-[11px] text-gray-500">({last.book})</span>
-                      </div>
-                      <div className="mt-1 text-[11px] text-gray-700">
-                        Win% {g.home_team}: <b>{wpHome ?? '-' }%</b> · Win% {g.away_team}: <b>{wpAway ?? '-' }%</b>
-                        {fav && <span className="ml-2 text-[11px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-900">FAVORITO: {fav} ({basis})</span>}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Boxes de selección */}
+                  {/* SOLO boxes para escoger */}
                   <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <TeamBox game={g} teamId={g.home_team} last={last}/>
                     <TeamBox game={g} teamId={g.away_team} last={last}/>
                   </div>
 
-                  {/* marcador simple */}
+                  {/* estado simple */}
                   <div className="mt-2 text-xs">
                     Estado:{' '}
                     <span className={
@@ -548,9 +518,6 @@ function AppAuthed({ session }) {
                       g.status==='final' ? 'text-emerald-700 font-medium' :
                       g.status==='postponed' ? 'text-gray-700 font-medium' : 'text-gray-700'
                     }>{g.status}</span>
-                    {(g.status==='in_progress'||g.status==='final') && (
-                      <span className="ml-2 font-mono">{g.away_team} {g.away_score??'-'} — {g.home_team} {g.home_score??'-'}</span>
-                    )}
                   </div>
                 </div>
               );
@@ -561,7 +528,7 @@ function AppAuthed({ session }) {
 
         {/* Liga: picks + popularidad */}
         <section className="mt-6 grid md:grid-cols-2 gap-4">
-          {/* Picks con LOGO */}
+          {/* Picks de la liga: SOLO logo + abreviación */}
           <div className="p-4 border rounded-2xl bg-white shadow-sm">
             <h2 className="font-semibold">Picks de la liga (W{week})</h2>
             <div className="overflow-x-auto">
@@ -574,7 +541,7 @@ function AppAuthed({ session }) {
                     .map((p,idx)=>(
                       <tr key={idx} className="border-t">
                         <td className="py-1.5">{userNames[p.user_id] || p.user_id.slice(0,6)}</td>
-                        <td><TeamMini id={p.team_id}/> {teamName(p.team_id)}</td>
+                        <td><TeamMini id={p.team_id}/></td>
                         <td><span className={
                           p.result==='win'?'text-emerald-700 font-semibold':
                           p.result==='loss'?'text-red-600 font-semibold':
@@ -589,7 +556,7 @@ function AppAuthed({ session }) {
             </div>
           </div>
 
-          {/* Popularidad con LOGO */}
+          {/* Popularidad: SOLO logo + abreviación */}
           <div className="p-4 border rounded-2xl bg-white shadow-sm">
             <div className="flex items-center gap-2">
               <h2 className="font-semibold">Popularidad de equipos</h2>
@@ -602,7 +569,7 @@ function AppAuthed({ session }) {
               {(popularity||[]).length>0 ? popularity.map(row=>(
                 <div key={row.team_id}>
                   <div className="flex items-center justify-between text-sm">
-                    <div className="flex items-center gap-2"><TeamMini id={row.team_id}/> <span className="font-medium">{teamName(row.team_id)}</span> <span className="text-gray-500">({row.count})</span></div>
+                    <div className="flex items-center gap-2"><TeamMini id={row.team_id}/> <span className="text-gray-500">({row.count})</span></div>
                     <span className="text-gray-700">{row.pct}%</span>
                   </div>
                   <div className="h-2 bg-gray-100 rounded mt-1"><div className="h-2 rounded bg-black" style={{width:`${row.pct}%`}}/></div>
@@ -614,7 +581,7 @@ function AppAuthed({ session }) {
 
         {/* Standings + Historial */}
         <section className="mt-6 grid md:grid-cols-2 gap-4">
-          {/* Standings detallado con LOGO del pick de la semana */}
+          {/* Standings: columna Pick con SOLO logo + abrev. */}
           <div className="p-4 border rounded-2xl bg-white shadow-sm">
             <h2 className="font-semibold">Tabla de supervivientes</h2>
             <div className="overflow-x-auto">
@@ -635,7 +602,7 @@ function AppAuthed({ session }) {
                         <td className="text-red-600 font-medium">{s.losses}</td>
                         <td className="text-gray-600">{s.pushes}</td>
                         <td>{s.margin_sum}</td>
-                        <td>{lp?.team_id ? <><TeamMini id={lp.team_id}/> {teamName(lp.team_id)}</> : <span className="text-gray-400">—</span>}</td>
+                        <td>{lp?.team_id ? <TeamMini id={lp.team_id}/> : <span className="text-gray-400">—</span>}</td>
                       </tr>
                     );
                   })}
@@ -645,7 +612,7 @@ function AppAuthed({ session }) {
             </div>
           </div>
 
-          {/* Historial con LOGO */}
+          {/* Historial: SOLO logo + abrev. */}
           <div className="p-4 border rounded-2xl bg-white shadow-sm">
             <h2 className="font-semibold">Historial de tus picks</h2>
             <div className="overflow-x-auto">
@@ -655,7 +622,7 @@ function AppAuthed({ session }) {
                   {(picks||[]).sort((a,b)=>a.week-b.week).map(p=>(
                     <tr key={p.id} className="border-t">
                       <td className="py-1.5">{p.week}</td>
-                      <td><TeamMini id={p.team_id}/> {teamName(p.team_id)}</td>
+                      <td><TeamMini id={p.team_id}/></td>
                       <td><span className={
                         p.result==='win'?'text-emerald-700 font-semibold':
                         p.result==='loss'?'text-red-600 font-semibold':
