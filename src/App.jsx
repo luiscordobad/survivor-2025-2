@@ -8,10 +8,8 @@ const TZ = import.meta.env.VITE_TZ || 'America/Mexico_City';
 
 // Utilidad simple para exportar CSV
 function downloadCSV(filename, rows) {
-  const esc = (v) =>
-    v == null ? '' : `"${String(v).replaceAll('"', '""')}"`;
-  const csv =
-    rows.map((r) => r.map(esc).join(',')).join('\n') + '\n';
+  const esc = (v) => (v == null ? '' : `"${String(v).replaceAll('"', '""')}"`);
+  const csv = rows.map((r) => r.map(esc).join(',')).join('\n') + '\n';
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -102,7 +100,7 @@ function AppAuthed({ session }) {
   const [standings, setStandings] = useState([]);
   const [usedTeams, setUsedTeams] = useState(new Set());
 
-  // NUEVO: filtro por día dentro de la semana
+  // Filtro por día dentro de la semana
   const [dayFilter, setDayFilter] = useState('ALL'); // ALL | THU | FRI | SAT | SUN | MON
 
   // Logos: mapa id -> team
@@ -175,7 +173,7 @@ function AppAuthed({ session }) {
   useEffect(() => { load(); }, []);
   useEffect(() => { loadGames(week); }, [week]);
 
-  // (Opcional) refresco suave cada 30s por si hay juegos en vivo
+  // (4) AUTO-ACTUALIZACIÓN: refresca partidos cada 30s
   useEffect(() => {
     const id = setInterval(() => { loadGames(week); }, 30000);
     return () => clearInterval(id);
@@ -199,11 +197,11 @@ function AppAuthed({ session }) {
     return upcoming?.start_time || null;
   }, [games]);
 
-  // NUEVO: banner de alerta si no hay pick y falta poco
+  // Banner si no hay pick y falta poco (<= 6h)
   const showPickAlert = useMemo(() => {
     if (myPickThisWeek || !nextKickoffISO) return false;
     const diff = DateTime.fromISO(nextKickoffISO).diffNow('hours').hours;
-    return diff <= 6 && diff > 0; // alerta si faltan <= 6 horas
+    return diff <= 6 && diff > 0;
   }, [myPickThisWeek, nextKickoffISO]);
 
   const canPick = (g, team) => {
@@ -218,7 +216,7 @@ function AppAuthed({ session }) {
     const c = canPick(g, team);
     if (!c.ok) return alert(c.reason === 'LOCK' ? 'Cerrado por kickoff' : 'Ya usaste este equipo');
 
-    // NUEVO: confirmación
+    // Confirmación
     if (!confirm(`¿Confirmas tu pick de W${week} por ${team}?`)) return;
 
     if (myPickThisWeek) {
@@ -239,30 +237,23 @@ function AppAuthed({ session }) {
     setUsedTeams(new Set((pk || []).map((x) => x.team_id)));
   };
 
-  // NUEVO: filtrado por día
+  // Filtrado por día
   const gamesFiltered = useMemo(() => {
     if (dayFilter === 'ALL') return games;
-    const map = { THU: 4, FRI: 5, SAT: 6, SUN: 7, MON: 1 }; // weekday: 1=Mon ... 7=Sun (Luxon)
+    const map = { THU: 4, FRI: 5, SAT: 6, SUN: 7, MON: 1 }; // 1=Mon ... 7=Sun
     const want = map[dayFilter];
     return (games || []).filter(g => DateTime.fromISO(g.start_time).setZone(TZ).weekday === want);
   }, [games, dayFilter]);
 
-  // NUEVO: export CSV
+  // Export CSV
   const exportMyPicksCSV = () => {
-    const rows = [
-      ['week', 'team_id', 'result', 'auto_pick', 'updated_at']
-    ];
-    (picks || []).forEach(p => {
-      rows.push([p.week, p.team_id, p.result, p.auto_pick, p.updated_at]);
-    });
+    const rows = [['week', 'team_id', 'result', 'auto_pick', 'updated_at']];
+    (picks || []).forEach(p => rows.push([p.week, p.team_id, p.result, p.auto_pick, p.updated_at]));
     downloadCSV('mis_picks.csv', rows);
   };
-
   const exportStandingsCSV = () => {
     const rows = [['player', 'lives', 'wins', 'losses', 'pushes', 'margin_sum']];
-    (standings || []).forEach(s => {
-      rows.push([s.display_name, s.lives, s.wins, s.losses, s.pushes, s.margin_sum]);
-    });
+    (standings || []).forEach(s => rows.push([s.display_name, s.lives, s.wins, s.losses, s.pushes, s.margin_sum]));
     downloadCSV('standings.csv', rows);
   };
 
@@ -349,17 +340,15 @@ function AppAuthed({ session }) {
             )}
 
             <div className="mt-3 flex items-center gap-2">
-              <button
-                className="text-xs px-3 py-1 rounded border hover:bg-gray-50"
-                onClick={exportMyPicksCSV}
-              >
+              <button className="text-xs px-3 py-1 rounded border hover:bg-gray-50" onClick={exportMyPicksCSV}>
                 Exportar mis picks (CSV)
               </button>
-              <button
-                className="text-xs px-3 py-1 rounded border hover:bg-gray-50"
-                onClick={exportStandingsCSV}
-              >
+              <button className="text-xs px-3 py-1 rounded border hover:bg-gray-50" onClick={exportStandingsCSV}>
                 Exportar standings (CSV)
+              </button>
+              {/* Botón manual para recargar desde DB (no llama ESPN, solo refresca tabla) */}
+              <button className="text-xs px-3 py-1 rounded border hover:bg-gray-50" onClick={() => loadGames(week)}>
+                Refrescar marcadores
               </button>
             </div>
 
@@ -405,12 +394,13 @@ function AppAuthed({ session }) {
                           <span className="mx-1 text-gray-400">@</span>{' '}
                           <TeamBadge id={g.home_team} />
                         </div>
+
                         <div className="mt-1 text-xs text-gray-600">
                           Kickoff:{' '}
                           <span className="px-1.5 py-0.5 rounded bg-gray-100">{local}</span>
                         </div>
 
-                        {/* NUEVO: estado y marcador */}
+                        {/* (3) Estado y marcador */}
                         <div className="mt-1 text-xs">
                           Estado:{' '}
                           <span className={
@@ -422,9 +412,17 @@ function AppAuthed({ session }) {
                             {g.status}
                           </span>
                         </div>
+
                         {(g.status === 'in_progress' || g.status === 'final') && (
                           <div className="mt-1 text-sm font-mono">
                             {g.away_team} {g.away_score ?? '-'} — {g.home_team} {g.home_score ?? '-'}
+                          </div>
+                        )}
+
+                        {/* (3) Periodo / reloj si está en vivo */}
+                        {g.status === 'in_progress' && (
+                          <div className="mt-1 text-xs text-amber-800">
+                            {g.period ? `Q${g.period}` : ''} {g.clock || ''}
                           </div>
                         )}
                       </div>
@@ -440,7 +438,6 @@ function AppAuthed({ session }) {
                         >
                           <span className="inline-flex items-center gap-2">
                             <TeamBadge id={g.away_team} />
-                            {/* NUEVO: chip Used */}
                             {usedTeams.has(g.away_team) && !(myPickThisWeek && myPickThisWeek.team_id === g.away_team) && (
                               <span className="ml-1 text-[11px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-600">
                                 Used
@@ -459,7 +456,6 @@ function AppAuthed({ session }) {
                         >
                           <span className="inline-flex items-center gap-2">
                             <TeamBadge id={g.home_team} />
-                            {/* NUEVO: chip Used */}
                             {usedTeams.has(g.home_team) && !(myPickThisWeek && myPickThisWeek.team_id === g.home_team) && (
                               <span className="ml-1 text-[11px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-600">
                                 Used
@@ -571,3 +567,4 @@ function AppAuthed({ session }) {
     </div>
   );
 }
+
