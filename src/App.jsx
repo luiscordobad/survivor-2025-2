@@ -6,6 +6,19 @@ import { DateTime } from 'luxon';
 
 const TZ = import.meta.env.VITE_TZ || 'America/Mexico_City';
 
+// Utilidad simple para exportar CSV
+function downloadCSV(filename, rows) {
+  const esc = (v) =>
+    v == null ? '' : `"${String(v).replaceAll('"', '""')}"`;
+  const csv =
+    rows.map((r) => r.map(esc).join(',')).join('\n') + '\n';
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename; a.click();
+  URL.revokeObjectURL(url);
+}
+
 function useSession() {
   const [session, setSession] = useState(null);
   useEffect(() => {
@@ -31,7 +44,7 @@ function Login() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-6 bg-gradient-to-b from-slate-50 to-white">
+    <div className="min-h-screen flex items-center justify-center p-6 bg-gradient-to-b from-slate-50 to-white text-slate-900">
       <form onSubmit={send} className="max-w-sm w-full space-y-4 p-6 rounded-2xl border bg-white shadow-sm">
         <h1 className="text-3xl font-extrabold tracking-tight">Survivor 2025</h1>
         {sent ? (
@@ -89,14 +102,15 @@ function AppAuthed({ session }) {
   const [standings, setStandings] = useState([]);
   const [usedTeams, setUsedTeams] = useState(new Set());
 
+  // NUEVO: filtro por día dentro de la semana
+  const [dayFilter, setDayFilter] = useState('ALL'); // ALL | THU | FRI | SAT | SUN | MON
+
   // Logos: mapa id -> team
   const [teamsMap, setTeamsMap] = useState({});
   const loadTeams = async () => {
     const { data: ts } = await supabase.from('teams').select('*');
     const map = {};
-    (ts || []).forEach((t) => {
-      map[t.id] = t;
-    });
+    (ts || []).forEach((t) => { map[t.id] = t; });
     setTeamsMap(map);
   };
 
@@ -142,11 +156,7 @@ function AppAuthed({ session }) {
     setMe(prof);
 
     // Auto-membresía a la liga 2025
-    try {
-      await ensureLeagueMembership(session.user.id);
-    } catch (e) {
-      console.error('ensureLeagueMembership error:', e);
-    }
+    try { await ensureLeagueMembership(session.user.id); } catch (e) { console.error(e); }
 
     // Logos de equipos
     await loadTeams();
@@ -162,22 +172,19 @@ function AppAuthed({ session }) {
     await loadGames(week);
   };
 
-  useEffect(() => {
-    load();
-  }, []);
+  useEffect(() => { load(); }, []);
+  useEffect(() => { loadGames(week); }, [week]);
 
+  // (Opcional) refresco suave cada 30s por si hay juegos en vivo
   useEffect(() => {
-    loadGames(week);
+    const id = setInterval(() => { loadGames(week); }, 30000);
+    return () => clearInterval(id);
   }, [week]);
 
-  // Extra: intenta asegurar membresía en cualquier cambio de auth (defensivo)
+  // Extra: asegura membresía si cambia el estado de auth
   useEffect(() => {
     const { data: sub } = supabase.auth.onAuthStateChange(async (_e, s) => {
-      if (s?.user) {
-        try {
-          await ensureLeagueMembership(s.user.id);
-        } catch {}
-      }
+      if (s?.user) { try { await ensureLeagueMembership(s.user.id); } catch {} }
     });
     return () => sub.subscription.unsubscribe();
   }, []);
@@ -186,6 +193,18 @@ function AppAuthed({ session }) {
     () => (picks || []).find((p) => p.week === week),
     [picks, week]
   );
+
+  const nextKickoffISO = useMemo(() => {
+    const upcoming = (games || []).find(g => DateTime.fromISO(g.start_time) > DateTime.now());
+    return upcoming?.start_time || null;
+  }, [games]);
+
+  // NUEVO: banner de alerta si no hay pick y falta poco
+  const showPickAlert = useMemo(() => {
+    if (myPickThisWeek || !nextKickoffISO) return false;
+    const diff = DateTime.fromISO(nextKickoffISO).diffNow('hours').hours;
+    return diff <= 6 && diff > 0; // alerta si faltan <= 6 horas
+  }, [myPickThisWeek, nextKickoffISO]);
 
   const canPick = (g, team) => {
     const locked = DateTime.fromISO(g.start_time) <= DateTime.now();
@@ -198,6 +217,9 @@ function AppAuthed({ session }) {
   const choose = async (g, team) => {
     const c = canPick(g, team);
     if (!c.ok) return alert(c.reason === 'LOCK' ? 'Cerrado por kickoff' : 'Ya usaste este equipo');
+
+    // NUEVO: confirmación
+    if (!confirm(`¿Confirmas tu pick de W${week} por ${team}?`)) return;
 
     if (myPickThisWeek) {
       const { error } = await supabase
@@ -217,9 +239,37 @@ function AppAuthed({ session }) {
     setUsedTeams(new Set((pk || []).map((x) => x.team_id)));
   };
 
+  // NUEVO: filtrado por día
+  const gamesFiltered = useMemo(() => {
+    if (dayFilter === 'ALL') return games;
+    const map = { THU: 4, FRI: 5, SAT: 6, SUN: 7, MON: 1 }; // weekday: 1=Mon ... 7=Sun (Luxon)
+    const want = map[dayFilter];
+    return (games || []).filter(g => DateTime.fromISO(g.start_time).setZone(TZ).weekday === want);
+  }, [games, dayFilter]);
+
+  // NUEVO: export CSV
+  const exportMyPicksCSV = () => {
+    const rows = [
+      ['week', 'team_id', 'result', 'auto_pick', 'updated_at']
+    ];
+    (picks || []).forEach(p => {
+      rows.push([p.week, p.team_id, p.result, p.auto_pick, p.updated_at]);
+    });
+    downloadCSV('mis_picks.csv', rows);
+  };
+
+  const exportStandingsCSV = () => {
+    const rows = [['player', 'lives', 'wins', 'losses', 'pushes', 'margin_sum']];
+    (standings || []).forEach(s => {
+      rows.push([s.display_name, s.lives, s.wins, s.losses, s.pushes, s.margin_sum]);
+    });
+    downloadCSV('standings.csv', rows);
+  };
+
   return (
-    <div className="min-h-screen p-4 md:p-6 bg-gradient-to-b from-slate-50 to-white">
+    <div className="min-h-screen p-4 md:p-6 bg-gradient-to-b from-slate-50 to-white text-slate-900">
       <div className="max-w-6xl mx-auto">
+
         {/* Header */}
         <header className="flex items-center justify-between gap-4 py-3">
           <div>
@@ -241,6 +291,14 @@ function AppAuthed({ session }) {
           </button>
         </header>
 
+        {/* Banner de alerta si falta poco y no hay pick */}
+        {showPickAlert && (
+          <div className="mt-2 mb-4 p-3 border rounded-xl bg-amber-50 text-amber-900">
+            ⚠️ Aún no tienes pick en W{week}. El siguiente kickoff es en{' '}
+            {nextKickoffISO && <Countdown iso={nextKickoffISO} />}.
+          </div>
+        )}
+
         {/* Top widgets */}
         <section className="mt-4 grid md:grid-cols-3 gap-4">
           <div className="p-4 border rounded-2xl bg-white shadow-sm">
@@ -252,9 +310,7 @@ function AppAuthed({ session }) {
                 onChange={(e) => setWeek(Number(e.target.value))}
               >
                 {Array.from({ length: 18 }, (_, i) => i + 1).map((w) => (
-                  <option key={w} value={w}>
-                    W{w}
-                  </option>
+                  <option key={w} value={w}>W{w}</option>
                 ))}
               </select>
             </div>
@@ -292,7 +348,22 @@ function AppAuthed({ session }) {
               <p className="mt-3 text-sm">Aún no eliges en W{week}</p>
             )}
 
-            <p className="text-xs mt-2 text-gray-600">
+            <div className="mt-3 flex items-center gap-2">
+              <button
+                className="text-xs px-3 py-1 rounded border hover:bg-gray-50"
+                onClick={exportMyPicksCSV}
+              >
+                Exportar mis picks (CSV)
+              </button>
+              <button
+                className="text-xs px-3 py-1 rounded border hover:bg-gray-50"
+                onClick={exportStandingsCSV}
+              >
+                Exportar standings (CSV)
+              </button>
+            </div>
+
+            <p className="text-xs mt-3 text-gray-600">
               Cuenta regresiva al siguiente lock:{' '}
               {games?.[0] && <Countdown iso={games[0].start_time} />}
             </p>
@@ -300,17 +371,32 @@ function AppAuthed({ session }) {
 
           {/* Partidos */}
           <div className="p-4 border rounded-2xl bg-white shadow-sm md:col-span-2">
-            <h2 className="font-semibold mb-3">Partidos W{week}</h2>
+            <div className="flex items-center justify-between">
+              <h2 className="font-semibold mb-3">Partidos W{week}</h2>
+              {/* Filtro por día */}
+              <div className="flex gap-1 text-xs">
+                {['ALL','THU','FRI','SAT','SUN','MON'].map(d => (
+                  <button
+                    key={d}
+                    className={`px-2 py-1 rounded border ${dayFilter===d?'bg-black text-white':'hover:bg-gray-50'}`}
+                    onClick={() => setDayFilter(d)}
+                    title={d==='ALL'?'Todos':'Filtrar por día'}
+                  >
+                    {d}
+                  </button>
+                ))}
+              </div>
+            </div>
+
             <div className="space-y-3">
-              {games.map((g) => {
+              {gamesFiltered.map((g) => {
                 const local = DateTime.fromISO(g.start_time).setZone(TZ).toFormat('EEE dd LLL HH:mm');
                 const locked = DateTime.fromISO(g.start_time) <= DateTime.now();
+
                 return (
                   <div
                     key={g.id}
-                    className={`p-3 border rounded-xl ${
-                      locked ? 'opacity-60' : 'bg-white'
-                    } shadow-sm`}
+                    className={`p-3 border rounded-xl ${locked ? 'opacity-60' : 'bg-white'} shadow-sm`}
                   >
                     <div className="flex items-center justify-between">
                       <div>
@@ -319,35 +405,76 @@ function AppAuthed({ session }) {
                           <span className="mx-1 text-gray-400">@</span>{' '}
                           <TeamBadge id={g.home_team} />
                         </div>
-                        <div className="mt-1 text-xs text-gray-500">
+                        <div className="mt-1 text-xs text-gray-600">
                           Kickoff:{' '}
                           <span className="px-1.5 py-0.5 rounded bg-gray-100">{local}</span>
                         </div>
+
+                        {/* NUEVO: estado y marcador */}
+                        <div className="mt-1 text-xs">
+                          Estado:{' '}
+                          <span className={
+                            g.status === 'in_progress' ? 'text-amber-700 font-medium' :
+                            g.status === 'final' ? 'text-emerald-700 font-medium' :
+                            g.status === 'postponed' ? 'text-gray-700 font-medium' :
+                            'text-gray-700'
+                          }>
+                            {g.status}
+                          </span>
+                        </div>
+                        {(g.status === 'in_progress' || g.status === 'final') && (
+                          <div className="mt-1 text-sm font-mono">
+                            {g.away_team} {g.away_score ?? '-'} — {g.home_team} {g.home_score ?? '-'}
+                          </div>
+                        )}
                       </div>
+
                       <div className="flex gap-2">
                         <button
                           className="border px-3 py-1 rounded hover:bg-gray-100 disabled:opacity-40"
                           disabled={!canPick(g, g.away_team).ok}
                           onClick={() => choose(g, g.away_team)}
-                          title={!canPick(g, g.away_team).ok ? 'Bloqueado' : 'Elegir visitante'}
+                          title={!canPick(g, g.away_team).ok
+                            ? (usedTeams.has(g.away_team) ? 'Equipo ya usado' : 'Bloqueado por kickoff')
+                            : 'Elegir visitante'}
                         >
-                          <TeamBadge id={g.away_team} />
+                          <span className="inline-flex items-center gap-2">
+                            <TeamBadge id={g.away_team} />
+                            {/* NUEVO: chip Used */}
+                            {usedTeams.has(g.away_team) && !(myPickThisWeek && myPickThisWeek.team_id === g.away_team) && (
+                              <span className="ml-1 text-[11px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-600">
+                                Used
+                              </span>
+                            )}
+                          </span>
                         </button>
+
                         <button
                           className="border px-3 py-1 rounded hover:bg-gray-100 disabled:opacity-40"
                           disabled={!canPick(g, g.home_team).ok}
                           onClick={() => choose(g, g.home_team)}
-                          title={!canPick(g, g.home_team).ok ? 'Bloqueado' : 'Elegir local'}
+                          title={!canPick(g, g.home_team).ok
+                            ? (usedTeams.has(g.home_team) ? 'Equipo ya usado' : 'Bloqueado por kickoff')
+                            : 'Elegir local'}
                         >
-                          <TeamBadge id={g.home_team} />
+                          <span className="inline-flex items-center gap-2">
+                            <TeamBadge id={g.home_team} />
+                            {/* NUEVO: chip Used */}
+                            {usedTeams.has(g.home_team) && !(myPickThisWeek && myPickThisWeek.team_id === g.home_team) && (
+                              <span className="ml-1 text-[11px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-600">
+                                Used
+                              </span>
+                            )}
+                          </span>
                         </button>
                       </div>
                     </div>
                   </div>
                 );
               })}
-              {(!games || games.length === 0) && (
-                <div className="text-sm text-gray-500">No hay partidos para esta semana.</div>
+
+              {(!gamesFiltered || gamesFiltered.length === 0) && (
+                <div className="text-sm text-gray-500">No hay partidos para este filtro.</div>
               )}
             </div>
           </div>
@@ -409,9 +536,7 @@ function AppAuthed({ session }) {
                     .map((p) => (
                       <tr key={p.id} className="border-t">
                         <td className="py-1.5">{p.week}</td>
-                        <td>
-                          <TeamBadge id={p.team_id} />
-                        </td>
+                        <td><TeamBadge id={p.team_id} /></td>
                         <td>
                           <span
                             className={
@@ -441,8 +566,8 @@ function AppAuthed({ session }) {
             </div>
           </div>
         </section>
+
       </div>
     </div>
   );
 }
-
