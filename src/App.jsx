@@ -9,7 +9,14 @@ const ADMIN_EMAILS = (import.meta.env.VITE_ADMIN_EMAILS || '')
   .split(',').map(s=>s.trim().toLowerCase()).filter(Boolean);
 const isAdminEmail = (email) => ADMIN_EMAILS.includes((email||'').toLowerCase());
 
-// CSV util
+// ----- utils -----
+const logisticP = (spread /* negativo favorece al local */) => {
+  if (spread == null) return null;
+  const k = 0.23; // sensibilidad aproximada
+  // para local: spread_home (negativo grande => favorito fuerte)
+  const p = 1 / (1 + Math.exp(-(-k * spread))); // ojo con signo
+  return Math.round(p * 100);
+};
 function downloadCSV(filename, rows) {
   const esc = v => v==null ? '' : `"${String(v).replaceAll('"','""')}"`;
   const csv = rows.map(r=>r.map(esc).join(',')).join('\n')+'\n';
@@ -29,144 +36,80 @@ function useSession() {
   return session;
 }
 
-// ----- LOGIN -----
+// ----- LOGIN (mismo que antes, resumido por espacio) -----
 function Login() {
-  const [tab, setTab] = useState('password'); // 'password' | 'magic' | 'reset'
-  const [busy, setBusy] = useState(false);
-
-  // magic
-  const [email, setEmail] = useState('');
-  const [sent, setSent] = useState(false);
-
-  // password
-  const [passEmail, setPassEmail] = useState('');
-  const [passPwd, setPassPwd] = useState('');
-  const [isSignup, setIsSignup] = useState(false);
-
-  // reset
-  const [resetEmail, setResetEmail] = useState('');
-  const [newPwd, setNewPwd] = useState('');
-  const [resetInfo, setResetInfo] = useState('');
-
+  const [tab, setTab] = useState('password');
+  const [email, setEmail] = useState(''); const [sent, setSent] = useState(false);
+  const [passEmail, setPassEmail] = useState(''); const [passPwd, setPassPwd] = useState('');
+  const [busy,setBusy]=useState(false); const [isSignup,setIsSignup]=useState(false);
+  const [resetEmail,setResetEmail]=useState(''); const [newPwd,setNewPwd]=useState(''); const [resetInfo,setResetInfo]=useState('');
   useEffect(()=>{ if ((window.location.hash||'').includes('type=recovery')) setTab('reset'); },[]);
-
-  const sendMagic = async (e)=>{
-    e.preventDefault();
-    const { error } = await supabase.auth.signInWithOtp({
-      email,
-      options:{ emailRedirectTo: import.meta.env.VITE_SITE_URL || window.location.origin }
-    });
+  const sendMagic = async e => { e.preventDefault();
+    const { error } = await supabase.auth.signInWithOtp({ email, options:{ emailRedirectTo: import.meta.env.VITE_SITE_URL || window.location.origin }});
     if (!error) setSent(true); else alert(error.message);
   };
-
-  const submitPasswordAuth = async (e)=>{
-    e.preventDefault(); setBusy(true);
+  const submitPasswordAuth = async e => { e.preventDefault(); setBusy(true);
     try{
       if (isSignup) {
-        const { error } = await supabase.auth.signUp({
-          email: passEmail,
-          password: passPwd,
-          options:{ emailRedirectTo: import.meta.env.VITE_SITE_URL || window.location.origin }
-        });
-        if (error) throw error;
-        alert('Cuenta creada. Revisa tu correo para confirmar.');
+        const { error } = await supabase.auth.signUp({ email: passEmail, password: passPwd, options:{ emailRedirectTo: import.meta.env.VITE_SITE_URL || window.location.origin }});
+        if (error) throw error; alert('Cuenta creada. Revisa tu correo para confirmar.');
       } else {
         const { error } = await supabase.auth.signInWithPassword({ email: passEmail, password: passPwd });
         if (error) throw error;
       }
-    }catch(err){ alert(err.message); } finally{ setBusy(false); }
+    } catch(e){ alert(e.message); } finally{ setBusy(false); }
   };
-
-  const sendResetLink = async (e)=>{
-    e.preventDefault(); setBusy(true);
-    try{
-      const { error } = await supabase.auth.resetPasswordForEmail(resetEmail, {
-        redirectTo: import.meta.env.VITE_SITE_URL || window.location.origin
-      });
-      if (error) throw error;
-      setResetInfo('Te enviamos un correo con el enlace de restablecimiento.');
-    }catch(err){ alert(err.message); } finally{ setBusy(false); }
+  const sendResetLink = async e => { e.preventDefault(); setBusy(true);
+    try{ const { error } = await supabase.auth.resetPasswordForEmail(resetEmail, { redirectTo: import.meta.env.VITE_SITE_URL || window.location.origin });
+      if (error) throw error; setResetInfo('Enlace enviado.'); } catch(e){ alert(e.message); } finally{ setBusy(false); }
   };
-
-  const applyNewPassword = async (e)=>{
-    e.preventDefault(); if (!newPwd || newPwd.length<6) return alert('Mínimo 6 caracteres.');
-    setBusy(true);
-    try{
-      const { error } = await supabase.auth.updateUser({ password: newPwd });
-      if (error) throw error;
-      setResetInfo('Contraseña actualizada. Ya puedes entrar.'); setTimeout(()=>setTab('password'),1200);
-    }catch(err){ alert(err.message); } finally{ setBusy(false); }
+  const applyNewPassword = async e => { e.preventDefault(); if (!newPwd || newPwd.length<6) return alert('Mínimo 6 caracteres.');
+    setBusy(true); try{ const { error } = await supabase.auth.updateUser({ password:newPwd }); if (error) throw error; setResetInfo('Contraseña actualizada.'); setTimeout(()=>setTab('password'),1200); } catch(e){ alert(e.message); } finally{ setBusy(false); }
   };
-
-  const signInWithGoogle = async ()=>{
-    try{
-      await supabase.auth.signInWithOAuth({
-        provider:'google',
-        options:{ redirectTo: import.meta.env.VITE_SITE_URL || window.location.origin }
-      });
-    }catch(e){ alert(e.message); }
-  };
+  const signInWithGoogle = async ()=>{ await supabase.auth.signInWithOAuth({ provider:'google', options:{ redirectTo: import.meta.env.VITE_SITE_URL || window.location.origin }}); };
 
   return (
     <div className="min-h-screen flex items-center justify-center p-6 bg-gradient-to-b from-slate-50 to-white text-slate-900">
       <div className="max-w-md w-full space-y-4 p-6 rounded-2xl border bg-white shadow-sm">
-        <h1 className="text-3xl font-extrabold tracking-tight text-center">
-          {import.meta.env.VITE_LEAGUE_NAME || 'Survivor 2025'}
-        </h1>
-
+        <h1 className="text-3xl font-extrabold tracking-tight text-center">{import.meta.env.VITE_LEAGUE_NAME || 'Survivor 2025'}</h1>
         <div className="flex gap-2 justify-center">
           <button className={`px-3 py-1 rounded border ${tab==='password'?'bg-black text-white':'hover:bg-gray-50'}`} onClick={()=>setTab('password')}>Email + Password</button>
           <button className={`px-3 py-1 rounded border ${tab==='magic'?'bg-black text-white':'hover:bg-gray-50'}`} onClick={()=>setTab('magic')}>Magic link</button>
           <button className={`px-3 py-1 rounded border ${tab==='reset'?'bg-black text-white':'hover:bg-gray-50'}`} onClick={()=>setTab('reset')}>Olvidé mi contraseña</button>
         </div>
-
-        <div className="flex items-center gap-2">
-          <div className="h-px bg-gray-200 flex-1" /><span className="text-xs text-gray-500">o</span><div className="h-px bg-gray-200 flex-1" />
-        </div>
+        <div className="flex items-center gap-2"><div className="h-px bg-gray-200 flex-1"/><span className="text-xs text-gray-500">o</span><div className="h-px bg-gray-200 flex-1"/></div>
         <button onClick={signInWithGoogle} className="w-full border rounded-lg py-2 hover:bg-gray-50">Entrar con Google</button>
 
-        {tab==='password' && (
-          <form onSubmit={submitPasswordAuth} className="space-y-3">
-            <div className="flex items-center justify-between">
-              <label className="text-sm">{isSignup?'Crear cuenta':'Iniciar sesión'}</label>
-              <button type="button" className="text-xs underline" onClick={()=>setIsSignup(!isSignup)}>
-                {isSignup?'¿Ya tienes cuenta? Inicia sesión':'¿No tienes cuenta? Regístrate'}
-              </button>
-            </div>
-            <input type="email" className="border w-full p-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-black/10" placeholder="email" value={passEmail} onChange={e=>setPassEmail(e.target.value)} required/>
-            <input type="password" className="border w-full p-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-black/10" placeholder="contraseña" value={passPwd} onChange={e=>setPassPwd(e.target.value)} required/>
-            <button disabled={busy} className="bg-black text-white px-4 py-2 w-full rounded-lg hover:opacity-90 disabled:opacity-60">{isSignup?'Crear cuenta':'Entrar'}</button>
-            <button type="button" className="text-xs underline" onClick={()=>setTab('reset')}>¿Olvidaste tu contraseña?</button>
-          </form>
-        )}
-
-        {tab==='magic' && (
-          <form onSubmit={sendMagic} className="space-y-3">
-            <label className="text-sm block">Tu email</label>
-            <input type="email" className="border w-full p-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-black/10" placeholder="tu@email.com" value={email} onChange={e=>setEmail(e.target.value)} required/>
-            <button className="bg-black text-white px-4 py-2 w-full rounded-lg hover:opacity-90">Enviar magic link</button>
-            {sent && <p className="text-xs text-gray-600">Revisa tu correo y da clic al enlace.</p>}
-          </form>
-        )}
-
-        {tab==='reset' && (
-          <div className="space-y-4">
-            {window.location.hash.includes('type=recovery') ? (
-              <form onSubmit={applyNewPassword} className="space-y-3">
-                <p className="text-sm text-gray-700">Define tu <b>nueva</b> contraseña:</p>
-                <input type="password" className="border w-full p-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-black/10" placeholder="nueva contraseña" value={newPwd} onChange={e=>setNewPwd(e.target.value)} required/>
-                <button disabled={busy} className="bg-black text-white px-4 py-2 w-full rounded-lg hover:opacity-90 disabled:opacity-60">Guardar nueva contraseña</button>
-                {resetInfo && <p className="text-xs text-emerald-700">{resetInfo}</p>}
-              </form>
-            ) : (
-              <form onSubmit={sendResetLink} className="space-y-3">
-                <p className="text-sm text-gray-700">Te enviaremos un enlace para restablecer tu contraseña.</p>
-                <input type="email" className="border w-full p-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-black/10" placeholder="tu email" value={resetEmail} onChange={e=>setResetEmail(e.target.value)} required/>
-                <button disabled={busy} className="bg-black text-white px-4 py-2 w-full rounded-lg hover:opacity-90 disabled:opacity-60">Enviar enlace</button>
-                {resetInfo && <p className="text-xs text-emerald-700">{resetInfo}</p>}
-              </form>
-            )}
+        {tab==='password' && (<form onSubmit={submitPasswordAuth} className="space-y-3">
+          <div className="flex items-center justify-between">
+            <label className="text-sm">{isSignup?'Crear cuenta':'Iniciar sesión'}</label>
+            <button type="button" className="text-xs underline" onClick={()=>setIsSignup(!isSignup)}>
+              {isSignup?'¿Ya tienes cuenta? Inicia sesión':'¿No tienes cuenta? Regístrate'}
+            </button>
           </div>
+          <input type="email" className="border w-full p-2 rounded-lg" placeholder="email" value={passEmail} onChange={e=>setPassEmail(e.target.value)} required/>
+          <input type="password" className="border w-full p-2 rounded-lg" placeholder="contraseña" value={passPwd} onChange={e=>setPassPwd(e.target.value)} required/>
+          <button disabled={busy} className="bg-black text-white px-4 py-2 w-full rounded-lg disabled:opacity-60">{isSignup?'Crear cuenta':'Entrar'}</button>
+          <button type="button" className="text-xs underline" onClick={()=>setTab('reset')}>¿Olvidaste tu contraseña?</button>
+        </form>)}
+
+        {tab==='magic' && (<form onSubmit={sendMagic} className="space-y-3">
+          <input type="email" className="border w-full p-2 rounded-lg" placeholder="tu@email.com" value={email} onChange={e=>setEmail(e.target.value)} required/>
+          <button className="bg-black text-white px-4 py-2 w-full rounded-lg">Enviar magic link</button>
+          {sent && <p className="text-xs text-gray-600">Revisa tu correo.</p>}
+        </form>)}
+
+        {tab==='reset' && (window.location.hash.includes('type=recovery')
+          ? (<form onSubmit={applyNewPassword} className="space-y-3">
+              <input type="password" className="border w-full p-2 rounded-lg" placeholder="nueva contraseña" value={newPwd} onChange={e=>setNewPwd(e.target.value)} required/>
+              <button disabled={busy} className="bg-black text-white px-4 py-2 w-full rounded-lg disabled:opacity-60">Guardar</button>
+              {resetInfo && <p className="text-xs text-emerald-700">{resetInfo}</p>}
+            </form>)
+          : (<form onSubmit={sendResetLink} className="space-y-3">
+              <input type="email" className="border w-full p-2 rounded-lg" placeholder="tu email" value={resetEmail} onChange={e=>setResetEmail(e.target.value)} required/>
+              <button disabled={busy} className="bg-black text-white px-4 py-2 w-full rounded-lg disabled:opacity-60">Enviar enlace</button>
+              {resetInfo && <p className="text-xs text-emerald-700">{resetInfo}</p>}
+            </form>)
         )}
       </div>
     </div>
@@ -195,7 +138,7 @@ function AppAuthed({ session }) {
   const [me, setMe] = useState(null);
   const [week, setWeek] = useState(()=>Number(localStorage.getItem('week'))||1);
   const [games, setGames] = useState([]);
-  const [oddsByGame, setOddsByGame] = useState({});
+  const [oddsPairs, setOddsPairs] = useState({}); // { game_id: {last, prev} }
   const [picks, setPicks] = useState([]);
   const [standings, setStandings] = useState([]);
   const [leaguePicks, setLeaguePicks] = useState([]);
@@ -216,19 +159,28 @@ function AppAuthed({ session }) {
   };
   const TeamBadge = ({ id })=>{
     const t=teamsMap[id]||{};
-    return <span className="inline-flex items-center gap-2">{t.logo_url?<img src={t.logo_url} className="h-5 w-5 rounded-full" alt={id}/> : null}<span className="font-medium">{id}</span></span>;
+    return <span className="inline-flex items-center gap-2">{t.logo_url?<img src={t.logo_url} className="h-5 w-5 rounded-full" alt={id}/> : null}<span className="font-medium">{t.name||id}</span></span>;
   };
 
-  // load
+  // cargas
   const loadGames = async (w)=>{
     const { data: gs } = await supabase.from('games').select('*').eq('week',w).order('start_time');
     setGames(gs||[]);
   };
-  const loadOdds = async ()=>{
-    if (!games.length) { setOddsByGame({}); return; }
+  const loadOddsPairs = async ()=>{
+    if (!games.length) { setOddsPairs({}); return; }
     const ids = games.map(g=>g.id);
-    const { data } = await supabase.from('odds_latest').select('*').in('game_id', ids);
-    const map={}; (data||[]).forEach(r=>{ map[r.game_id]=r; }); setOddsByGame(map);
+    const { data } = await supabase
+      .from('odds')
+      .select('game_id, spread_home, spread_away, ml_home, ml_away, total, book, fetched_at')
+      .in('game_id', ids)
+      .order('fetched_at', { ascending:false });
+    const by = {};
+    for (const row of (data||[])) {
+      if (!by[row.game_id]) by[row.game_id] = { last: row, prev: null };
+      else if (!by[row.game_id].prev) by[row.game_id].prev = row;
+    }
+    setOddsPairs(by);
   };
   const loadLeaguePicks = async (w)=>{
     const { data: pks } = await supabase.from('picks').select('user_id,team_id,result,auto_pick,updated_at').eq('week',w);
@@ -260,22 +212,24 @@ function AppAuthed({ session }) {
   };
 
   useEffect(()=>{ init(); },[]);
-  useEffect(()=>{ loadGames(week).then(loadOdds); loadLeaguePicks(week); setPopWeek(week); },[week]);
-  useEffect(()=>{ const id=setInterval(()=>{ loadGames(week).then(loadOdds); loadLeaguePicks(week); },30000); return ()=>clearInterval(id); },[week]);
+  useEffect(()=>{ loadGames(week).then(loadOddsPairs); loadLeaguePicks(week); setPopWeek(week); },[week]);
+  useEffect(()=>{ const id=setInterval(()=>{ loadGames(week).then(loadOddsPairs); loadLeaguePicks(week); },30000); return ()=>clearInterval(id); },[week]);
 
   useEffect(()=>localStorage.setItem('week',String(week)),[week]);
   useEffect(()=>localStorage.setItem('dayFilter',dayFilter),[dayFilter]);
   useEffect(()=>localStorage.setItem('teamQuery',teamQuery),[teamQuery]);
 
   const myPickThisWeek = useMemo(()=> (picks||[]).find(p=>p.week===week), [picks,week]);
+
+  // alerta 90 min si no hay pick
   const nextKickoffISO = useMemo(()=>{
     const up = (games||[]).find(g=>DateTime.fromISO(g.start_time)>DateTime.now());
     return up?.start_time || null;
   },[games]);
   const showPickAlert = useMemo(()=>{
     if (myPickThisWeek || !nextKickoffISO) return false;
-    const h = DateTime.fromISO(nextKickoffISO).diffNow('hours').hours;
-    return h<=6 && h>0;
+    const mins = DateTime.fromISO(nextKickoffISO).diffNow('minutes').minutes;
+    return mins<=90 && mins>0;
   },[myPickThisWeek,nextKickoffISO]);
 
   const canPick = (g,team)=>{
@@ -298,6 +252,30 @@ function AppAuthed({ session }) {
     setPicks(pk||[]); setUsedTeams(new Set((pk||[]).map(x=>x.team_id)));
   };
 
+  // helpers UI
+  const popPct = (teamId)=> popularity.find(p=>p.team_id===teamId)?.pct ?? 0;
+  const isDiff = (teamId)=> popPct(teamId) < 15;
+
+  // comparador TOP 3
+  const top3 = useMemo(()=>{
+    const rows = [];
+    for (const g of (games||[])) {
+      const { last } = oddsPairs[g.id] || {};
+      const wpHome = logisticP(last?.spread_home);
+      const wpAway = (last?.spread_away!=null) ? logisticP(-last.spread_away) : null; // simétrica
+      const h = { team:g.home_team, available: !usedTeams.has(g.home_team), wp: wpHome, pct: popPct(g.home_team), game:g };
+      const a = { team:g.away_team, available: !usedTeams.has(g.away_team), wp: wpAway, pct: popPct(g.away_team), game:g };
+      [h,a].forEach(r=>{
+        if (!r.available || r.wp==null) return;
+        // score: prioriza win prob y bonifica diferencial (menor popularidad)
+        const score = r.wp - r.pct * 0.6;
+        rows.push({ ...r, score });
+      });
+    }
+    return rows.sort((x,y)=>y.score-x.score).slice(0,3);
+  },[games,oddsPairs,usedTeams,popularity]);
+
+  // filtros
   const gamesByDay = useMemo(()=>{
     if (dayFilter==='ALL') return games;
     const map={THU:4,FRI:5,SAT:6,SUN:7,MON:1};
@@ -325,9 +303,9 @@ function AppAuthed({ session }) {
   };
 
   const amAdmin = isAdminEmail(session.user.email);
-  const callAdmin = async (path)=>{
+  const callAdmin = async (path, extra='')=>{
     const base = import.meta.env.VITE_SITE_URL || window.location.origin;
-    const url = `${base}${path}?token=${import.meta.env.VITE_ADMIN_TOKEN || 'DEV'}&week=${week}`;
+    const url = `${base}${path}?token=${import.meta.env.VITE_ADMIN_TOKEN || 'DEV'}&week=${week}${extra}`;
     const r=await fetch(url); const j=await r.json(); alert(JSON.stringify(j,null,2));
   };
 
@@ -343,8 +321,8 @@ function AppAuthed({ session }) {
         </header>
 
         {showPickAlert && (
-          <div className="mt-2 mb-4 p-3 border rounded-xl bg-amber-50 text-amber-900">
-            ⚠️ Aún no tienes pick en W{week}. El siguiente kickoff es en {nextKickoffISO && <Countdown iso={nextKickoffISO}/>}.
+          <div className="mt-2 mb-4 p-3 border rounded-xl bg-red-50 text-red-800">
+            🔔 Aún no tienes pick en W{week}. El primer kickoff es en <b><Countdown iso={nextKickoffISO}/></b>.
           </div>
         )}
 
@@ -367,7 +345,7 @@ function AppAuthed({ session }) {
               </div>
 
               <div className="flex-1 md:max-w-sm">
-                <input className="border w-full p-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-black/10" placeholder="Buscar equipo (abbr o nombre)..." value={teamQuery} onChange={e=>setTeamQuery(e.target.value)} />
+                <input className="border w-full p-2 rounded-lg" placeholder="Buscar equipo..." value={teamQuery} onChange={e=>setTeamQuery(e.target.value)} />
               </div>
 
               <div className="flex items-center gap-2">
@@ -379,18 +357,42 @@ function AppAuthed({ session }) {
                   onClick={()=>downloadCSV('standings.csv', [['player','lives','wins','losses','pushes','margin_sum'], ...(standings||[]).map(s=>[s.display_name,s.lives,s.wins,s.losses,s.pushes,s.margin_sum])])}>
                   Exportar standings (CSV)
                 </button>
-                <button className="text-xs px-3 py-1 rounded border hover:bg-gray-50" onClick={()=>{ loadGames(week).then(loadOdds); loadLeaguePicks(week); }}>
+                <button className="text-xs px-3 py-1 rounded border hover:bg-gray-50" onClick={()=>{ loadGames(week).then(loadOddsPairs); loadLeaguePicks(week); }}>
                   Refrescar datos
                 </button>
               </div>
             </div>
 
-            {amAdmin && (
+            {/* Comparador y autopickOne */}
+            <div className="mt-3 p-3 rounded-lg bg-gray-50 border">
+              <div className="flex items-center justify-between">
+                <h3 className="font-medium">Top 3 sugerencias (win% y diferencial)</h3>
+                <button className="text-xs px-3 py-1 rounded border hover:bg-gray-100"
+                  onClick={()=>callAdmin('/api/autopickOne', `&user_id=${session.user.id}`)}>
+                  Elegir por mí (solo yo)
+                </button>
+              </div>
+              <div className="mt-2 grid sm:grid-cols-3 gap-2">
+                {top3.map((r,idx)=>(
+                  <div key={idx} className="p-2 border rounded bg-white text-sm">
+                    <div className="flex items-center justify-between">
+                      <span className="font-medium">{r.team}</span>
+                      <span className="text-xs text-gray-500">Score {Math.round(r.score)}</span>
+                    </div>
+                    <div className="text-xs text-gray-600">Win%: <b>{r.wp}%</b> · Liga: <b>{r.pct}%</b> {r.pct<15 && <span className="ml-1 px-1 rounded bg-indigo-100 text-indigo-800">DIF</span>}</div>
+                    <button className="mt-2 w-full border rounded px-2 py-1 hover:bg-gray-50" onClick={()=>choose(r.game, r.team)}>Elegir</button>
+                  </div>
+                ))}
+                {top3.length===0 && <div className="text-xs text-gray-500">No hay sugerencias disponibles.</div>}
+              </div>
+            </div>
+
+            {isAdminEmail(session.user.email) && (
               <div className="p-3 mt-3 rounded-lg bg-gray-50 border text-sm flex flex-wrap items-center gap-2">
                 <span className="font-medium mr-2">Admin:</span>
-                <button className="px-3 py-1 rounded border hover:bg-gray-100" onClick={()=>callAdmin('/api/autopick')}>Auto-pick ahora (W{week})</button>
-                <button className="px-3 py-1 rounded border hover:bg-gray-100" onClick={()=>callAdmin('/api/notifyReminders')}>Enviar recordatorios (≈3h)</button>
-                <button className="px-3 py-1 rounded border hover:bg-gray-100" onClick={()=>callAdmin('/api/syncOdds')}>Sync odds ahora</button>
+                <button className="px-3 py-1 rounded border hover:bg-gray-100" onClick={()=>callAdmin('/api/autopick')}>Auto-pick global (W{week})</button>
+                <button className="px-3 py-1 rounded border hover:bg-gray-100" onClick={()=>callAdmin('/api/notifyReminders')}>Recordatorios (~3h)</button>
+                <button className="px-3 py-1 rounded border hover:bg-gray-100" onClick={()=>callAdmin('/api/syncOdds')}>Sync odds</button>
               </div>
             )}
           </div>
@@ -405,7 +407,16 @@ function AppAuthed({ session }) {
               const locked = DateTime.fromISO(g.start_time) <= DateTime.now();
               const chip = chipDay(g.start_time);
               const special = chipVenue(g);
-              const odds = oddsByGame[g.id];
+              const { last, prev } = oddsPairs[g.id] || {};
+              const wpHome = logisticP(last?.spread_home);
+              const wpAway = (last?.spread_away!=null) ? logisticP(-last.spread_away) : null;
+              const popHome = popPct(g.home_team);
+              const popAway = popPct(g.away_team);
+
+              const spreadMoved = prev?.spread_home!=null && last?.spread_home!=null
+                ? (last.spread_home - prev.spread_home) : null; // negativo => se hizo más favorito
+              const arrow = spreadMoved==null ? '' : (spreadMoved<0 ? '↑' : (spreadMoved>0 ? '↓' : '→'));
+
               return (
                 <div key={g.id} className={`p-3 border rounded-xl ${locked?'opacity-60':'bg-white'} shadow-sm`}>
                   <div className="flex items-center justify-between">
@@ -416,10 +427,34 @@ function AppAuthed({ session }) {
                         {special && <span className="text-[11px] px-1.5 py-0.5 rounded bg-teal-100 text-teal-800">{special}</span>}
                         {locked && <span className="text-[11px] px-1.5 py-0.5 rounded bg-gray-200 text-gray-700">LOCK</span>}
                       </div>
-                      <div className="mt-1 text-xs text-gray-600">Kickoff: <span className="px-1.5 py-0.5 rounded bg-gray-100">{local}</span></div>
-                      <div className="mt-1 text-xs text-gray-600">Lock en: <Countdown iso={g.start_time}/></div>
+                      <div className="mt-1 text-xs text-gray-600">Kickoff: <span className="px-1.5 py-0.5 rounded bg-gray-100">{local}</span> · Lock en: <Countdown iso={g.start_time}/></div>
 
-                      {/* Estado / marcador simple si está en progreso/final */}
+                      {/* odds + win% + movimiento */}
+                      {last && (
+                        <div className="mt-2 text-xs">
+                          <div className="inline-flex items-center gap-2 px-2 py-1 rounded bg-gray-50 border">
+                            <span className="text-gray-600">Odds:</span>
+                            <span className="font-mono">ML {g.home_team}: {last.ml_home ?? '-'}</span>
+                            <span className="font-mono">ML {g.away_team}: {last.ml_away ?? '-'}</span>
+                            <span className="font-mono">Spread {g.home_team}: {last.spread_home ?? '-'}</span>
+                            {arrow && <span title="Movimiento de spread (home) vs previo">{arrow}</span>}
+                            <span className="font-mono">Total: {last.total ?? '-'}</span>
+                            <span className="text-[11px] text-gray-500">({last.book})</span>
+                          </div>
+                          <div className="mt-1 text-[11px] text-gray-700">
+                            Win% {g.home_team}: <b>{wpHome ?? '-' }%</b> · Win% {g.away_team}: <b>{wpAway ?? '-' }%</b>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* popularidad y diferencial */}
+                      <div className="mt-1 text-[11px] text-gray-700">
+                        Liga: {g.home_team} <b>{popHome}%</b> {popHome<15 && <span className="ml-1 px-1 rounded bg-indigo-100 text-indigo-800">DIF</span>}
+                        {' · '}
+                        {g.away_team} <b>{popAway}%</b> {popAway<15 && <span className="ml-1 px-1 rounded bg-indigo-100 text-indigo-800">DIF</span>}
+                      </div>
+
+                      {/* marcador */}
                       <div className="mt-1 text-xs">
                         Estado:{' '}
                         <span className={
@@ -432,20 +467,6 @@ function AppAuthed({ session }) {
                         <div className="mt-1 text-sm font-mono">{g.away_team} {g.away_score??'-'} — {g.home_team} {g.home_score??'-'}</div>
                       )}
                       {g.status==='in_progress' && (<div className="mt-1 text-xs text-amber-800">{g.period?`Q${g.period}`:''} {g.clock||''}</div>)}
-
-                      {/* ODDs */}
-                      {odds && (
-                        <div className="mt-2 text-xs">
-                          <div className="inline-flex items-center gap-2 px-2 py-1 rounded bg-gray-50 border">
-                            <span className="text-gray-600">Odds:</span>
-                            <span className="font-mono">ML {g.home_team}: {odds.ml_home ?? '-'}</span>
-                            <span className="font-mono">ML {g.away_team}: {odds.ml_away ?? '-'}</span>
-                            <span className="font-mono">Spread {g.home_team}: {odds.spread_home ?? '-'}</span>
-                            <span className="font-mono">Total: {odds.total ?? '-'}</span>
-                            <span className="text-[11px] text-gray-500">({odds.book})</span>
-                          </div>
-                        </div>
-                      )}
                     </div>
 
                     <div className="flex gap-2">
@@ -482,7 +503,7 @@ function AppAuthed({ session }) {
                     .map((p,idx)=>(
                       <tr key={idx} className="border-t">
                         <td className="py-1.5">{userNames[p.user_id] || p.user_id.slice(0,6)}</td>
-                        <td><TeamBadge id={p.team_id}/></td>
+                        <td>{p.team_id}</td>
                         <td><span className={
                           p.result==='win'?'text-emerald-700 font-semibold':
                           p.result==='loss'?'text-red-600 font-semibold':
@@ -509,7 +530,7 @@ function AppAuthed({ session }) {
               {(popularity||[]).length>0 ? popularity.map(row=>(
                 <div key={row.team_id}>
                   <div className="flex items-center justify-between text-sm">
-                    <div className="flex items-center gap-2"><TeamBadge id={row.team_id}/><span className="text-gray-500">({row.count})</span></div>
+                    <div className="flex items-center gap-2"><span className="font-medium">{row.team_id}</span><span className="text-gray-500">({row.count})</span></div>
                     <span className="text-gray-700">{row.pct}%</span>
                   </div>
                   <div className="h-2 bg-gray-100 rounded mt-1"><div className="h-2 rounded bg-black" style={{width:`${row.pct}%`}}/></div>
@@ -552,7 +573,7 @@ function AppAuthed({ session }) {
                   {(picks||[]).sort((a,b)=>a.week-b.week).map(p=>(
                     <tr key={p.id} className="border-t">
                       <td className="py-1.5">{p.week}</td>
-                      <td><TeamBadge id={p.team_id}/></td>
+                      <td>{p.team_id}</td>
                       <td><span className={
                         p.result==='win'?'text-emerald-700 font-semibold':
                         p.result==='loss'?'text-red-600 font-semibold':
@@ -584,6 +605,7 @@ function Countdown({ iso }) {
     },1000); return ()=>clearInterval(id);
   },[iso]); return <span>{left}</span>;
 }
+
 
 
 
