@@ -11,18 +11,36 @@ function guard(req, res) {
   return true;
 }
 
-const SCORE_API_BASE = process.env.SCORE_API_BASE || 'https://site.api.espn.com/apis/v2/sports/football/nfl/scoreboard';
+const SCORE_API_BASE = process.env.SCORE_API_BASE || 'https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard';
+
+function mapStatus(ev) {
+  const t = ev?.status?.type || {};
+  if (t.name) {
+    const map = {
+      STATUS_SCHEDULED: 'scheduled',
+      STATUS_IN_PROGRESS: 'in_progress',
+      STATUS_FINAL: 'final',
+      STATUS_POSTPONED: 'postponed',
+      STATUS_CANCELED: 'canceled'
+    };
+    return map[t.name] || 'scheduled';
+  }
+  if (t.state) {
+    const map = { pre: 'scheduled', in: 'in_progress', post: 'final' };
+    return map[t.state] || 'scheduled';
+  }
+  return 'scheduled';
+}
 
 export default async function handler(req, res) {
   if (!guard(req, res)) return;
   try {
-    const today = new Date();
-    const days = [-3, -2, -1, 0, 1]; // últimos 3 días, hoy y mañana
+    const offsets = [-2, -1, 0, 1]; // ayer, hoy, mañana (+ antier por si hay TNF)
     let updated = 0;
 
-    for (const offset of days) {
-      const d = new Date(today);
-      d.setUTCDate(d.getUTCDate() + offset);
+    for (const off of offsets) {
+      const d = new Date();
+      d.setUTCDate(d.getUTCDate() + off);
       const y = d.getUTCFullYear();
       const m = String(d.getUTCMonth() + 1).padStart(2, '0');
       const day = String(d.getUTCDate()).padStart(2, '0');
@@ -31,30 +49,21 @@ export default async function handler(req, res) {
       const r = await fetch(`${SCORE_API_BASE}?dates=${ymd}`);
       if (!r.ok) continue;
       const data = await r.json();
-      const events = data.events || [];
+      const events = data?.events || [];
 
       for (const ev of events) {
-        const id = ev.id;
-        const comp = ev.competitions?.[0];
+        const comp = ev?.competitions?.[0];
         const home = comp?.competitors?.find(c => c.homeAway === 'home');
         const away = comp?.competitors?.find(c => c.homeAway === 'away');
 
-        const statusType = ev.status?.type?.name || 'STATUS_SCHEDULED';
-        const statusMap = {
-          'STATUS_SCHEDULED': 'scheduled',
-          'STATUS_IN_PROGRESS': 'in_progress',
-          'STATUS_FINAL': 'final',
-          'STATUS_POSTPONED': 'postponed',
-          'STATUS_CANCELED': 'canceled'
-        };
-        const status = statusMap[statusType] || 'scheduled';
+        const status = mapStatus(ev);
+        const hs = Number(home?.score ?? (home?.scoreDisplay ?? '')) || null;
+        const as = Number(away?.score ?? (away?.scoreDisplay ?? '')) || null;
 
-        const hs = Number(home?.score) || null;
-        const as = Number(away?.score) || null;
-
+        const getAbbr = (c) => (c?.team?.abbreviation || c?.team?.abbrev || '').toUpperCase();
         let winner = null;
         if (status === 'final' && hs != null && as != null && hs !== as) {
-          winner = (hs > as ? home.team.abbreviation : away.team.abbreviation).toUpperCase();
+          winner = hs > as ? getAbbr(home) : getAbbr(away);
         }
 
         const { error } = await supa.from('games').update({
@@ -62,13 +71,13 @@ export default async function handler(req, res) {
           home_score: hs,
           away_score: as,
           winner_team: winner
-        }).eq('id', id);
+        }).eq('id', ev.id);
 
         if (!error) {
           updated++;
           if (status === 'final') {
             try {
-              await fetch(`${req.headers['x-forwarded-proto'] || 'https'}://${req.headers.host}/api/evalGame?token=${process.env.CRON_TOKEN}&id=${id}`);
+              await fetch(`${req.headers['x-forwarded-proto'] || 'https'}://${req.headers.host}/api/evalGame?token=${process.env.CRON_TOKEN}&id=${ev.id}`);
             } catch {}
           }
         }
