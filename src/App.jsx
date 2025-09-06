@@ -62,7 +62,7 @@ function Login() {
 
   // Password
   const [passEmail, setPassEmail] = useState("");
-  const [passPwd, setPassPwd] = useState("");
+  const [passPwd, setPassPwd] = useState(""); 
   const [isSignup, setIsSignup] = useState(false);
 
   // Reset
@@ -152,15 +152,14 @@ function Login() {
     await supabase.auth.signInWithOAuth({
       provider: "google",
       options: {
-        redirectTo:
-          import.meta.env.VITE_SITE_URL || window.location.origin,
+        redirectTo: import.meta.env.VITE_SITE_URL || window.location.origin,
       },
     });
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-6 bg-gradient-to-b from-slate-50 to-white">
-      <div className="w-full max-w-md space-y-4 p-6 border rounded-2xl bg-white shadow-sm">
+    <div className="min-h-screen flex items-center justify-center p-6 bg-white">
+      <div className="w-full max-w-md space-y-4 p-6 border rounded-2xl bg-white">
         <h1 className="text-3xl font-extrabold tracking-tight text-center">
           {import.meta.env.VITE_LEAGUE_NAME || "Survivor 2025"}
         </h1>
@@ -168,7 +167,7 @@ function Login() {
         <div className="flex gap-2 justify-center">
           <button
             className={`px-3 py-1 rounded border ${
-              tab === "password" ? "bg-black text-white" : "hover:bg-gray-50"
+              tab === "password" ? "bg-black text-white" : ""
             }`}
             onClick={() => setTab("password")}
           >
@@ -176,7 +175,7 @@ function Login() {
           </button>
           <button
             className={`px-3 py-1 rounded border ${
-              tab === "magic" ? "bg-black text-white" : "hover:bg-gray-50"
+              tab === "magic" ? "bg-black text-white" : ""
             }`}
             onClick={() => setTab("magic")}
           >
@@ -184,7 +183,7 @@ function Login() {
           </button>
           <button
             className={`px-3 py-1 rounded border ${
-              tab === "reset" ? "bg-black text-white" : "hover:bg-gray-50"
+              tab === "reset" ? "bg-black text-white" : ""
             }`}
             onClick={() => setTab("reset")}
           >
@@ -192,10 +191,7 @@ function Login() {
           </button>
         </div>
 
-        <button
-          onClick={signGoogle}
-          className="w-full border rounded-lg py-2 hover:bg-gray-50"
-        >
+        <button onClick={signGoogle} className="w-full border rounded-lg py-2">
           Entrar con Google
         </button>
 
@@ -304,56 +300,34 @@ function Login() {
   );
 }
 
-/* ========================= App wrapper (tabs + tema) ========================= */
+/* ========================= App wrapper (tabs, tema blanco) ========================= */
 export default function App() {
   const session = useSession();
   const [view, setView] = useState("game"); // 'game' | 'rules'
-  const [theme, setTheme] = useState(
-    () => localStorage.getItem("theme") || "light"
-  );
-
-  useEffect(() => {
-    const root = document.documentElement;
-    if (theme === "dark") root.classList.add("dark");
-    else root.classList.remove("dark");
-    localStorage.setItem("theme", theme);
-  }, [theme]);
-
   if (!session) return <Login />;
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-slate-50 to-white dark:from-slate-900 dark:to-slate-950 dark:text-slate-100">
-      <div className="w-full border-b bg-white/90 dark:bg-slate-900/90 sticky top-0 z-50 backdrop-blur">
+    <div className="min-h-screen bg-white text-slate-900">
+      <div className="w-full border-b bg-white sticky top-0 z-50">
         <div className="max-w-6xl mx-auto px-4 py-2 flex items-center gap-2">
           <button
             className={`text-sm px-3 py-1 rounded ${
-              view === "game" ? "bg-black text-white" : "hover:bg-gray-100"
-            } dark:hover:bg-slate-800`}
+              view === "game" ? "bg-black text-white" : "border"
+            }`}
             onClick={() => setView("game")}
           >
             Partidos
           </button>
           <button
             className={`text-sm px-3 py-1 rounded ${
-              view === "rules" ? "bg-black text-white" : "hover:bg-gray-100"
-            } dark:hover:bg-slate-800`}
+              view === "rules" ? "bg-black text-white" : "border"
+            }`}
             onClick={() => setView("rules")}
           >
             Reglas
           </button>
-
-          <div className="ml-auto flex items-center gap-2">
-            <button
-              className="text-xs px-3 py-1 rounded border hover:bg-gray-50 dark:hover:bg-slate-800"
-              onClick={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
-              title="Tema claro/oscuro"
-            >
-              {theme === "dark" ? "☀️ Claro" : "🌙 Oscuro"}
-            </button>
-          </div>
         </div>
       </div>
-
       {view === "game" ? <AppAuthed session={session} /> : <Rules />}
     </div>
   );
@@ -379,40 +353,12 @@ function AppAuthed({ session }) {
   // Confirmación pick
   const [pendingPick, setPendingPick] = useState(null); // {game, teamId}
 
-  // Feed de actividad (lateral)
-  const [activity, setActivity] = useState([]);
-
   // Filtros UX
   const [dayFilter, setDayFilter] = useState(localStorage.getItem("dayFilter") || "ALL");
   const [teamQuery, setTeamQuery] = useState(localStorage.getItem("teamQuery") || "");
   const searchRef = useRef(null);
 
-  // Atajos
-  useEffect(() => {
-    const h = (e) => {
-      if (e.key === "/") {
-        e.preventDefault();
-        searchRef.current?.focus();
-      } else if (e.key === "ArrowRight") {
-        setWeek((w) => Math.min(18, w + 1));
-      } else if (e.key === "ArrowLeft") {
-        setWeek((w) => Math.max(1, w - 1));
-      } else if (e.key.toLowerCase() === "g") {
-        // scroll al siguiente partido desbloqueado
-        const nxt = (games || []).find(
-          (g) => DateTime.fromISO(g.start_time) > DateTime.now()
-        );
-        if (nxt) {
-          const el = document.getElementById(`game-${nxt.id}`);
-          if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
-        }
-      }
-    };
-    window.addEventListener("keydown", h);
-    return () => window.removeEventListener("keydown", h);
-  }, [games]);
-
-  /* ---------- carga base ---------- */
+  // ----- Carga base -----
   const loadTeams = async () => {
     const { data: ts } = await supabase.from("teams").select("*");
     const map = {};
@@ -500,15 +446,6 @@ function AppAuthed({ session }) {
     setPopularity(list);
   };
 
-  const loadActivity = async () => {
-    const { data } = await supabase
-      .from("activity")
-      .select("user_id,type,payload,created_at,profiles(display_name)")
-      .order("created_at", { ascending: false })
-      .limit(12);
-    setActivity(data || []);
-  };
-
   const init = async () => {
     const email = session.user.email;
     let { data: prof } = await supabase
@@ -546,7 +483,6 @@ function AppAuthed({ session }) {
 
     await loadGames(week);
     await loadLeaguePicks(week);
-    await loadActivity();
   };
 
   useEffect(() => {
@@ -582,16 +518,6 @@ function AppAuthed({ session }) {
 
   const popPct = (teamId) =>
     popularity.find((p) => p.team_id === teamId)?.pct ?? 0;
-
-  const chipDay = (iso) => {
-    const wd = DateTime.fromISO(iso).setZone(TZ).weekday;
-    if (wd === 4) return "TNF";
-    if (wd === 5) return "Fri";
-    if (wd === 6) return "Sat";
-    if (wd === 7) return "Sun";
-    if (wd === 1) return "MNF";
-    return "";
-  };
 
   const canPick = (g, team) => {
     const locked = DateTime.fromISO(g.start_time) <= DateTime.now();
@@ -636,29 +562,87 @@ function AppAuthed({ session }) {
       });
       if (error) return alert(error.message);
     }
-    // Recarga picks + actividad
     const { data: pk } = await supabase
       .from("picks")
       .select("*")
       .eq("user_id", session.user.id);
     setPicks(pk || []);
-    // guarda actividad (simple, sin trigger)
-    await supabase.from("activity").insert({
-      user_id: session.user.id,
-      type: "pick",
-      payload: { week, team: teamId },
-    });
-    loadActivity();
     setPendingPick(null);
   };
 
-  /* ---------- UI building blocks ---------- */
+  /* ---------- UI blocks ---------- */
+  const ScoreStrip = ({ g }) => {
+    const status = g.status || "scheduled";
+    const score = (
+      <div className="flex items-center gap-4">
+        <div className="text-xl font-bold">{g.away_team} <span className="tabular-nums">{g.away_score ?? 0}</span></div>
+        <div className="text-gray-300">—</div>
+        <div className="text-xl font-bold">{g.home_team} <span className="tabular-nums">{g.home_score ?? 0}</span></div>
+      </div>
+    );
+    if (status === "final") {
+      return (
+        <div className="flex items-center justify-between">
+          {score}
+          <span className="text-xs px-2 py-0.5 rounded bg-gray-100">FINAL</span>
+        </div>
+      );
+    }
+    if (status === "in_progress") {
+      return (
+        <div className="flex items-center justify-between">
+          {score}
+          <div className="text-xs flex items-center gap-2">
+            <span className="px-2 py-0.5 rounded bg-amber-100 text-amber-900">
+              Q{g.period ?? ""} {g.clock ?? ""}
+            </span>
+            {g.possession && (
+              <span className="px-2 py-0.5 rounded bg-gray-100">
+                ⬤ {g.possession}
+              </span>
+            )}
+          </div>
+        </div>
+      );
+    }
+    // scheduled / pre
+    return (
+      <div className="flex items-center justify-between">
+        {score}
+        <div className="text-xs flex items-center gap-2">
+          <span className="px-2 py-0.5 rounded bg-gray-100">
+            Kickoff en <Countdown iso={g.start_time} />
+          </span>
+        </div>
+      </div>
+    );
+  };
+
+  const LiveQuickStats = ({ g }) => {
+    if (g.status !== "in_progress") return null;
+    const items = [];
+    if (g.down) items.push(`${g.down} & ${g.distance ?? "-"}`);
+    if (g.yard_line) items.push(`En ${g.yard_line}`);
+    if (g.red_zone) items.push("Red Zone");
+    // puedes añadir: g.drive_plays, g.drive_yards, g.last_play, etc. si los guardas
+    if (items.length === 0) return null;
+    return (
+      <div className="mt-2 text-xs text-gray-700">
+        {items.map((t, i) => (
+          <span key={i} className="mr-2 px-2 py-0.5 rounded bg-gray-50 border">
+            {t}
+          </span>
+        ))}
+      </div>
+    );
+  };
+
   const TeamBox = ({ game, teamId }) => {
     const disabled = !canPick(game, teamId).ok;
     const selected =
-      myPickThisWeek?.game_id === game.id &&
-      myPickThisWeek?.team_id === teamId;
+      myPickThisWeek?.game_id === game.id && myPickThisWeek?.team_id === teamId;
     const pct = popPct(teamId);
+    // favorito simple
     const { last } = oddsPairs[game.id] || {};
     const fav =
       last &&
@@ -668,16 +652,13 @@ function AppAuthed({ session }) {
         (teamId === game.away_team &&
           ((last.spread_away ?? 0) < (last.spread_home ?? 0) ||
             (last.ml_away ?? 9999) < (last.ml_home ?? 9999))));
-
     return (
       <button
         onClick={() => confirmPick(game, teamId)}
         disabled={disabled}
         className={[
-          "w-full text-left rounded-2xl border transition px-4 py-3",
-          selected
-            ? "border-emerald-500 ring-2 ring-emerald-200 bg-emerald-50"
-            : "border-gray-200 hover:bg-gray-50 dark:hover:bg-slate-800",
+          "w-full text-left rounded-xl border transition px-4 py-3",
+          selected ? "border-emerald-500 bg-emerald-50" : "border-gray-200 hover:bg-gray-50",
           disabled ? "opacity-50 cursor-not-allowed" : "",
         ].join(" ")}
       >
@@ -700,64 +681,7 @@ function AppAuthed({ session }) {
     );
   };
 
-  const GameHeader = ({ g }) => {
-    const local = DateTime.fromISO(g.start_time)
-      .setZone(TZ)
-      .toFormat("EEE dd LLL HH:mm");
-    const chip = chipDay(g.start_time);
-    const special = (() => {
-      const notes = (g.notes || "").toLowerCase();
-      const city = (g.venue_city || "").toLowerCase();
-      if (notes.includes("thanksgiving")) return "🦃";
-      if (notes.includes("christmas") || notes.includes("navidad")) return "🎄";
-      if (city.includes("london")) return "🇬🇧";
-      if (city.includes("frankfurt") || city.includes("munich")) return "🇩🇪";
-      if (g.neutral_site) return "🏟️";
-      return null;
-    })();
-
-    // ticker en vivo si está en progreso
-    const live =
-      g.status === "in_progress"
-        ? `Q${g.period || ""} ${g.clock || ""} · ${g.away_team} ${
-            g.away_score ?? ""
-          }–${g.home_score ?? ""} ${g.home_team}`
-        : null;
-
-    return (
-      <div>
-        <div className="text-sm flex items-center gap-2 flex-wrap">
-          <TeamChip id={g.away_team} />
-          <span className="mx-1 text-gray-400">@</span>
-          <TeamChip id={g.home_team} />
-          {chip && (
-            <span className="text-[11px] px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-800">
-              {chip}
-            </span>
-          )}
-          {special && (
-            <span className="text-[11px] px-1.5 py-0.5 rounded bg-teal-100 text-teal-800">
-              {special}
-            </span>
-          )}
-        </div>
-        <div className="mt-1 text-xs text-gray-600 dark:text-gray-300">
-          Kickoff:{" "}
-          <span className="px-1.5 py-0.5 rounded bg-gray-100 dark:bg-slate-800">
-            {local}
-          </span>{" "}
-          · Lock en: <Countdown iso={g.start_time} />
-        </div>
-        {live && (
-          <div className="mt-1 text-xs font-medium text-amber-700 dark:text-amber-400">
-            {live}
-          </div>
-        )}
-      </div>
-    );
-  };
-
-  /* ---------- listado filtrado ---------- */
+  /* ---------- filtros ---------- */
   const gamesByDay = useMemo(() => {
     if (dayFilter === "ALL") return games;
     const map = { THU: 4, FRI: 5, SAT: 6, SUN: 7, MON: 1 };
@@ -782,6 +706,54 @@ function AppAuthed({ session }) {
     );
   }, [gamesByDay, teamQuery, teamsMap]);
 
+  /* ---------- carga inicial ---------- */
+  const init = async () => {
+    const email = session.user.email;
+    let { data: prof } = await supabase
+      .from("profiles")
+      .select("*")
+      .eq("email", email)
+      .single();
+    if (!prof) {
+      await supabase
+        .from("profiles")
+        .insert({
+          id: session.user.id,
+          email,
+          display_name: email.split("@")[0],
+        });
+      const r = await supabase
+        .from("profiles")
+        .select("*")
+        .eq("email", email)
+        .single();
+      prof = r.data;
+    }
+    setMe(prof);
+
+    await loadTeams();
+
+    const { data: pk } = await supabase
+      .from("picks")
+      .select("*")
+      .eq("user_id", session.user.id);
+    setPicks(pk || []);
+
+    const { data: st } = await supabase.from("standings").select("*");
+    setStandings(st || []);
+
+    await loadGames(week);
+    await loadLeaguePicks(week);
+  };
+
+  useEffect(() => {
+    init();
+  }, []);
+  useEffect(() => {
+    loadGames(week);
+    loadLeaguePicks(week);
+  }, [week]);
+
   /* ========================= Render ========================= */
   return (
     <div className="max-w-6xl mx-auto p-4 md:p-6">
@@ -790,15 +762,15 @@ function AppAuthed({ session }) {
           <h1 className="text-3xl font-extrabold tracking-tight">
             {import.meta.env.VITE_LEAGUE_NAME || "2025"}
           </h1>
-          <p className="text-sm text-gray-700 dark:text-gray-300">
+          <p className="text-sm text-gray-700">
             Hola, <b>{me?.display_name}</b> · Vidas:{" "}
-            <span className="inline-block px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-200">
+            <span className="inline-block px-2 py-0.5 rounded bg-emerald-100 text-emerald-800">
               {me?.lives}
             </span>
           </p>
         </div>
         <button
-          className="text-sm underline hover:text-red-600"
+          className="text-sm underline"
           onClick={() => supabase.auth.signOut()}
         >
           Salir
@@ -807,7 +779,7 @@ function AppAuthed({ session }) {
 
       {/* Alertas */}
       {showPickAlert && (
-        <div className="mt-3 p-3 border-2 border-red-300 rounded-xl bg-red-50 text-red-900 text-sm sticky top-12 z-10">
+        <div className="mt-3 p-3 border-2 border-red-300 rounded-xl bg-red-50 text-red-900 text-sm">
           🔔 Aún no tienes pick en W{week}. El primer kickoff es en{" "}
           <b>
             <Countdown iso={nextKickoffISO} />
@@ -816,16 +788,14 @@ function AppAuthed({ session }) {
         </div>
       )}
 
-      {/* Toolbar + Activity */}
+      {/* Toolbar */}
       <section className="mt-4 grid md:grid-cols-3 gap-4">
-        <div className="p-4 border rounded-2xl bg-white shadow-sm dark:bg-slate-900">
+        <div className="p-4 border rounded-2xl bg-white">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <label className="text-xs text-gray-500 dark:text-gray-400">
-                Semana
-              </label>
+              <label className="text-xs text-gray-500">Semana</label>
               <select
-                className="border p-1 rounded-lg dark:bg-slate-800"
+                className="border p-1 rounded-lg"
                 value={week}
                 onChange={(e) => setWeek(Number(e.target.value))}
               >
@@ -841,8 +811,8 @@ function AppAuthed({ session }) {
               {["ALL", "THU", "FRI", "SAT", "SUN", "MON"].map((d) => (
                 <button
                   key={d}
-                  className={`px-2 py-1 rounded border dark:border-slate-700 ${
-                    dayFilter === d ? "bg-black text-white" : "hover:bg-gray-50 dark:hover:bg-slate-800"
+                  className={`px-2 py-1 rounded border ${
+                    dayFilter === d ? "bg-black text-white" : ""
                   }`}
                   onClick={() => setDayFilter(d)}
                 >
@@ -855,7 +825,7 @@ function AppAuthed({ session }) {
           <input
             id="searchTeam"
             ref={searchRef}
-            className="mt-3 border w-full p-2 rounded-lg dark:bg-slate-800"
+            className="mt-3 border w-full p-2 rounded-lg"
             placeholder="Buscar equipo..."
             value={teamQuery}
             onChange={(e) => setTeamQuery(e.target.value)}
@@ -863,7 +833,7 @@ function AppAuthed({ session }) {
 
           <div className="mt-3 flex items-center gap-2">
             <button
-              className="text-xs px-3 py-1 rounded border hover:bg-gray-50 dark:hover:bg-slate-800"
+              className="text-xs px-3 py-1 rounded border"
               onClick={() =>
                 downloadCSV("mis_picks.csv", [
                   ["week", "team_id", "result", "auto_pick", "updated_at"],
@@ -880,7 +850,7 @@ function AppAuthed({ session }) {
               Exportar mis picks (CSV)
             </button>
             <button
-              className="text-xs px-3 py-1 rounded border hover:bg-gray-50 dark:hover:bg-slate-800"
+              className="text-xs px-3 py-1 rounded border"
               onClick={() =>
                 downloadCSV("standings.csv", [
                   ["player", "lives", "wins", "losses", "pushes", "margin_sum"],
@@ -900,74 +870,52 @@ function AppAuthed({ session }) {
           </div>
         </div>
 
-        {/* Feed actividad */}
-        <aside className="md:col-span-2 p-4 border rounded-2xl bg-white shadow-sm dark:bg-slate-900">
-          <div className="flex items-center justify-between">
-            <h3 className="font-semibold">Actividad reciente</h3>
-            <button
-              className="text-xs px-2 py-1 rounded border hover:bg-gray-50 dark:hover:bg-slate-800"
-              onClick={loadActivity}
-            >
-              Refrescar
-            </button>
-          </div>
-          <div className="mt-2 grid sm:grid-cols-2 lg:grid-cols-3 gap-2">
-            {(activity || []).map((a, i) => {
-              const who = a.profiles?.display_name || a.user_id.slice(0, 6);
-              const when = DateTime.fromISO(a.created_at)
-                .setZone(TZ)
-                .toRelative();
-              return (
-                <div
-                  key={i}
-                  className="text-xs p-2 border rounded-lg bg-gray-50 dark:bg-slate-800 dark:border-slate-700"
-                >
-                  <b>{who}</b> eligió <b>{a.payload?.team}</b> (W
-                  {a.payload?.week}) · {when}
-                </div>
-              );
-            })}
-            {(!activity || activity.length === 0) && (
-              <div className="text-xs text-gray-500">Sin actividad aún.</div>
-            )}
-          </div>
-        </aside>
+        {/* Resumen rápido (opcionalmente puedes poner “Top 3 sugerencias” aquí) */}
+        <div className="md:col-span-2 p-4 border rounded-2xl bg-white">
+          <h3 className="font-semibold">Resumen</h3>
+          <p className="text-sm text-gray-600">
+            Elige tu pick en los partidos de abajo. Puedes filtrar por día o
+            buscar por equipo. El lock es “rolling” por partido.
+          </p>
+        </div>
       </section>
 
-      {/* Partidos */}
-      <section className="mt-4 p-4 border rounded-2xl bg-white shadow-sm dark:bg-slate-900">
+      {/* Partidos (score + stats + boxes) */}
+      <section className="mt-4 p-4 border rounded-2xl bg-white">
         <h2 className="font-semibold mb-3">Partidos W{week}</h2>
         <div className="space-y-3">
           {gamesFiltered.map((g) => {
             const locked = DateTime.fromISO(g.start_time) <= DateTime.now();
+            const local = DateTime.fromISO(g.start_time)
+              .setZone(TZ)
+              .toFormat("EEE dd LLL HH:mm");
             return (
               <div
                 key={g.id}
-                id={`game-${g.id}`}
-                className={`p-4 border rounded-xl shadow-sm ${
-                  locked ? "opacity-60" : ""
-                }`}
+                className={`p-4 border rounded-xl ${locked ? "opacity-60" : ""}`}
               >
-                <GameHeader g={g} />
+                {/* Encabezado: nombres completos + kickoff/lock */}
+                <div className="flex items-center justify-between">
+                  <div className="text-sm flex items-center gap-2 flex-wrap">
+                    <TeamChip id={g.away_team} />
+                    <span className="mx-1 text-gray-400">@</span>
+                    <TeamChip id={g.home_team} />
+                  </div>
+                  <div className="text-xs text-gray-600">
+                    Kickoff: <span className="px-1.5 py-0.5 rounded bg-gray-100">{local}</span> · Lock: <Countdown iso={g.start_time} />
+                  </div>
+                </div>
+
+                {/* Score en grande + estado */}
+                <div className="mt-3">
+                  <ScoreStrip g={g} />
+                  <LiveQuickStats g={g} />
+                </div>
+
+                {/* Solo los 2 boxes minimalistas para elegir */}
                 <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <TeamBox game={g} teamId={g.home_team} />
                   <TeamBox game={g} teamId={g.away_team} />
-                </div>
-                <div className="mt-2 text-xs">
-                  Estado:{" "}
-                  <span
-                    className={
-                      g.status === "in_progress"
-                        ? "text-amber-700 font-medium"
-                        : g.status === "final"
-                        ? "text-emerald-700 font-medium"
-                        : g.status === "postponed"
-                        ? "text-gray-700 font-medium"
-                        : "text-gray-700"
-                    }
-                  >
-                    {g.status}
-                  </span>
                 </div>
               </div>
             );
@@ -982,12 +930,12 @@ function AppAuthed({ session }) {
 
       {/* Liga: picks + popularidad */}
       <section className="mt-6 grid md:grid-cols-2 gap-4">
-        <div className="p-4 border rounded-2xl bg-white shadow-sm dark:bg-slate-900">
+        <div className="p-4 border rounded-2xl bg-white">
           <h2 className="font-semibold">Picks de la liga (W{week})</h2>
           <div className="overflow-x-auto">
             <table className="w-full text-sm mt-3">
               <thead>
-                <tr className="text-left text-gray-500 dark:text-gray-400">
+                <tr className="text-left text-gray-500">
                   <th>Jugador</th>
                   <th>Equipo</th>
                   <th>Resultado</th>
@@ -1028,7 +976,7 @@ function AppAuthed({ session }) {
                           </span>
                         </td>
                         <td>{p.auto_pick ? "Sí" : "No"}</td>
-                        <td className="text-xs text-gray-500 dark:text-gray-400">
+                        <td className="text-xs text-gray-500">
                           {p.updated_at
                             ? DateTime.fromISO(p.updated_at)
                                 .setZone(TZ)
@@ -1049,9 +997,9 @@ function AppAuthed({ session }) {
           </div>
         </div>
 
-        <div className="p-4 border rounded-2xl bg-white shadow-sm dark:bg-slate-900">
+        <div className="p-4 border rounded-2xl bg-white">
           <h2 className="font-semibold">Popularidad de equipos</h2>
-          <p className="text-xs text-gray-600 dark:text-gray-400">
+          <p className="text-xs text-gray-600">
             Porcentaje de jugadores que pickearon ese equipo.
           </p>
           <div className="mt-3 space-y-2">
@@ -1063,13 +1011,11 @@ function AppAuthed({ session }) {
                       <TeamMini id={row.team_id} />{" "}
                       <span className="text-gray-500">({row.count})</span>
                     </div>
-                    <span className="text-gray-700 dark:text-gray-200">
-                      {row.pct}%
-                    </span>
+                    <span className="text-gray-700">{row.pct}%</span>
                   </div>
-                  <div className="h-2 bg-gray-100 dark:bg-slate-800 rounded mt-1">
+                  <div className="h-2 bg-gray-100 rounded mt-1">
                     <div
-                      className="h-2 rounded bg-black dark:bg-white"
+                      className="h-2 rounded bg-black"
                       style={{ width: `${row.pct}%` }}
                     />
                   </div>
@@ -1086,12 +1032,12 @@ function AppAuthed({ session }) {
 
       {/* Standings + Historial */}
       <section className="mt-6 grid md:grid-cols-2 gap-4">
-        <div className="p-4 border rounded-2xl bg-white shadow-sm dark:bg-slate-900">
+        <div className="p-4 border rounded-2xl bg-white">
           <h2 className="font-semibold">Tabla de supervivientes</h2>
           <div className="overflow-x-auto">
             <table className="w-full text-sm mt-3">
               <thead>
-                <tr className="text-left text-gray-500 dark:text-gray-400">
+                <tr className="text-left text-gray-500">
                   <th>Jugador</th>
                   <th>Vidas</th>
                   <th>W</th>
@@ -1123,12 +1069,12 @@ function AppAuthed({ session }) {
           </div>
         </div>
 
-        <div className="p-4 border rounded-2xl bg-white shadow-sm dark:bg-slate-900">
+        <div className="p-4 border rounded-2xl bg-white">
           <h2 className="font-semibold">Historial de tus picks</h2>
           <div className="overflow-x-auto">
             <table className="w-full text-sm mt-3">
               <thead>
-                <tr className="text-left text-gray-500 dark:text-gray-400">
+                <tr className="text-left text-gray-500">
                   <th>W</th>
                   <th>Equipo</th>
                   <th>Resultado</th>
@@ -1176,15 +1122,14 @@ function AppAuthed({ session }) {
       {/* Modal confirmación */}
       {pendingPick && (
         <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50">
-          <div className="w-full max-w-sm bg-white dark:bg-slate-900 rounded-2xl p-5 border shadow-xl">
+          <div className="w-full max-w-sm bg-white rounded-2xl p-5 border">
             <h3 className="font-semibold text-lg">Confirmar pick</h3>
             <p className="mt-2 text-sm">
-              ¿Confirmas tu pick de{" "}
-              <b>{pendingPick.teamId}</b> en W{week}?
+              ¿Confirmas tu pick de <b>{pendingPick.teamId}</b> en W{week}?
             </p>
             <div className="mt-4 flex gap-2">
               <button
-                className="px-4 py-2 rounded border hover:bg-gray-50 dark:hover:bg-slate-800"
+                className="px-4 py-2 rounded border"
                 onClick={() => setPendingPick(null)}
               >
                 Cancelar
@@ -1199,10 +1144,16 @@ function AppAuthed({ session }) {
           </div>
         </div>
       )}
+
+      {/* Aviso si falta pick y está cerca el kickoff */}
+      {(!myPickThisWeek && nextKickoffISO) && (
+        <div className="fixed bottom-4 right-4 px-4 py-2 rounded-xl bg-black text-white text-sm shadow-lg">
+          Recuerda elegir: kickoff en <Countdown iso={nextKickoffISO} />
+        </div>
+      )}
     </div>
   );
 }
-
 
 
 
