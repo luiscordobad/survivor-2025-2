@@ -10,10 +10,10 @@ const ADMIN_EMAILS = (import.meta.env.VITE_ADMIN_EMAILS || '')
 const isAdminEmail = (email) => ADMIN_EMAILS.includes((email||'').toLowerCase());
 
 // ----- utils -----
-const logisticP = (spread /* negativo favorece al local */) => {
+const logisticP = (spread) => {
   if (spread == null) return null;
   const k = 0.23;
-  const p = 1 / (1 + Math.exp(-(-k * spread))); // spread_home negativo => mayor p(local)
+  const p = 1 / (1 + Math.exp(-(-k * spread)));
   return Math.round(p * 100);
 };
 function downloadCSV(filename, rows) {
@@ -24,18 +24,16 @@ function downloadCSV(filename, rows) {
   a.href=url; a.download=filename; a.click(); URL.revokeObjectURL(url);
 }
 const favFromOdds = (g, last) => {
-  if (!last) return { fav:null, basis:null, homeFav:null };
-  // 1) spread
+  if (!last) return { fav:null, basis:null };
   if (last.spread_home != null && last.spread_away != null) {
-    if (last.spread_home < last.spread_away) return { fav: g.home_team, basis: `Spread ${last.spread_home}`, homeFav:true };
-    if (last.spread_away < last.spread_home) return { fav: g.away_team, basis: `Spread ${last.spread_away}`, homeFav:false };
+    if (last.spread_home < last.spread_away) return { fav:g.home_team, basis:`Spread ${last.spread_home}` };
+    if (last.spread_away < last.spread_home) return { fav:g.away_team, basis:`Spread ${last.spread_away}` };
   }
-  // 2) moneyline
   if (last.ml_home != null && last.ml_away != null) {
-    if (last.ml_home < last.ml_away) return { fav: g.home_team, basis: `ML ${last.ml_home}`, homeFav:true };
-    if (last.ml_away < last.ml_home) return { fav: g.away_team, basis: `ML ${last.ml_away}`, homeFav:false };
+    if (last.ml_home < last.ml_away) return { fav:g.home_team, basis:`ML ${last.ml_home}` };
+    if (last.ml_away < last.ml_home) return { fav:g.away_team, basis:`ML ${last.ml_away}` };
   }
-  return { fav:null, basis:null, homeFav:null };
+  return { fav:null, basis:null };
 };
 
 // ----- sesión -----
@@ -49,7 +47,7 @@ function useSession() {
   return session;
 }
 
-// ----- LOGIN (resumido) -----
+// ----- LOGIN (compacto) -----
 function Login() {
   const [tab, setTab] = useState('password');
   const [email, setEmail] = useState(''); const [sent, setSent] = useState(false);
@@ -132,7 +130,7 @@ function Login() {
 // ----- APP -----
 export default function App() {
   const session = useSession();
-  const [view, setView] = useState('game'); // 'game' | 'rules'
+  const [view, setView] = useState('game');
   if (!session) return <Login />;
   return (
     <div>
@@ -240,7 +238,6 @@ function AppAuthed({ session }) {
 
   const myPickThisWeek = useMemo(()=> (picks||[]).find(p=>p.week===week), [picks,week]);
 
-  // alerta 90 min si no hay pick
   const nextKickoffISO = useMemo(()=>{
     const up = (games||[]).find(g=>DateTime.fromISO(g.start_time)>DateTime.now());
     return up?.start_time || null;
@@ -271,7 +268,6 @@ function AppAuthed({ session }) {
     setPicks(pk||[]); setUsedTeams(new Set((pk||[]).map(x=>x.team_id)));
   };
 
-  // helpers UI
   const popPct = (teamId)=> popularity.find(p=>p.team_id===teamId)?.pct ?? 0;
   const isDiff = (teamId)=> popPct(teamId) < 15;
 
@@ -286,7 +282,7 @@ function AppAuthed({ session }) {
       const a = { team:g.away_team, available: !usedTeams.has(g.away_team), wp: wpAway, pct: popPct(g.away_team), game:g };
       [h,a].forEach(r=>{
         if (!r.available || r.wp==null) return;
-        const score = r.wp - r.pct * 0.6; // pondera diferencial
+        const score = r.wp - r.pct * 0.6;
         rows.push({ ...r, score });
       });
     }
@@ -334,6 +330,15 @@ function AppAuthed({ session }) {
     }
   };
 
+  // Chip de popularidad (más grande y llamativo, sin barra completa)
+  const PopChip = ({ team, pct }) => (
+    <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border bg-gray-50">
+      <span className="text-[13px] font-semibold">{team}</span>
+      <span className={`text-[16px] font-extrabold ${pct>=25?'text-gray-900':'text-indigo-700'}`}>{pct}%</span>
+      {pct<15 && <span className="text-[10px] px-1 rounded bg-indigo-100 text-indigo-800">DIF</span>}
+    </span>
+  );
+
   return (
     <div className="min-h-screen p-4 md:p-6 bg-gradient-to-b from-slate-50 to-white text-slate-900">
       <div className="max-w-6xl mx-auto">
@@ -351,15 +356,11 @@ function AppAuthed({ session }) {
           </div>
         )}
 
-        {/* Alert pick 90m */}
-        {(() => {
-          if (!showPickAlert) return null;
-          return (
-            <div className="mt-2 mb-4 p-4 border-2 border-red-300 rounded-xl bg-red-50 text-red-900 text-sm">
-              🔔 Aún no tienes pick en W{week}. El primer kickoff es en <b><Countdown iso={nextKickoffISO}/></b>.
-            </div>
-          );
-        })()}
+        {showPickAlert && (
+          <div className="mt-2 mb-4 p-4 border-2 border-red-300 rounded-xl bg-red-50 text-red-900 text-sm">
+            🔔 Aún no tienes pick en W{week}. El primer kickoff es en <b><Countdown iso={nextKickoffISO}/></b>.
+          </div>
+        )}
 
         {/* Toolbar */}
         <section className="mt-4 grid gap-4">
@@ -398,7 +399,7 @@ function AppAuthed({ session }) {
               </div>
             </div>
 
-            {/* Comparador y autopickOne */}
+            {/* Top 3 y autopickOne */}
             <div className="mt-3 p-3 rounded-lg bg-gray-50 border">
               <div className="flex items-center justify-between">
                 <h3 className="font-medium">Top 3 sugerencias (win% y diferencial)</h3>
@@ -420,16 +421,16 @@ function AppAuthed({ session }) {
                 ))}
                 {top3.length===0 && <div className="text-xs text-gray-500">No hay sugerencias disponibles.</div>}
               </div>
-            </div>
 
-            {amAdmin && (
-              <div className="p-3 mt-3 rounded-lg bg-gray-50 border text-sm flex flex-wrap items-center gap-2">
-                <span className="font-medium mr-2">Admin:</span>
-                <button className="px-3 py-1 rounded border hover:bg-gray-100" onClick={()=>callAdmin('/api/autopick')}>Auto-pick global (W{week})</button>
-                <button className="px-3 py-1 rounded border hover:bg-gray-100" onClick={()=>callAdmin('/api/notifyReminders')}>Recordatorios (~3h)</button>
-                <button className="px-3 py-1 rounded border hover:bg-gray-100" onClick={()=>callAdmin('/api/syncOdds')}>Sync odds</button>
-              </div>
-            )}
+              {isAdminEmail(session.user.email) && (
+                <div className="p-3 mt-3 rounded-lg bg-gray-50 border text-sm flex flex-wrap items-center gap-2">
+                  <span className="font-medium mr-2">Admin:</span>
+                  <button className="px-3 py-1 rounded border hover:bg-gray-100" onClick={()=>callAdmin('/api/autopick')}>Auto-pick global (W{week})</button>
+                  <button className="px-3 py-1 rounded border hover:bg-gray-100" onClick={()=>callAdmin('/api/notifyReminders')}>Recordatorios (~3h)</button>
+                  <button className="px-3 py-1 rounded border hover:bg-gray-100" onClick={()=>callAdmin('/api/syncOdds')}>Sync odds</button>
+                </div>
+              )}
+            </div>
           </div>
         </section>
 
@@ -443,7 +444,7 @@ function AppAuthed({ session }) {
               const chip = chipDay(g.start_time);
               const special = chipVenue(g);
               const { last, prev } = oddsPairs[g.id] || {};
-              const { fav, basis, homeFav } = favFromOdds(g, last);
+              const { fav, basis } = favFromOdds(g, last);
               const wpHome = logisticP(last?.spread_home);
               const wpAway = (last?.spread_away!=null) ? logisticP(-last.spread_away) : null;
               const popHome = popPct(g.home_team);
@@ -452,16 +453,6 @@ function AppAuthed({ session }) {
               const spreadMoved = prev?.spread_home!=null && last?.spread_home!=null
                 ? (last.spread_home - prev.spread_home) : null;
               const arrow = spreadMoved==null ? '' : (spreadMoved<0 ? '↑' : (spreadMoved>0 ? '↓' : '→'));
-
-              // barras de uso (grandes)
-              const Bar = ({ label, pct, highlight }) => (
-                <div className={`w-full rounded-xl overflow-hidden border ${highlight?'border-emerald-300':'border-gray-200'} bg-gray-100`}>
-                  <div className={`h-8 flex items-center justify-between px-3 ${highlight?'bg-emerald-600 text-white':'bg-gray-900 text-white'}`} style={{ width: `${Math.max(8, pct)}%` }}>
-                    <span className="font-semibold">{label}</span>
-                    <span className="font-bold">{pct}%</span>
-                  </div>
-                </div>
-              );
 
               return (
                 <div key={g.id} className={`p-4 border rounded-xl ${locked?'opacity-60':'bg-white'} shadow-sm`}>
@@ -481,6 +472,7 @@ function AppAuthed({ session }) {
                         Kickoff: <span className="px-1.5 py-0.5 rounded bg-gray-100">{local}</span> · Lock en: <Countdown iso={g.start_time}/>
                       </div>
 
+                      {/* ODDS visibles */}
                       {last && (
                         <div className="mt-2 text-xs">
                           <div className="inline-flex items-center gap-2 px-2 py-1 rounded bg-gray-50 border">
@@ -498,10 +490,10 @@ function AppAuthed({ session }) {
                         </div>
                       )}
 
-                      {/* Banners grandes de % de uso */}
-                      <div className="mt-3 space-y-2">
-                        <Bar label={`${g.home_team} · uso liga`} pct={popHome} highlight={isDiff(g.home_team)} />
-                        <Bar label={`${g.away_team} · uso liga`} pct={popAway} highlight={isDiff(g.away_team)} />
+                      {/* Popularidad compacta (números grandes) */}
+                      <div className="mt-2 flex items-center gap-2 flex-wrap">
+                        <PopChip team={g.home_team} pct={popHome} />
+                        <PopChip team={g.away_team} pct={popAway} />
                       </div>
                     </div>
 
