@@ -1,3 +1,152 @@
+// src/App.jsx
+import { useEffect, useMemo, useState } from 'react';
+import { DateTime } from 'luxon';
+import { supabase } from './lib/supabaseClient';
+import Rules from './Rules';
+
+const TZ = import.meta.env.VITE_TZ || 'America/Mexico_City';
+const ADMIN_EMAILS = (import.meta.env.VITE_ADMIN_EMAILS || '')
+  .split(',').map(s=>s.trim().toLowerCase()).filter(Boolean);
+const isAdminEmail = (email) => ADMIN_EMAILS.includes((email||'').toLowerCase());
+
+// ---------- utilidades compartidas ----------
+const logisticP = (spread) => {
+  if (spread == null) return null;
+  const k = 0.23; // pendiente simple para convertir spread -> win%
+  const p = 1 / (1 + Math.exp(-(-k * spread))); // spread_home negativo => local favorito
+  return Math.round(p * 100);
+};
+function downloadCSV(filename, rows) {
+  const esc = v => v==null ? '' : `"${String(v).replaceAll('"','""')}"`;
+  const csv = rows.map(r=>r.map(esc).join(',')).join('\n')+'\n';
+  const blob = new Blob([csv], {type:'text/csv;charset=utf-8;'});
+  const url = URL.createObjectURL(blob); const a=document.createElement('a');
+  a.href=url; a.download=filename; a.click(); URL.revokeObjectURL(url);
+}
+function Countdown({ iso }) {
+  const [left, setLeft] = useState('');
+  useEffect(()=>{
+    const id=setInterval(()=>{
+      const t=DateTime.fromISO(iso).setZone(TZ).diffNow(['days','hours','minutes','seconds']).toObject();
+      const d=Math.max(0,Math.floor(t.days||0));
+      const h=Math.max(0,Math.floor(t.hours||0));
+      const m=Math.max(0,Math.floor(t.minutes||0));
+      const s=Math.max(0,Math.floor(t.seconds||0));
+      setLeft(`${d}d ${h}h ${m}m ${s}s`);
+    },1000); return ()=>clearInterval(id);
+  },[iso]); return <span>{left}</span>;
+}
+
+// ---------- sesión ----------
+function useSession() {
+  const [session, setSession] = useState(null);
+  useEffect(()=>{
+    supabase.auth.getSession().then(({data})=>setSession(data.session));
+    const {data:sub} = supabase.auth.onAuthStateChange((_e,s)=>setSession(s));
+    return ()=>sub.subscription.unsubscribe();
+  },[]);
+  return session;
+}
+
+// ---------- login ----------
+function Login() {
+  const [tab, setTab] = useState('password');
+  const [email, setEmail] = useState(''); const [sent, setSent] = useState(false);
+  const [passEmail, setPassEmail] = useState(''); const [passPwd, setPassPwd] = useState('');
+  const [busy,setBusy]=useState(false); const [isSignup,setIsSignup]=useState(false);
+  const [resetEmail,setResetEmail]=useState(''); const [newPwd,setNewPwd]=useState(''); const [resetInfo,setResetInfo]=useState('');
+  useEffect(()=>{ if ((window.location.hash||'').includes('type=recovery')) setTab('reset'); },[]);
+  const sendMagic = async e => { e.preventDefault();
+    const { error } = await supabase.auth.signInWithOtp({ email, options:{ emailRedirectTo: import.meta.env.VITE_SITE_URL || window.location.origin }});
+    if (!error) setSent(true); else alert(error.message);
+  };
+  const submitPasswordAuth = async e => { e.preventDefault(); setBusy(true);
+    try{
+      if (isSignup) {
+        const { error } = await supabase.auth.signUp({ email: passEmail, password: passPwd, options:{ emailRedirectTo: import.meta.env.VITE_SITE_URL || window.location.origin }});
+        if (error) throw error; alert('Cuenta creada. Revisa tu correo para confirmar.');
+      } else {
+        const { error } = await supabase.auth.signInWithPassword({ email: passEmail, password: passPwd });
+        if (error) throw error;
+      }
+    } catch(e){ alert(e.message); } finally{ setBusy(false); }
+  };
+  const sendResetLink = async e => { e.preventDefault(); setBusy(true);
+    try{ const { error } = await supabase.auth.resetPasswordForEmail(resetEmail, { redirectTo: import.meta.env.VITE_SITE_URL || window.location.origin });
+      if (error) throw error; setResetInfo('Enlace enviado.'); } catch(e){ alert(e.message); } finally{ setBusy(false); }
+  };
+  const applyNewPassword = async e => { e.preventDefault(); if (!newPwd || newPwd.length<6) return alert('Mínimo 6 caracteres.');
+    setBusy(true); try{ const { error } = await supabase.auth.updateUser({ password:newPwd }); if (error) throw error; setResetInfo('Contraseña actualizada.'); setTimeout(()=>setTab('password'),1200); } catch(e){ alert(e.message); } finally{ setBusy(false); }
+  };
+  const signInWithGoogle = async ()=>{ await supabase.auth.signInWithOAuth({ provider:'google', options:{ redirectTo: import.meta.env.VITE_SITE_URL || window.location.origin }}); };
+
+  return (
+    <div className="min-h-screen flex items-center justify-center p-6 bg-gradient-to-b from-slate-50 to-white text-slate-900">
+      <div className="max-w-md w-full space-y-4 p-6 rounded-2xl border bg-white shadow-sm">
+        <h1 className="text-3xl font-extrabold tracking-tight text-center">{import.meta.env.VITE_LEAGUE_NAME || 'Survivor 2025'}</h1>
+        <div className="flex gap-2 justify-center">
+          <button className={`px-3 py-1 rounded border ${tab==='password'?'bg-black text-white':'hover:bg-gray-50'}`} onClick={()=>setTab('password')}>Email + Password</button>
+          <button className={`px-3 py-1 rounded border ${tab==='magic'?'bg-black text-white':'hover:bg-gray-50'}`} onClick={()=>setTab('magic')}>Magic link</button>
+          <button className={`px-3 py-1 rounded border ${tab==='reset'?'bg-black text-white':'hover:bg-gray-50'}`} onClick={()=>setTab('reset')}>Olvidé mi contraseña</button>
+        </div>
+        <div className="flex items-center gap-2"><div className="h-px bg-gray-200 flex-1"/><span className="text-xs text-gray-500">o</span><div className="h-px bg-gray-200 flex-1"/></div>
+        <button onClick={signInWithGoogle} className="w-full border rounded-lg py-2 hover:bg-gray-50">Entrar con Google</button>
+
+        {tab==='password' && (<form onSubmit={submitPasswordAuth} className="space-y-3">
+          <div className="flex items-center justify-between">
+            <label className="text-sm">{isSignup?'Crear cuenta':'Iniciar sesión'}</label>
+            <button type="button" className="text-xs underline" onClick={()=>setIsSignup(!isSignup)}>
+              {isSignup?'¿Ya tienes cuenta? Inicia sesión':'¿No tienes cuenta? Regístrate'}
+            </button>
+          </div>
+          <input type="email" className="border w-full p-2 rounded-lg" placeholder="email" value={passEmail} onChange={e=>setPassEmail(e.target.value)} required/>
+          <input type="password" className="border w-full p-2 rounded-lg" placeholder="contraseña" value={passPwd} onChange={e=>setPassPwd(e.target.value)} required/>
+          <button disabled={busy} className="bg-black text-white px-4 py-2 w-full rounded-lg disabled:opacity-60">{isSignup?'Crear cuenta':'Entrar'}</button>
+          <button type="button" className="text-xs underline" onClick={()=>setTab('reset')}>¿Olvidaste tu contraseña?</button>
+        </form>)}
+
+        {tab==='magic' && (<form onSubmit={sendMagic} className="space-y-3">
+          <input type="email" className="border w-full p-2 rounded-lg" placeholder="tu@email.com" value={email} onChange={e=>setEmail(e.target.value)} required/>
+          <button className="bg-black text-white px-4 py-2 w-full rounded-lg">Enviar magic link</button>
+          {sent && <p className="text-xs text-gray-600">Revisa tu correo.</p>}
+        </form>)}
+
+        {tab==='reset' && (window.location.hash.includes('type=recovery')
+          ? (<form onSubmit={applyNewPassword} className="space-y-3">
+              <input type="password" className="border w-full p-2 rounded-lg" placeholder="nueva contraseña" value={newPwd} onChange={e=>setNewPwd(e.target.value)} required/>
+              <button disabled={busy} className="bg-black text-white px-4 py-2 w-full rounded-lg disabled:opacity-60">Guardar</button>
+              {resetInfo && <p className="text-xs text-emerald-700">{resetInfo}</p>}
+            </form>)
+          : (<form onSubmit={sendResetLink} className="space-y-3">
+              <input type="email" className="border w-full p-2 rounded-lg" placeholder="tu email" value={resetEmail} onChange={e=>setResetEmail(e.target.value)} required/>
+              <button disabled={busy} className="bg-black text-white px-4 py-2 w-full rounded-lg disabled:opacity-60">Enviar enlace</button>
+              {resetInfo && <p className="text-xs text-emerald-700">{resetInfo}</p>}
+            </form>)
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ---------- App: switch reglas/partidos ----------
+export default function App() {
+  const session = useSession();
+  const [view, setView] = useState('game');
+  if (!session) return <Login />;
+  return (
+    <div>
+      <div className="w-full border-b bg-white/90 sticky top-0 z-50 backdrop-blur">
+        <div className="max-w-6xl mx-auto px-4 py-2 flex items-center gap-2">
+          <button className={`text-sm px-3 py-1 rounded ${view==='game'?'bg-black text-white':'hover:bg-gray-100'}`} onClick={()=>setView('game')}>Partidos</button>
+          <button className={`text-sm px-3 py-1 rounded ${view==='rules'?'bg-black text-white':'hover:bg-gray-100'}`} onClick={()=>setView('rules')}>Reglas</button>
+        </div>
+      </div>
+      {view==='game' ? <AppAuthed session={session}/> : <Rules/>}
+    </div>
+  );
+}
+
+// ---------- AppAuthed (toda la lógica de juego y UI mejorada) ----------
 function AppAuthed({ session }) {
   const [me, setMe] = useState(null);
   const [week, setWeek] = useState(()=>Number(localStorage.getItem('week'))||1);
@@ -15,22 +164,13 @@ function AppAuthed({ session }) {
   const [dayFilter, setDayFilter] = useState(localStorage.getItem('dayFilter')||'ALL');
   const [teamQuery, setTeamQuery] = useState(localStorage.getItem('teamQuery')||'');
 
-  // teams (para logos y nombres completos)
+  // teams (logos y nombres completos)
   const [teamsMap, setTeamsMap] = useState({});
   const loadTeams = async ()=>{
     const { data: ts } = await supabase.from('teams').select('*');
     const map={}; (ts||[]).forEach(t=>{ map[t.id]=t; }); setTeamsMap(map);
   };
-  const teamName = (id)=> teamsMap[id]?.name || id; // nombre completo
-  const TeamChip = ({ id, small=false })=>{
-    const t=teamsMap[id]||{};
-    return (
-      <span className="inline-flex items-center gap-2">
-        {t.logo_url ? <img src={t.logo_url} className={small?'h-5 w-5 rounded-full':'h-6 w-6 rounded-full'} alt={id}/> : null}
-        <span className="font-medium">{t.name || id}</span>
-      </span>
-    );
-  };
+  const teamName = (id)=> teamsMap[id]?.name || id;
   const TeamMini = ({ id })=>{
     const t=teamsMap[id]||{};
     return (
@@ -40,8 +180,17 @@ function AppAuthed({ session }) {
       </span>
     );
   };
+  const TeamChip = ({ id, small=false })=>{
+    const t=teamsMap[id]||{};
+    return (
+      <span className="inline-flex items-center gap-2">
+        {t.logo_url ? <img src={t.logo_url} className={small?'h-5 w-5 rounded-full':'h-6 w-6 rounded-full'} alt={id}/> : null}
+        <span className="font-medium">{t.name || id}</span>
+      </span>
+    );
+  };
 
-  // cargas
+  // data loads
   const loadGames = async (w)=>{
     const { data: gs } = await supabase.from('games').select('*').eq('week',w).order('start_time');
     setGames(gs||[]);
@@ -110,7 +259,7 @@ function AppAuthed({ session }) {
     return mins<=90 && mins>0;
   },[myPickThisWeek,nextKickoffISO]);
 
-  // helpers odds y permisos
+  // odds helpers y permisos
   const favFromOdds = (g, last) => {
     if (!last) return { fav:null, basis:null };
     if (last.spread_home != null && last.spread_away != null) {
@@ -122,12 +271,6 @@ function AppAuthed({ session }) {
       if (last.ml_away < last.ml_home) return { fav:g.away_team, basis:`ML ${last.ml_away}` };
     }
     return { fav:null, basis:null };
-  };
-  const logisticP = (spread) => {
-    if (spread == null) return null;
-    const k = 0.23;
-    const p = 1 / (1 + Math.exp(-(-k * spread)));
-    return Math.round(p * 100);
   };
   const canPick = (g,team)=>{
     const locked = DateTime.fromISO(g.start_time)<=DateTime.now();
@@ -152,7 +295,7 @@ function AppAuthed({ session }) {
   const popPct = (teamId)=> popularity.find(p=>p.team_id===teamId)?.pct ?? 0;
   const isDiff = (teamId)=> popPct(teamId) < 15;
 
-  // Filtros
+  // filtros
   const gamesByDay = useMemo(()=>{
     if (dayFilter==='ALL') return games;
     const map={THU:4,FRI:5,SAT:6,SUN:7,MON:1};
@@ -170,7 +313,7 @@ function AppAuthed({ session }) {
     if (wd===7) return 'Sun'; if (wd===1) return 'MNF'; return '';
   };
 
-  // ============ UI: Tarjetas de selección (boxes) ============
+  // UI boxes de selección
   const TeamBox = ({ game, teamId, last })=>{
     const disabled = !canPick(game, teamId).ok;
     const selected = myPickThisWeek?.game_id===game.id && myPickThisWeek?.team_id===teamId;
@@ -204,7 +347,6 @@ function AppAuthed({ session }) {
     );
   };
 
-  // ======= Encabezado juego (nombres completos + logos pequeños) =======
   const GameHeader = ({ g })=>{
     const local = DateTime.fromISO(g.start_time).setZone(TZ).toFormat('EEE dd LLL HH:mm');
     const chip = chipDay(g.start_time);
@@ -234,7 +376,6 @@ function AppAuthed({ session }) {
     );
   };
 
-  // ========= Top 3 (se mantiene) =========
   const top3 = useMemo(()=>{
     const rows = [];
     for (const g of (games||[])) {
@@ -252,7 +393,6 @@ function AppAuthed({ session }) {
     return rows.sort((x,y)=>y.score-x.score).slice(0,3);
   },[games,oddsPairs,usedTeams,popularity]);
 
-  // zona admin
   const amAdmin = isAdminEmail(session.user.email);
   const callAdmin = async (path, extra='')=>{
     const base = import.meta.env.VITE_SITE_URL || window.location.origin;
@@ -327,7 +467,7 @@ function AppAuthed({ session }) {
               </div>
             </div>
 
-            {/* Top 3 */}
+            {/* Top 3 sugerencias */}
             <div className="mt-3 p-3 rounded-lg bg-gray-50 border">
               <h3 className="font-medium">Top 3 sugerencias (win% y diferencial)</h3>
               <div className="mt-2 grid sm:grid-cols-3 gap-2">
@@ -344,7 +484,7 @@ function AppAuthed({ session }) {
                 {top3.length===0 && <div className="text-xs text-gray-500">No hay sugerencias disponibles.</div>}
               </div>
 
-              {isAdminEmail(session.user.email) && (
+              {amAdmin && (
                 <div className="p-3 mt-3 rounded-lg bg-gray-50 border text-sm flex flex-wrap items-center gap-2">
                   <span className="font-medium mr-2">Admin:</span>
                   <button className="px-3 py-1 rounded border hover:bg-gray-100" onClick={()=>callAdmin('/api/autopick')}>Auto-pick global (W{week})</button>
@@ -474,7 +614,7 @@ function AppAuthed({ session }) {
 
         {/* Standings + Historial */}
         <section className="mt-6 grid md:grid-cols-2 gap-4">
-          {/* Standings con más detalle y LOGO del pick de la semana */}
+          {/* Standings detallado con LOGO del pick de la semana */}
           <div className="p-4 border rounded-2xl bg-white shadow-sm">
             <h2 className="font-semibold">Tabla de supervivientes</h2>
             <div className="overflow-x-auto">
@@ -533,6 +673,7 @@ function AppAuthed({ session }) {
     </div>
   );
 }
+
 
 
 
