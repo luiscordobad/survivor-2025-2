@@ -1,6 +1,6 @@
 // api/backfillSeason.mjs
-// Backfill NFL (ESPN) a "games" usando external_id para upsert seguro.
-// Llamado: /api/backfillSeason?season=2021&token=CRON_TOKEN[&playoffs=true]
+// Backfill NFL (ESPN) a "games" usando external_id (upsert por clave única)
+// Robusto: si ?week= falla (HTTP 500 o vacío), cae a calendar + dates=YYYYMMDD
 
 import { createClient } from "@supabase/supabase-js";
 
@@ -9,22 +9,13 @@ const supabaseKey =
   process.env.SUPABASE_SERVICE_ROLE || process.env.SUPABASE_ANON_KEY;
 const CRON_TOKEN = process.env.CRON_TOKEN;
 
-if (!globalThis.fetch) {
-  // Node 18+ ya trae fetch. Esto es por si tu runtime es más viejo.
-  // pero en Vercel es Node 18/20/22, así que fetch existe.
-}
-
 const sb = createClient(supabaseUrl, supabaseKey, { auth: { persistSession: false } });
 
-// Normaliza abreviaturas para que coincidan con tus teams.id
-const TEAM_MAP = {
-  JAX: "JAC",
-  WSH: "WAS",
-  // Ajusta si fuera necesario: LV/LVR, LAR, LAC etc.
-};
+// Normalizador de abreviaciones a tus IDs
+const TEAM_MAP = { JAX: "JAC", WSH: "WAS", LVR: "LV" };
 const normTeam = (a) => TEAM_MAP[a] || a;
 
-function parseGame(event, season, week, seasonType) {
+function parseEventToRow(event, season, week, seasonType) {
   const comp = (event.competitions || [])[0] || {};
   const competitors = comp.competitors || [];
   const home = competitors.find((c) => c.homeAway === "home");
@@ -43,7 +34,6 @@ function parseGame(event, season, week, seasonType) {
   const venue = comp.venue || {};
   const venue_city = venue?.address?.city || null;
 
-  // external_id único por temporada/evento (no usamos games.id)
   const external_id = `${season}:${seasonType}:${week}:${event.id}`;
 
   return {
@@ -60,27 +50,89 @@ function parseGame(event, season, week, seasonType) {
   };
 }
 
-async function fetchWeek(season, week, seasonType) {
-  const url = `https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?season=${season}&seasontype=${seasonType}&week=${week}`;
-  const r = await fetch(url);
+async function fetchJSON(url) {
+  const r = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0 SurvivorBot" } });
   if (!r.ok) throw new Error(`ESPN HTTP ${r.status} - ${url}`);
-  const j = await r.json();
-  const events = j?.events || [];
-  return events.map((ev) => parseGame(ev, season, week, seasonType));
+  return r.json();
 }
 
+// ------------- Calendar -------------
+async function fetchCalendar(season, seasonType) {
+  // Devuelve [{week: n, start: 'YYYYMMDD', end: 'YYYYMMDD'}, ...]
+  const url = `https://site.api.espn.com/apis/site/v2/sports/football/nfl/calendar?season=${season}&seasontype=${seasonType}`;
+  const j = await fetchJSON(url);
+  // j.weeks: [{number, startDate, endDate}, ...]
+  const weeks = (j?.weeks || []).map((w) => ({
+    week: Number(w.number),
+    start: (w.startDate || "").replaceAll("-", ""), // YYYYMMDD
+    end: (w.endDate || "").replaceAll("-", ""),
+  }));
+  return weeks;
+}
+
+// ------------- scoreboards -------------
+async function fetchWeekByWeekParam(season, week, seasonType) {
+  const url = `https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?season=${season}&seasontype=${seasonType}&week=${week}`;
+  const j = await fetchJSON(url);
+  const events = j?.events || [];
+  return events;
+}
+
+function* datesRangeYYYYMMDD(start, end) {
+  const toDate = (s) =>
+    new Date(
+      Number(s.slice(0, 4)),
+      Number(s.slice(4, 6)) - 1,
+      Number(s.slice(6, 8))
+    );
+  const pad2 = (x) => (x < 10 ? `0${x}` : `${x}`);
+  const d0 = toDate(start);
+  const d1 = toDate(end);
+  for (let d = new Date(d0); d <= d1; d.setDate(d.getDate() + 1)) {
+    const y = d.getFullYear();
+    const m = pad2(d.getMonth() + 1);
+    const day = pad2(d.getDate());
+    yield `${y}${m}${day}`;
+  }
+}
+
+async function fetchWeekByDatesRange(season, week, seasonType, startYYYYMMDD, endYYYYMMDD) {
+  const seen = new Set();
+  const events = [];
+  for (const d of datesRangeYYYYMMDD(startYYYYMMDD, endYYYYMMDD)) {
+    const url = `https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=${d}`;
+    try {
+      const j = await fetchJSON(url);
+      const evs = j?.events || [];
+      for (const ev of evs) {
+        // Filtra solo NFL de esa temporada/phase aproximada (no es perfecto pero cambia muy poco)
+        const id = ev?.id;
+        if (!id || seen.has(id)) continue;
+        // Acepta todo; el week lo ponemos nosotros (el de calendar), el season va por parámetro
+        seen.add(id);
+        events.push(ev);
+      }
+      await new Promise((r) => setTimeout(r, 80)); // pequeño respiro
+    } catch {
+      // si un día falla, seguimos con el siguiente
+    }
+  }
+  return events;
+}
+
+// ------------- upsert -------------
 async function upsertGames(rows) {
   if (!rows.length) return 0;
   const { error } = await sb.from("games").upsert(rows, {
-    onConflict: "external_id", // usa el índice único
+    onConflict: "external_id",
   });
   if (error) throw error;
   return rows.length;
 }
 
+// ------------- handler -------------
 export default async function handler(req, res) {
   try {
-    // Validación básica
     if (!supabaseUrl || !supabaseKey) {
       return res.status(500).json({ ok: false, error: "Missing SUPABASE envs" });
     }
@@ -102,17 +154,34 @@ export default async function handler(req, res) {
 
     let total = 0;
 
-    // Regular (seasontype=2)
-    for (let w = 1; w <= 18; w++) {
-      const rows = await fetchWeek(season, w, 2);
+    // Regular season (2)
+    const regularWeeks = await fetchCalendar(season, 2);
+    for (const { week, start, end } of regularWeeks) {
+      let events = [];
+      try {
+        events = await fetchWeekByWeekParam(season, week, 2);
+      } catch { /* 500 de ESPN, ignoramos */ }
+      if (!events || events.length === 0) {
+        // Fallback por rango de fechas
+        events = await fetchWeekByDatesRange(season, week, 2, start, end);
+      }
+      const rows = (events || []).map((ev) => parseEventToRow(ev, season, week, 2));
       if (rows.length) total += await upsertGames(rows);
       await new Promise((r) => setTimeout(r, 120));
     }
 
-    // Playoffs (seasontype=3) — 1..5 suele bastar
+    // Playoffs (3)
     if (playoffs) {
-      for (let w = 1; w <= 5; w++) {
-        const rows = await fetchWeek(season, w, 3);
+      const postWeeks = await fetchCalendar(season, 3);
+      for (const { week, start, end } of postWeeks) {
+        let events = [];
+        try {
+          events = await fetchWeekByWeekParam(season, week, 3);
+        } catch { /* ignore */ }
+        if (!events || events.length === 0) {
+          events = await fetchWeekByDatesRange(season, week, 3, start, end);
+        }
+        const rows = (events || []).map((ev) => parseEventToRow(ev, season, week, 3));
         if (rows.length) total += await upsertGames(rows);
         await new Promise((r) => setTimeout(r, 120));
       }
@@ -124,3 +193,4 @@ export default async function handler(req, res) {
     return res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
 }
+
