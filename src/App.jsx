@@ -9,11 +9,11 @@ const ADMIN_EMAILS = (import.meta.env.VITE_ADMIN_EMAILS || '')
   .split(',').map(s=>s.trim().toLowerCase()).filter(Boolean);
 const isAdminEmail = (email) => ADMIN_EMAILS.includes((email||'').toLowerCase());
 
-// ----- utils -----
+// ---------- utils ----------
 const logisticP = (spread) => {
   if (spread == null) return null;
   const k = 0.23;
-  const p = 1 / (1 + Math.exp(-(-k * spread)));
+  const p = 1 / (1 + Math.exp(-(-k * spread))); // spread_home negativo => local más favorito
   return Math.round(p * 100);
 };
 function downloadCSV(filename, rows) {
@@ -36,7 +36,7 @@ const favFromOdds = (g, last) => {
   return { fav:null, basis:null };
 };
 
-// ----- sesión -----
+// ---------- sesión ----------
 function useSession() {
   const [session, setSession] = useState(null);
   useEffect(()=>{
@@ -47,7 +47,7 @@ function useSession() {
   return session;
 }
 
-// ----- LOGIN (compacto) -----
+// ---------- login (compacto) ----------
 function Login() {
   const [tab, setTab] = useState('password');
   const [email, setEmail] = useState(''); const [sent, setSent] = useState(false);
@@ -127,7 +127,7 @@ function Login() {
   );
 }
 
-// ----- APP -----
+// ---------- app ----------
 export default function App() {
   const session = useSession();
   const [view, setView] = useState('game');
@@ -159,27 +159,25 @@ function AppAuthed({ session }) {
   const [usedTeams, setUsedTeams] = useState(new Set());
   const [adminMsg, setAdminMsg] = useState('');
 
-  // filtros
   const [dayFilter, setDayFilter] = useState(localStorage.getItem('dayFilter')||'ALL');
   const [teamQuery, setTeamQuery] = useState(localStorage.getItem('teamQuery')||'');
 
-  // teams logos
+  // teams
   const [teamsMap, setTeamsMap] = useState({});
   const loadTeams = async ()=>{
     const { data: ts } = await supabase.from('teams').select('*');
     const map={}; (ts||[]).forEach(t=>{ map[t.id]=t; }); setTeamsMap(map);
   };
-  const TeamBadge = ({ id, highlight=false })=>{
+  const TeamBadge = ({ id, small=false })=>{
     const t=teamsMap[id]||{};
     return (
-      <span className={`inline-flex items-center gap-2 ${highlight?'text-emerald-800 font-semibold':''}`}>
-        {t.logo_url ? <img src={t.logo_url} className="h-6 w-6 rounded-full" alt={id}/> : null}
+      <span className="inline-flex items-center gap-2">
+        {t.logo_url ? <img src={t.logo_url} className={small?'h-5 w-5 rounded-full':'h-6 w-6 rounded-full'} alt={id}/> : null}
         <span className="font-medium">{t.name||id}</span>
       </span>
     );
   };
 
-  // cargas
   const loadGames = async (w)=>{
     const { data: gs } = await supabase.from('games').select('*').eq('week',w).order('start_time');
     setGames(gs||[]);
@@ -200,7 +198,7 @@ function AppAuthed({ session }) {
     setOddsPairs(by);
   };
   const loadLeaguePicks = async (w)=>{
-    const { data: pks } = await supabase.from('picks').select('user_id,team_id,result,auto_pick,updated_at').eq('week',w);
+    const { data: pks } = await supabase.from('picks').select('user_id,team_id,result,auto_pick,updated_at,week').eq('week',w);
     setLeaguePicks(pks||[]);
     const ids=[...(new Set((pks||[]).map(x=>x.user_id)))];
     if (ids.length){
@@ -254,9 +252,9 @@ function AppAuthed({ session }) {
     if (usedTeams.has(team) && !(myPickThisWeek && myPickThisWeek.team_id===team)) return {ok:false, reason:'USED'};
     return {ok:true};
   };
-  const choose = async (g,team)=>{
+  const upsertPick = async (g,team)=>{
+    if (!team) return;
     const c=canPick(g,team); if(!c.ok) return alert(c.reason==='LOCK'?'Cerrado por kickoff':'Ya usaste este equipo');
-    if(!confirm(`¿Confirmas tu pick W${week} por ${team}?`)) return;
     if (myPickThisWeek){
       const { error } = await supabase.from('picks').update({ team_id:team, game_id:g.id, updated_at:new Date().toISOString() }).eq('id',myPickThisWeek.id);
       if (error) return alert(error.message);
@@ -271,15 +269,14 @@ function AppAuthed({ session }) {
   const popPct = (teamId)=> popularity.find(p=>p.team_id===teamId)?.pct ?? 0;
   const isDiff = (teamId)=> popPct(teamId) < 15;
 
-  // comparador TOP 3
   const top3 = useMemo(()=>{
     const rows = [];
     for (const g of (games||[])) {
       const { last } = oddsPairs[g.id] || {};
       const wpHome = logisticP(last?.spread_home);
       const wpAway = (last?.spread_away!=null) ? logisticP(-last.spread_away) : null;
-      const h = { team:g.home_team, available: !usedTeams.has(g.home_team), wp: wpHome, pct: popPct(g.home_team), game:g };
-      const a = { team:g.away_team, available: !usedTeams.has(g.away_team), wp: wpAway, pct: popPct(g.away_team), game:g };
+      const h = { team:g.home_team, available: !usedTeams.has(g.home_team), wp: wpHome, pct: popPct(g.home_team), g };
+      const a = { team:g.away_team, available: !usedTeams.has(g.away_team), wp: wpAway, pct: popPct(g.away_team), g };
       [h,a].forEach(r=>{
         if (!r.available || r.wp==null) return;
         const score = r.wp - r.pct * 0.6;
@@ -289,7 +286,6 @@ function AppAuthed({ session }) {
     return rows.sort((x,y)=>y.score-x.score).slice(0,3);
   },[games,oddsPairs,usedTeams,popularity]);
 
-  // filtros
   const gamesByDay = useMemo(()=>{
     if (dayFilter==='ALL') return games;
     const map={THU:4,FRI:5,SAT:6,SUN:7,MON:1};
@@ -330,14 +326,66 @@ function AppAuthed({ session }) {
     }
   };
 
-  // Chip de popularidad (más grande y llamativo, sin barra completa)
-  const PopChip = ({ team, pct }) => (
-    <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border bg-gray-50">
-      <span className="text-[13px] font-semibold">{team}</span>
-      <span className={`text-[16px] font-extrabold ${pct>=25?'text-gray-900':'text-indigo-700'}`}>{pct}%</span>
-      {pct<15 && <span className="text-[10px] px-1 rounded bg-indigo-100 text-indigo-800">DIF</span>}
-    </span>
-  );
+  // ---------- Select bonito para picks ----------
+  const PickSelect = ({ game })=>{
+    const { last, prev } = oddsPairs[game.id] || {};
+    const { fav, basis } = favFromOdds(game, last);
+    const locked = DateTime.fromISO(game.start_time) <= DateTime.now();
+    const my = myPickThisWeek?.game_id===game.id ? myPickThisWeek.team_id : null;
+
+    const optLabel = (teamId)=>{
+      const isHome = teamId===game.home_team;
+      const spread = isHome ? last?.spread_home : (last?.spread_away!=null ? -last.spread_away : null);
+      const wp = logisticP(isHome ? last?.spread_home : (last?.spread_away!=null ? -last.spread_away : null));
+      const pct = popPct(teamId);
+      const tags = [];
+      if (fav===teamId) tags.push('Fav');
+      if (pct<15) tags.push('DIF');
+      const tagStr = tags.length ? ` · ${tags.join('·')}` : '';
+      const wpStr = wp!=null ? ` · Win ${wp}%` : '';
+      return `${teamId}${tagStr} · Liga ${pct}%${wpStr}`;
+    };
+
+    const disabledReason = (teamId)=>{
+      const c = canPick(game, teamId);
+      if (c.ok) return null;
+      return c.reason==='LOCK' ? 'Cerrado' : 'Usado';
+    };
+
+    const onChange = (e)=>{
+      const val = e.target.value || '';
+      if (!val) return;
+      if (disabledReason(val)) { alert(disabledReason(val)); return; }
+      upsertPick(game, val);
+    };
+
+    return (
+      <div className="mt-3">
+        <label className="text-xs text-gray-500">Tu pick</label>
+        <select
+          className={`mt-1 w-full p-2 rounded-lg border ${locked?'bg-gray-100 text-gray-500':''}`}
+          value={my || ''}
+          onChange={onChange}
+          disabled={locked}
+        >
+          <option value="">— Selecciona equipo —</option>
+          {[game.home_team, game.away_team].map(t=>{
+            const dis = !!disabledReason(t);
+            return (
+              <option key={t} value={t} disabled={dis}>
+                {optLabel(t)}
+              </option>
+            );
+          })}
+        </select>
+        {fav && (
+          <div className="mt-1 text-[11px] text-amber-900 bg-amber-50 inline-flex items-center gap-2 px-2 py-1 rounded border border-amber-200">
+            <span>FAVORITO:</span> <b>{fav}</b> <span className="text-amber-800">({basis})</span>
+          </div>
+        )}
+      </div>
+    );
+  };
 
   return (
     <div className="min-h-screen p-4 md:p-6 bg-gradient-to-b from-slate-50 to-white text-slate-900">
@@ -399,15 +447,9 @@ function AppAuthed({ session }) {
               </div>
             </div>
 
-            {/* Top 3 y autopickOne */}
+            {/* Top 3 */}
             <div className="mt-3 p-3 rounded-lg bg-gray-50 border">
-              <div className="flex items-center justify-between">
-                <h3 className="font-medium">Top 3 sugerencias (win% y diferencial)</h3>
-                <button className="text-xs px-3 py-1 rounded border hover:bg-gray-100"
-                  onClick={()=>callAdmin('/api/autopickOne', `&user_id=${session.user.id}`)}>
-                  Elegir por mí (solo yo)
-                </button>
-              </div>
+              <h3 className="font-medium">Top 3 sugerencias (win% y diferencial)</h3>
               <div className="mt-2 grid sm:grid-cols-3 gap-2">
                 {top3.map((r,idx)=>(
                   <div key={idx} className="p-2 border rounded bg-white text-sm">
@@ -416,13 +458,13 @@ function AppAuthed({ session }) {
                       <span className="text-xs text-gray-500">Score {Math.round(r.score)}</span>
                     </div>
                     <div className="text-xs text-gray-600">Win%: <b>{r.wp}%</b> · Liga: <b>{r.pct}%</b> {r.pct<15 && <span className="ml-1 px-1 rounded bg-indigo-100 text-indigo-800">DIF</span>}</div>
-                    <button className="mt-2 w-full border rounded px-2 py-1 hover:bg-gray-50" onClick={()=>choose(r.game, r.team)}>Elegir</button>
+                    <button className="mt-2 w-full border rounded px-2 py-1 hover:bg-gray-50" onClick={()=>upsertPick(r.g, r.team)}>Elegir</button>
                   </div>
                 ))}
                 {top3.length===0 && <div className="text-xs text-gray-500">No hay sugerencias disponibles.</div>}
               </div>
 
-              {isAdminEmail(session.user.email) && (
+              {amAdmin && (
                 <div className="p-3 mt-3 rounded-lg bg-gray-50 border text-sm flex flex-wrap items-center gap-2">
                   <span className="font-medium mr-2">Admin:</span>
                   <button className="px-3 py-1 rounded border hover:bg-gray-100" onClick={()=>callAdmin('/api/autopick')}>Auto-pick global (W{week})</button>
@@ -447,8 +489,6 @@ function AppAuthed({ session }) {
               const { fav, basis } = favFromOdds(g, last);
               const wpHome = logisticP(last?.spread_home);
               const wpAway = (last?.spread_away!=null) ? logisticP(-last.spread_away) : null;
-              const popHome = popPct(g.home_team);
-              const popAway = popPct(g.away_team);
 
               const spreadMoved = prev?.spread_home!=null && last?.spread_home!=null
                 ? (last.spread_home - prev.spread_home) : null;
@@ -459,9 +499,9 @@ function AppAuthed({ session }) {
                   <div className="flex items-start justify-between gap-3">
                     <div className="flex-1">
                       <div className="text-sm flex items-center gap-2 flex-wrap">
-                        <TeamBadge id={g.away_team} highlight={fav===g.away_team}/>
+                        <TeamBadge id={g.away_team}/>
                         <span className="mx-1 text-gray-400">@</span>
-                        <TeamBadge id={g.home_team} highlight={fav===g.home_team}/>
+                        <TeamBadge id={g.home_team}/>
                         {fav && <span className="text-[11px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-900">FAVORITO: {fav} ({basis})</span>}
                         {chip && <span className="text-[11px] px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-800">{chip}</span>}
                         {special && <span className="text-[11px] px-1.5 py-0.5 rounded bg-teal-100 text-teal-800">{special}</span>}
@@ -490,24 +530,8 @@ function AppAuthed({ session }) {
                         </div>
                       )}
 
-                      {/* Popularidad compacta (números grandes) */}
-                      <div className="mt-2 flex items-center gap-2 flex-wrap">
-                        <PopChip team={g.home_team} pct={popHome} />
-                        <PopChip team={g.away_team} pct={popAway} />
-                      </div>
-                    </div>
-
-                    <div className="flex flex-col gap-2 shrink-0">
-                      <button className="border px-3 py-2 rounded hover:bg-gray-100 disabled:opacity-40"
-                        disabled={!canPick(g,g.away_team).ok} onClick={()=>choose(g,g.away_team)}
-                        title={!canPick(g,g.away_team).ok ? (usedTeams.has(g.away_team)?'Equipo ya usado':'Bloqueado por kickoff') : 'Elegir visitante'}>
-                        Elegir {g.away_team}
-                      </button>
-                      <button className="border px-3 py-2 rounded hover:bg-gray-100 disabled:opacity-40"
-                        disabled={!canPick(g,g.home_team).ok} onClick={()=>choose(g,g.home_team)}
-                        title={!canPick(g,g.home_team).ok ? (usedTeams.has(g.home_team)?'Equipo ya usado':'Bloqueado por kickoff') : 'Elegir local'}>
-                        Elegir {g.home_team}
-                      </button>
+                      {/* Selector único de pick */}
+                      <PickSelect game={g}/>
                     </div>
                   </div>
 
