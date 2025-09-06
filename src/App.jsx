@@ -15,7 +15,7 @@ function Login() {
   const [email, setEmail] = useState(''); const [sent, setSent] = useState(false);
   const send = async e => {
     e.preventDefault();
-    const { error } = await supabase.auth.signInWithOtp({ email, options: { emailRedirectTo: window.location.origin } });
+    const { error } = await supabase.auth.signInWithOtp({ email, options: { emailRedirectTo: import.meta.env.VITE_SITE_URL || window.location.origin } });
     if (!error) setSent(true); else alert(error.message);
   };
   return (<div className="min-h-screen flex items-center justify-center p-6">
