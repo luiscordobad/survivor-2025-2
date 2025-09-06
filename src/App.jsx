@@ -1,6 +1,7 @@
+// src/App.jsx
 import { useEffect, useMemo, useState } from 'react';
 import { supabase } from './lib/supabaseClient';
-import { ensureLeagueMembership } from './lib/league'; // ⬅️ NUEVO
+import { ensureLeagueMembership } from './lib/league';
 import { DateTime } from 'luxon';
 
 const TZ = import.meta.env.VITE_TZ || 'America/Mexico_City';
@@ -30,20 +31,24 @@ function Login() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-6">
-      <form onSubmit={send} className="max-w-sm w-full space-y-4">
-        <h1 className="text-2xl font-bold">Survivor 2025</h1>
+    <div className="min-h-screen flex items-center justify-center p-6 bg-gradient-to-b from-slate-50 to-white">
+      <form onSubmit={send} className="max-w-sm w-full space-y-4 p-6 rounded-2xl border bg-white shadow-sm">
+        <h1 className="text-3xl font-extrabold tracking-tight">Survivor 2025</h1>
         {sent ? (
-          <p>Revisa tu correo y da clic al enlace de acceso.</p>
+          <p className="text-sm text-gray-600">Revisa tu correo y da clic al enlace de acceso.</p>
         ) : (
           <>
             <input
-              className="border w-full p-2"
+              type="email"
+              className="border w-full p-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-black/10"
               placeholder="tu@email.com"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
+              required
             />
-            <button className="bg-black text-white px-4 py-2 w-full">Entrar</button>
+            <button className="bg-black text-white px-4 py-2 w-full rounded-lg hover:opacity-90">
+              Entrar
+            </button>
           </>
         )}
       </form>
@@ -84,11 +89,48 @@ function AppAuthed({ session }) {
   const [standings, setStandings] = useState([]);
   const [usedTeams, setUsedTeams] = useState(new Set());
 
-  // Carga inicial + asegura membresía en la liga
+  // Logos: mapa id -> team
+  const [teamsMap, setTeamsMap] = useState({});
+  const loadTeams = async () => {
+    const { data: ts } = await supabase.from('teams').select('*');
+    const map = {};
+    (ts || []).forEach((t) => {
+      map[t.id] = t;
+    });
+    setTeamsMap(map);
+  };
+
+  function TeamBadge({ id }) {
+    const t = teamsMap[id] || {};
+    return (
+      <span className="inline-flex items-center gap-2">
+        {t.logo_url ? (
+          <img
+            src={t.logo_url}
+            alt={id}
+            className="h-5 w-5 rounded-full"
+            referrerPolicy="no-referrer"
+          />
+        ) : null}
+        <span className="font-medium">{id}</span>
+      </span>
+    );
+  }
+
+  const loadGames = async (w) => {
+    const { data: gs } = await supabase
+      .from('games')
+      .select('*')
+      .eq('week', w)
+      .order('start_time');
+    setGames(gs || []);
+  };
+
+  // Carga inicial + auto-membresía liga
   const load = async () => {
     const email = session.user.email;
 
-    // Perfil (si no existe, lo crea)
+    // Perfil (crear si no existe)
     let { data: prof } = await supabase.from('profiles').select('*').eq('email', email).single();
     if (!prof) {
       await supabase
@@ -99,12 +141,15 @@ function AppAuthed({ session }) {
     }
     setMe(prof);
 
-    // 👇 NUEVO: mete al usuario a la liga Maiztros Survivor 2025 automáticamente
+    // Auto-membresía a la liga 2025
     try {
       await ensureLeagueMembership(session.user.id);
     } catch (e) {
       console.error('ensureLeagueMembership error:', e);
     }
+
+    // Logos de equipos
+    await loadTeams();
 
     // Picks y standings
     const { data: pk } = await supabase.from('picks').select('*').eq('user_id', session.user.id);
@@ -117,15 +162,6 @@ function AppAuthed({ session }) {
     await loadGames(week);
   };
 
-  const loadGames = async (w) => {
-    const { data: gs } = await supabase
-      .from('games')
-      .select('*')
-      .eq('week', w)
-      .order('start_time');
-    setGames(gs || []);
-  };
-
   useEffect(() => {
     load();
   }, []);
@@ -134,7 +170,7 @@ function AppAuthed({ session }) {
     loadGames(week);
   }, [week]);
 
-  // (Opcional extra robustez) también intenta asegurar membresía cuando cambie auth
+  // Extra: intenta asegurar membresía en cualquier cambio de auth (defensivo)
   useEffect(() => {
     const { data: sub } = supabase.auth.onAuthStateChange(async (_e, s) => {
       if (s?.user) {
@@ -182,141 +218,231 @@ function AppAuthed({ session }) {
   };
 
   return (
-    <div className="p-4 max-w-6xl mx-auto">
-      <header className="flex items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold">
-            {import.meta.env.VITE_LEAGUE_NAME || 'Survivor 2025'}
-          </h1>
-          <p className="text-sm">
-            Hola, <b>{me?.display_name}</b> · Vidas: <b>{me?.lives}</b>
-          </p>
-        </div>
-        <button className="text-sm underline" onClick={() => supabase.auth.signOut()}>
-          Salir
-        </button>
-      </header>
+    <div className="min-h-screen p-4 md:p-6 bg-gradient-to-b from-slate-50 to-white">
+      <div className="max-w-6xl mx-auto">
+        {/* Header */}
+        <header className="flex items-center justify-between gap-4 py-3">
+          <div>
+            <h1 className="text-3xl font-extrabold tracking-tight">
+              {import.meta.env.VITE_LEAGUE_NAME || 'Survivor 2025'}
+            </h1>
+            <p className="text-sm text-gray-600">
+              Hola, <b>{me?.display_name}</b> · Vidas:{' '}
+              <span className="inline-block px-2 py-0.5 rounded bg-emerald-100 text-emerald-800">
+                {me?.lives}
+              </span>
+            </p>
+          </div>
+          <button
+            className="text-sm underline hover:text-red-600"
+            onClick={() => supabase.auth.signOut()}
+          >
+            Salir
+          </button>
+        </header>
 
-      <section className="mt-4 grid md:grid-cols-3 gap-4">
-        <div className="p-3 border rounded">
-          <div className="flex items-center justify-between">
-            <h2 className="font-semibold">Semana</h2>
-            <select className="border p-1" value={week} onChange={(e) => setWeek(Number(e.target.value))}>
-              {Array.from({ length: 18 }, (_, i) => i + 1).map((w) => (
-                <option key={w} value={w}>
-                  W{w}
-                </option>
-              ))}
-            </select>
+        {/* Top widgets */}
+        <section className="mt-4 grid md:grid-cols-3 gap-4">
+          <div className="p-4 border rounded-2xl bg-white shadow-sm">
+            <div className="flex items-center justify-between">
+              <h2 className="font-semibold">Semana</h2>
+              <select
+                className="border p-1 rounded-lg"
+                value={week}
+                onChange={(e) => setWeek(Number(e.target.value))}
+              >
+                {Array.from({ length: 18 }, (_, i) => i + 1).map((w) => (
+                  <option key={w} value={w}>
+                    W{w}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {myPickThisWeek ? (
+              <p className="mt-3 text-sm">
+                Tu pick W{week}:{' '}
+                <span className="inline-flex items-center gap-2">
+                  <b>{myPickThisWeek.team_id}</b>
+                  {teamsMap[myPickThisWeek.team_id]?.logo_url ? (
+                    <img
+                      src={teamsMap[myPickThisWeek.team_id].logo_url}
+                      alt={myPickThisWeek.team_id}
+                      className="h-4 w-4 rounded-full"
+                      referrerPolicy="no-referrer"
+                    />
+                  ) : null}
+                </span>{' '}
+                {myPickThisWeek.auto_pick ? '(auto)' : ''} · Resultado:{' '}
+                <span
+                  className={
+                    myPickThisWeek.result === 'win'
+                      ? 'text-emerald-700 font-semibold'
+                      : myPickThisWeek.result === 'loss'
+                      ? 'text-red-600 font-semibold'
+                      : myPickThisWeek.result === 'push'
+                      ? 'text-gray-600'
+                      : 'text-gray-500'
+                  }
+                >
+                  {myPickThisWeek.result}
+                </span>
+              </p>
+            ) : (
+              <p className="mt-3 text-sm">Aún no eliges en W{week}</p>
+            )}
+
+            <p className="text-xs mt-2 text-gray-600">
+              Cuenta regresiva al siguiente lock:{' '}
+              {games?.[0] && <Countdown iso={games[0].start_time} />}
+            </p>
           </div>
 
-          {myPickThisWeek ? (
-            <p className="mt-2">
-              Tu pick W{week}: <b>{myPickThisWeek.team_id}</b>{' '}
-              {myPickThisWeek.auto_pick ? '(auto)' : ''} · Resultado: {myPickThisWeek.result}
-            </p>
-          ) : (
-            <p className="mt-2">Aún no eliges en W{week}</p>
-          )}
-
-          <p className="text-xs mt-1">
-            Cuenta regresiva al siguiente lock:{' '}
-            {games?.[0] && <Countdown iso={games[0].start_time} />}
-          </p>
-        </div>
-
-        <div className="p-3 border rounded md:col-span-2">
-          <h2 className="font-semibold mb-2">Partidos W{week}</h2>
-          <div className="space-y-2">
-            {games.map((g) => {
-              const local = DateTime.fromISO(g.start_time).setZone(TZ).toFormat('EEE dd LLL HH:mm');
-              const locked = DateTime.fromISO(g.start_time) <= DateTime.now();
-              return (
-                <div key={g.id} className={`p-2 border rounded ${locked ? 'opacity-60' : ''}`}>
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <div className="text-sm">
-                        {g.away_team} @ {g.home_team}
+          {/* Partidos */}
+          <div className="p-4 border rounded-2xl bg-white shadow-sm md:col-span-2">
+            <h2 className="font-semibold mb-3">Partidos W{week}</h2>
+            <div className="space-y-3">
+              {games.map((g) => {
+                const local = DateTime.fromISO(g.start_time).setZone(TZ).toFormat('EEE dd LLL HH:mm');
+                const locked = DateTime.fromISO(g.start_time) <= DateTime.now();
+                return (
+                  <div
+                    key={g.id}
+                    className={`p-3 border rounded-xl ${
+                      locked ? 'opacity-60' : 'bg-white'
+                    } shadow-sm`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <div className="text-sm">
+                          <TeamBadge id={g.away_team} />{' '}
+                          <span className="mx-1 text-gray-400">@</span>{' '}
+                          <TeamBadge id={g.home_team} />
+                        </div>
+                        <div className="mt-1 text-xs text-gray-500">
+                          Kickoff:{' '}
+                          <span className="px-1.5 py-0.5 rounded bg-gray-100">{local}</span>
+                        </div>
                       </div>
-                      <div className="text-xs">Kickoff: {local}</div>
-                    </div>
-                    <div className="flex gap-2">
-                      <button
-                        className="border px-3 py-1"
-                        disabled={!canPick(g, g.away_team).ok}
-                        onClick={() => choose(g, g.away_team)}
-                      >
-                        {g.away_team}
-                      </button>
-                      <button
-                        className="border px-3 py-1"
-                        disabled={!canPick(g, g.home_team).ok}
-                        onClick={() => choose(g, g.home_team)}
-                      >
-                        {g.home_team}
-                      </button>
+                      <div className="flex gap-2">
+                        <button
+                          className="border px-3 py-1 rounded hover:bg-gray-100 disabled:opacity-40"
+                          disabled={!canPick(g, g.away_team).ok}
+                          onClick={() => choose(g, g.away_team)}
+                          title={!canPick(g, g.away_team).ok ? 'Bloqueado' : 'Elegir visitante'}
+                        >
+                          <TeamBadge id={g.away_team} />
+                        </button>
+                        <button
+                          className="border px-3 py-1 rounded hover:bg-gray-100 disabled:opacity-40"
+                          disabled={!canPick(g, g.home_team).ok}
+                          onClick={() => choose(g, g.home_team)}
+                          title={!canPick(g, g.home_team).ok ? 'Bloqueado' : 'Elegir local'}
+                        >
+                          <TeamBadge id={g.home_team} />
+                        </button>
+                      </div>
                     </div>
                   </div>
-                </div>
-              );
-            })}
+                );
+              })}
+              {(!games || games.length === 0) && (
+                <div className="text-sm text-gray-500">No hay partidos para esta semana.</div>
+              )}
+            </div>
           </div>
-        </div>
-      </section>
+        </section>
 
-      <section className="mt-6 grid md:grid-cols-2 gap-4">
-        <div className="p-3 border rounded">
-          <h2 className="font-semibold">Tabla de supervivientes</h2>
-          <table className="w-full text-sm mt-2">
-            <thead>
-              <tr className="text-left">
-                <th>Jugador</th>
-                <th>Vidas</th>
-                <th>W</th>
-                <th>L</th>
-                <th>Push</th>
-                <th>Margen</th>
-              </tr>
-            </thead>
-            <tbody>
-              {standings.map((s) => (
-                <tr key={s.user_id}>
-                  <td>{s.display_name}</td>
-                  <td>{s.lives}</td>
-                  <td>{s.wins}</td>
-                  <td>{s.losses}</td>
-                  <td>{s.pushes}</td>
-                  <td>{s.margin_sum}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-
-        <div className="p-3 border rounded">
-          <h2 className="font-semibold">Historial de tus picks</h2>
-          <table className="w-full text-sm mt-2">
-            <thead>
-              <tr className="text-left">
-                <th>W</th>
-                <th>Equipo</th>
-                <th>Resultado</th>
-              </tr>
-            </thead>
-            <tbody>
-              {(picks || [])
-                .sort((a, b) => a.week - b.week)
-                .map((p) => (
-                  <tr key={p.id}>
-                    <td>{p.week}</td>
-                    <td>{p.team_id}</td>
-                    <td>{p.result}</td>
+        {/* Bottom: standings + historial */}
+        <section className="mt-6 grid md:grid-cols-2 gap-4">
+          <div className="p-4 border rounded-2xl bg-white shadow-sm">
+            <h2 className="font-semibold">Tabla de supervivientes</h2>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm mt-3">
+                <thead>
+                  <tr className="text-left text-gray-500">
+                    <th>Jugador</th>
+                    <th>Vidas</th>
+                    <th>W</th>
+                    <th>L</th>
+                    <th>Push</th>
+                    <th>Margen</th>
                   </tr>
-                ))}
-            </tbody>
-          </table>
-        </div>
-      </section>
+                </thead>
+                <tbody>
+                  {standings.map((s) => (
+                    <tr key={s.user_id} className="border-t">
+                      <td className="py-1.5">{s.display_name}</td>
+                      <td>{s.lives}</td>
+                      <td className="text-emerald-700 font-medium">{s.wins}</td>
+                      <td className="text-red-600 font-medium">{s.losses}</td>
+                      <td className="text-gray-600">{s.pushes}</td>
+                      <td>{s.margin_sum}</td>
+                    </tr>
+                  ))}
+                  {(!standings || standings.length === 0) && (
+                    <tr>
+                      <td className="py-2 text-gray-500" colSpan={6}>
+                        Aún no hay standings.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div className="p-4 border rounded-2xl bg-white shadow-sm">
+            <h2 className="font-semibold">Historial de tus picks</h2>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm mt-3">
+                <thead>
+                  <tr className="text-left text-gray-500">
+                    <th>W</th>
+                    <th>Equipo</th>
+                    <th>Resultado</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(picks || [])
+                    .sort((a, b) => a.week - b.week)
+                    .map((p) => (
+                      <tr key={p.id} className="border-t">
+                        <td className="py-1.5">{p.week}</td>
+                        <td>
+                          <TeamBadge id={p.team_id} />
+                        </td>
+                        <td>
+                          <span
+                            className={
+                              p.result === 'win'
+                                ? 'text-emerald-700 font-semibold'
+                                : p.result === 'loss'
+                                ? 'text-red-600 font-semibold'
+                                : p.result === 'push'
+                                ? 'text-gray-600'
+                                : 'text-gray-500'
+                            }
+                          >
+                            {p.result}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  {(!picks || picks.length === 0) && (
+                    <tr>
+                      <td className="py-2 text-gray-500" colSpan={3}>
+                        Aún no has hecho picks.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+      </div>
     </div>
   );
 }
+
