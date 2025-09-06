@@ -12,9 +12,8 @@ const isAdminEmail = (email) => ADMIN_EMAILS.includes((email||'').toLowerCase())
 // ----- utils -----
 const logisticP = (spread /* negativo favorece al local */) => {
   if (spread == null) return null;
-  const k = 0.23; // sensibilidad aproximada
-  // para local: spread_home (negativo grande => favorito fuerte)
-  const p = 1 / (1 + Math.exp(-(-k * spread))); // ojo con signo
+  const k = 0.23;
+  const p = 1 / (1 + Math.exp(-(-k * spread))); // spread_home negativo => mayor p(local)
   return Math.round(p * 100);
 };
 function downloadCSV(filename, rows) {
@@ -24,6 +23,20 @@ function downloadCSV(filename, rows) {
   const url = URL.createObjectURL(blob); const a=document.createElement('a');
   a.href=url; a.download=filename; a.click(); URL.revokeObjectURL(url);
 }
+const favFromOdds = (g, last) => {
+  if (!last) return { fav:null, basis:null, homeFav:null };
+  // 1) spread
+  if (last.spread_home != null && last.spread_away != null) {
+    if (last.spread_home < last.spread_away) return { fav: g.home_team, basis: `Spread ${last.spread_home}`, homeFav:true };
+    if (last.spread_away < last.spread_home) return { fav: g.away_team, basis: `Spread ${last.spread_away}`, homeFav:false };
+  }
+  // 2) moneyline
+  if (last.ml_home != null && last.ml_away != null) {
+    if (last.ml_home < last.ml_away) return { fav: g.home_team, basis: `ML ${last.ml_home}`, homeFav:true };
+    if (last.ml_away < last.ml_home) return { fav: g.away_team, basis: `ML ${last.ml_away}`, homeFav:false };
+  }
+  return { fav:null, basis:null, homeFav:null };
+};
 
 // ----- sesión -----
 function useSession() {
@@ -36,7 +49,7 @@ function useSession() {
   return session;
 }
 
-// ----- LOGIN (mismo que antes, resumido por espacio) -----
+// ----- LOGIN (resumido) -----
 function Login() {
   const [tab, setTab] = useState('password');
   const [email, setEmail] = useState(''); const [sent, setSent] = useState(false);
@@ -146,6 +159,7 @@ function AppAuthed({ session }) {
   const [popularity, setPopularity] = useState([]);
   const [popWeek, setPopWeek] = useState(week);
   const [usedTeams, setUsedTeams] = useState(new Set());
+  const [adminMsg, setAdminMsg] = useState('');
 
   // filtros
   const [dayFilter, setDayFilter] = useState(localStorage.getItem('dayFilter')||'ALL');
@@ -157,9 +171,14 @@ function AppAuthed({ session }) {
     const { data: ts } = await supabase.from('teams').select('*');
     const map={}; (ts||[]).forEach(t=>{ map[t.id]=t; }); setTeamsMap(map);
   };
-  const TeamBadge = ({ id })=>{
+  const TeamBadge = ({ id, highlight=false })=>{
     const t=teamsMap[id]||{};
-    return <span className="inline-flex items-center gap-2">{t.logo_url?<img src={t.logo_url} className="h-5 w-5 rounded-full" alt={id}/> : null}<span className="font-medium">{t.name||id}</span></span>;
+    return (
+      <span className={`inline-flex items-center gap-2 ${highlight?'text-emerald-800 font-semibold':''}`}>
+        {t.logo_url ? <img src={t.logo_url} className="h-6 w-6 rounded-full" alt={id}/> : null}
+        <span className="font-medium">{t.name||id}</span>
+      </span>
+    );
   };
 
   // cargas
@@ -262,13 +281,12 @@ function AppAuthed({ session }) {
     for (const g of (games||[])) {
       const { last } = oddsPairs[g.id] || {};
       const wpHome = logisticP(last?.spread_home);
-      const wpAway = (last?.spread_away!=null) ? logisticP(-last.spread_away) : null; // simétrica
+      const wpAway = (last?.spread_away!=null) ? logisticP(-last.spread_away) : null;
       const h = { team:g.home_team, available: !usedTeams.has(g.home_team), wp: wpHome, pct: popPct(g.home_team), game:g };
       const a = { team:g.away_team, available: !usedTeams.has(g.away_team), wp: wpAway, pct: popPct(g.away_team), game:g };
       [h,a].forEach(r=>{
         if (!r.available || r.wp==null) return;
-        // score: prioriza win prob y bonifica diferencial (menor popularidad)
-        const score = r.wp - r.pct * 0.6;
+        const score = r.wp - r.pct * 0.6; // pondera diferencial
         rows.push({ ...r, score });
       });
     }
@@ -305,8 +323,15 @@ function AppAuthed({ session }) {
   const amAdmin = isAdminEmail(session.user.email);
   const callAdmin = async (path, extra='')=>{
     const base = import.meta.env.VITE_SITE_URL || window.location.origin;
-    const url = `${base}${path}?token=${import.meta.env.VITE_ADMIN_TOKEN || 'DEV'}&week=${week}${extra}`;
-    const r=await fetch(url); const j=await r.json(); alert(JSON.stringify(j,null,2));
+    try {
+      const url = `${base}${path}?token=${import.meta.env.VITE_ADMIN_TOKEN || 'DEV'}&week=${week}${extra}`;
+      const r=await fetch(url); const j=await r.json();
+      setAdminMsg(`${path}: ${j.ok ? 'OK' : 'ERROR'} ${j.inserted!=null ? `· inserted=${j.inserted}`:''}`);
+      setTimeout(()=>setAdminMsg(''), 4000);
+    } catch(e){
+      setAdminMsg(`${path}: ERROR ${e.message}`);
+      setTimeout(()=>setAdminMsg(''), 4000);
+    }
   };
 
   return (
@@ -320,11 +345,21 @@ function AppAuthed({ session }) {
           <button className="text-sm underline hover:text-red-600" onClick={()=>supabase.auth.signOut()}>Salir</button>
         </header>
 
-        {showPickAlert && (
-          <div className="mt-2 mb-4 p-3 border rounded-xl bg-red-50 text-red-800">
-            🔔 Aún no tienes pick en W{week}. El primer kickoff es en <b><Countdown iso={nextKickoffISO}/></b>.
+        {adminMsg && (
+          <div className="mt-2 mb-2 p-2 rounded-lg border bg-indigo-50 text-indigo-900">
+            {adminMsg}
           </div>
         )}
+
+        {/* Alert pick 90m */}
+        {(() => {
+          if (!showPickAlert) return null;
+          return (
+            <div className="mt-2 mb-4 p-4 border-2 border-red-300 rounded-xl bg-red-50 text-red-900 text-sm">
+              🔔 Aún no tienes pick en W{week}. El primer kickoff es en <b><Countdown iso={nextKickoffISO}/></b>.
+            </div>
+          );
+        })()}
 
         {/* Toolbar */}
         <section className="mt-4 grid gap-4">
@@ -387,7 +422,7 @@ function AppAuthed({ session }) {
               </div>
             </div>
 
-            {isAdminEmail(session.user.email) && (
+            {amAdmin && (
               <div className="p-3 mt-3 rounded-lg bg-gray-50 border text-sm flex flex-wrap items-center gap-2">
                 <span className="font-medium mr-2">Admin:</span>
                 <button className="px-3 py-1 rounded border hover:bg-gray-100" onClick={()=>callAdmin('/api/autopick')}>Auto-pick global (W{week})</button>
@@ -408,28 +443,44 @@ function AppAuthed({ session }) {
               const chip = chipDay(g.start_time);
               const special = chipVenue(g);
               const { last, prev } = oddsPairs[g.id] || {};
+              const { fav, basis, homeFav } = favFromOdds(g, last);
               const wpHome = logisticP(last?.spread_home);
               const wpAway = (last?.spread_away!=null) ? logisticP(-last.spread_away) : null;
               const popHome = popPct(g.home_team);
               const popAway = popPct(g.away_team);
 
               const spreadMoved = prev?.spread_home!=null && last?.spread_home!=null
-                ? (last.spread_home - prev.spread_home) : null; // negativo => se hizo más favorito
+                ? (last.spread_home - prev.spread_home) : null;
               const arrow = spreadMoved==null ? '' : (spreadMoved<0 ? '↑' : (spreadMoved>0 ? '↓' : '→'));
 
+              // barras de uso (grandes)
+              const Bar = ({ label, pct, highlight }) => (
+                <div className={`w-full rounded-xl overflow-hidden border ${highlight?'border-emerald-300':'border-gray-200'} bg-gray-100`}>
+                  <div className={`h-8 flex items-center justify-between px-3 ${highlight?'bg-emerald-600 text-white':'bg-gray-900 text-white'}`} style={{ width: `${Math.max(8, pct)}%` }}>
+                    <span className="font-semibold">{label}</span>
+                    <span className="font-bold">{pct}%</span>
+                  </div>
+                </div>
+              );
+
               return (
-                <div key={g.id} className={`p-3 border rounded-xl ${locked?'opacity-60':'bg-white'} shadow-sm`}>
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <div className="text-sm flex items-center gap-2">
-                        <TeamBadge id={g.away_team}/><span className="mx-1 text-gray-400">@</span><TeamBadge id={g.home_team}/>
+                <div key={g.id} className={`p-4 border rounded-xl ${locked?'opacity-60':'bg-white'} shadow-sm`}>
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex-1">
+                      <div className="text-sm flex items-center gap-2 flex-wrap">
+                        <TeamBadge id={g.away_team} highlight={fav===g.away_team}/>
+                        <span className="mx-1 text-gray-400">@</span>
+                        <TeamBadge id={g.home_team} highlight={fav===g.home_team}/>
+                        {fav && <span className="text-[11px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-900">FAVORITO: {fav} ({basis})</span>}
                         {chip && <span className="text-[11px] px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-800">{chip}</span>}
                         {special && <span className="text-[11px] px-1.5 py-0.5 rounded bg-teal-100 text-teal-800">{special}</span>}
                         {locked && <span className="text-[11px] px-1.5 py-0.5 rounded bg-gray-200 text-gray-700">LOCK</span>}
                       </div>
-                      <div className="mt-1 text-xs text-gray-600">Kickoff: <span className="px-1.5 py-0.5 rounded bg-gray-100">{local}</span> · Lock en: <Countdown iso={g.start_time}/></div>
 
-                      {/* odds + win% + movimiento */}
+                      <div className="mt-1 text-xs text-gray-600">
+                        Kickoff: <span className="px-1.5 py-0.5 rounded bg-gray-100">{local}</span> · Lock en: <Countdown iso={g.start_time}/>
+                      </div>
+
                       {last && (
                         <div className="mt-2 text-xs">
                           <div className="inline-flex items-center gap-2 px-2 py-1 rounded bg-gray-50 border">
@@ -447,40 +498,38 @@ function AppAuthed({ session }) {
                         </div>
                       )}
 
-                      {/* popularidad y diferencial */}
-                      <div className="mt-1 text-[11px] text-gray-700">
-                        Liga: {g.home_team} <b>{popHome}%</b> {popHome<15 && <span className="ml-1 px-1 rounded bg-indigo-100 text-indigo-800">DIF</span>}
-                        {' · '}
-                        {g.away_team} <b>{popAway}%</b> {popAway<15 && <span className="ml-1 px-1 rounded bg-indigo-100 text-indigo-800">DIF</span>}
+                      {/* Banners grandes de % de uso */}
+                      <div className="mt-3 space-y-2">
+                        <Bar label={`${g.home_team} · uso liga`} pct={popHome} highlight={isDiff(g.home_team)} />
+                        <Bar label={`${g.away_team} · uso liga`} pct={popAway} highlight={isDiff(g.away_team)} />
                       </div>
-
-                      {/* marcador */}
-                      <div className="mt-1 text-xs">
-                        Estado:{' '}
-                        <span className={
-                          g.status==='in_progress' ? 'text-amber-700 font-medium' :
-                          g.status==='final' ? 'text-emerald-700 font-medium' :
-                          g.status==='postponed' ? 'text-gray-700 font-medium' : 'text-gray-700'
-                        }>{g.status}</span>
-                      </div>
-                      {(g.status==='in_progress'||g.status==='final') && (
-                        <div className="mt-1 text-sm font-mono">{g.away_team} {g.away_score??'-'} — {g.home_team} {g.home_score??'-'}</div>
-                      )}
-                      {g.status==='in_progress' && (<div className="mt-1 text-xs text-amber-800">{g.period?`Q${g.period}`:''} {g.clock||''}</div>)}
                     </div>
 
-                    <div className="flex gap-2">
-                      <button className="border px-3 py-1 rounded hover:bg-gray-100 disabled:opacity-40"
+                    <div className="flex flex-col gap-2 shrink-0">
+                      <button className="border px-3 py-2 rounded hover:bg-gray-100 disabled:opacity-40"
                         disabled={!canPick(g,g.away_team).ok} onClick={()=>choose(g,g.away_team)}
                         title={!canPick(g,g.away_team).ok ? (usedTeams.has(g.away_team)?'Equipo ya usado':'Bloqueado por kickoff') : 'Elegir visitante'}>
-                        <TeamBadge id={g.away_team}/>
+                        Elegir {g.away_team}
                       </button>
-                      <button className="border px-3 py-1 rounded hover:bg-gray-100 disabled:opacity-40"
+                      <button className="border px-3 py-2 rounded hover:bg-gray-100 disabled:opacity-40"
                         disabled={!canPick(g,g.home_team).ok} onClick={()=>choose(g,g.home_team)}
                         title={!canPick(g,g.home_team).ok ? (usedTeams.has(g.home_team)?'Equipo ya usado':'Bloqueado por kickoff') : 'Elegir local'}>
-                        <TeamBadge id={g.home_team}/>
+                        Elegir {g.home_team}
                       </button>
                     </div>
+                  </div>
+
+                  {/* marcador simple */}
+                  <div className="mt-2 text-xs">
+                    Estado:{' '}
+                    <span className={
+                      g.status==='in_progress' ? 'text-amber-700 font-medium' :
+                      g.status==='final' ? 'text-emerald-700 font-medium' :
+                      g.status==='postponed' ? 'text-gray-700 font-medium' : 'text-gray-700'
+                    }>{g.status}</span>
+                    {(g.status==='in_progress'||g.status==='final') && (
+                      <span className="ml-2 font-mono">{g.away_team} {g.away_score??'-'} — {g.home_team} {g.home_score??'-'}</span>
+                    )}
                   </div>
                 </div>
               );
@@ -605,6 +654,7 @@ function Countdown({ iso }) {
     },1000); return ()=>clearInterval(id);
   },[iso]); return <span>{left}</span>;
 }
+
 
 
 
