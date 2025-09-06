@@ -62,7 +62,7 @@ function Login() {
 
   // Password
   const [passEmail, setPassEmail] = useState("");
-  const [passPwd, setPassPwd] = useState(""); 
+  const [passPwd, setPassPwd] = useState("");
   const [isSignup, setIsSignup] = useState(false);
 
   // Reset
@@ -300,8 +300,8 @@ function Login() {
   );
 }
 
-/* ========================= App wrapper (tabs, tema blanco) ========================= */
-export default function App() {
+/* ========================= App (tabs) ========================= */
+function AppRoot() {
   const session = useSession();
   const [view, setView] = useState("game"); // 'game' | 'rules'
   if (!session) return <Login />;
@@ -332,6 +332,7 @@ export default function App() {
     </div>
   );
 }
+export default AppRoot;
 
 /* ========================= AppAuthed ========================= */
 function AppAuthed({ session }) {
@@ -358,7 +359,16 @@ function AppAuthed({ session }) {
   const [teamQuery, setTeamQuery] = useState(localStorage.getItem("teamQuery") || "");
   const searchRef = useRef(null);
 
-  // ----- Carga base -----
+  // Auto-refresh cuando hay juegos en vivo
+  useEffect(() => {
+    const anyLive = (games || []).some((g) => g.status === "in_progress");
+    if (!anyLive) return;
+    const id = setInterval(() => loadGames(week), 30000);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [games, week]);
+
+  /* ---------- carga base ---------- */
   const loadTeams = async () => {
     const { data: ts } = await supabase.from("teams").select("*");
     const map = {};
@@ -446,7 +456,7 @@ function AppAuthed({ session }) {
     setPopularity(list);
   };
 
-  const init = async () => {
+  const initAll = async () => {
     const email = session.user.email;
     let { data: prof } = await supabase
       .from("profiles")
@@ -486,14 +496,15 @@ function AppAuthed({ session }) {
   };
 
   useEffect(() => {
-    init();
+    initAll();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   useEffect(() => {
     loadGames(week);
     loadLeaguePicks(week);
+    localStorage.setItem("week", String(week));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [week]);
-
-  useEffect(() => localStorage.setItem("week", String(week)), [week]);
   useEffect(() => localStorage.setItem("dayFilter", dayFilter), [dayFilter]);
   useEffect(() => localStorage.setItem("teamQuery", teamQuery), [teamQuery]);
 
@@ -570,14 +581,58 @@ function AppAuthed({ session }) {
     setPendingPick(null);
   };
 
+  /* ---------- Autopick ---------- */
+  const SITE = import.meta.env.VITE_SITE_URL || "";
+  const CRON_TOKEN = import.meta.env.VITE_CRON_TOKEN || "";
+
+  const autopickMe = async () => {
+    try {
+      const url = `${SITE}/api/autopickOne?week=${week}&user_id=${encodeURIComponent(
+        session.user.id
+      )}&token=${encodeURIComponent(CRON_TOKEN)}`;
+      const r = await fetch(url);
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || j.ok === false) throw new Error(j.error || "Error autopick");
+      alert("Listo: se aplicó autopick para ti.");
+      // refrescar picks
+      const { data: pk } = await supabase
+        .from("picks")
+        .select("*")
+        .eq("user_id", session.user.id);
+      setPicks(pk || []);
+      await loadLeaguePicks(week);
+    } catch (e) {
+      alert(e.message);
+    }
+  };
+
+  const autopickLeague = async () => {
+    try {
+      const url = `${SITE}/api/autopick?week=${week}&token=${encodeURIComponent(
+        CRON_TOKEN
+      )}`;
+      const r = await fetch(url);
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || j.ok === false) throw new Error(j.error || "Error autopick liga");
+      alert("Autopick aplicado a la liga.");
+      await loadLeaguePicks(week);
+    } catch (e) {
+      alert(e.message);
+    }
+  };
+
   /* ---------- UI blocks ---------- */
   const ScoreStrip = ({ g }) => {
     const status = g.status || "scheduled";
     const score = (
       <div className="flex items-center gap-4">
-        <div className="text-xl font-bold">{g.away_team} <span className="tabular-nums">{g.away_score ?? 0}</span></div>
+        <div className="text-xl font-bold">
+          {g.away_team} <span className="tabular-nums">{g.away_score ?? 0}</span>
+        </div>
         <div className="text-gray-300">—</div>
-        <div className="text-xl font-bold">{g.home_team} <span className="tabular-nums">{g.home_score ?? 0}</span></div>
+        <div className="text-xl font-bold">
+          {g.home_team} <span className="tabular-nums">{g.home_score ?? 0}</span>
+        </div>
       </div>
     );
     if (status === "final") {
@@ -597,15 +652,12 @@ function AppAuthed({ session }) {
               Q{g.period ?? ""} {g.clock ?? ""}
             </span>
             {g.possession && (
-              <span className="px-2 py-0.5 rounded bg-gray-100">
-                ⬤ {g.possession}
-              </span>
+              <span className="px-2 py-0.5 rounded bg-gray-100">⬤ {g.possession}</span>
             )}
           </div>
         </div>
       );
     }
-    // scheduled / pre
     return (
       <div className="flex items-center justify-between">
         {score}
@@ -624,7 +676,6 @@ function AppAuthed({ session }) {
     if (g.down) items.push(`${g.down} & ${g.distance ?? "-"}`);
     if (g.yard_line) items.push(`En ${g.yard_line}`);
     if (g.red_zone) items.push("Red Zone");
-    // puedes añadir: g.drive_plays, g.drive_yards, g.last_play, etc. si los guardas
     if (items.length === 0) return null;
     return (
       <div className="mt-2 text-xs text-gray-700">
@@ -642,7 +693,6 @@ function AppAuthed({ session }) {
     const selected =
       myPickThisWeek?.game_id === game.id && myPickThisWeek?.team_id === teamId;
     const pct = popPct(teamId);
-    // favorito simple
     const { last } = oddsPairs[game.id] || {};
     const fav =
       last &&
@@ -706,53 +756,15 @@ function AppAuthed({ session }) {
     );
   }, [gamesByDay, teamQuery, teamsMap]);
 
-  /* ---------- carga inicial ---------- */
-  const init = async () => {
-    const email = session.user.email;
-    let { data: prof } = await supabase
-      .from("profiles")
-      .select("*")
-      .eq("email", email)
-      .single();
-    if (!prof) {
-      await supabase
-        .from("profiles")
-        .insert({
-          id: session.user.id,
-          email,
-          display_name: email.split("@")[0],
-        });
-      const r = await supabase
-        .from("profiles")
-        .select("*")
-        .eq("email", email)
-        .single();
-      prof = r.data;
-    }
-    setMe(prof);
-
-    await loadTeams();
-
-    const { data: pk } = await supabase
-      .from("picks")
-      .select("*")
-      .eq("user_id", session.user.id);
-    setPicks(pk || []);
-
-    const { data: st } = await supabase.from("standings").select("*");
-    setStandings(st || []);
-
-    await loadGames(week);
-    await loadLeaguePicks(week);
+  /* ---------- init ---------- */
+  const initAllOnce = async () => {
+    await initAll();
   };
 
   useEffect(() => {
-    init();
+    initAllOnce();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  useEffect(() => {
-    loadGames(week);
-    loadLeaguePicks(week);
-  }, [week]);
 
   /* ========================= Render ========================= */
   return (
@@ -831,7 +843,7 @@ function AppAuthed({ session }) {
             onChange={(e) => setTeamQuery(e.target.value)}
           />
 
-          <div className="mt-3 flex items-center gap-2">
+          <div className="mt-3 grid grid-cols-2 gap-2">
             <button
               className="text-xs px-3 py-1 rounded border"
               onClick={() =>
@@ -867,10 +879,20 @@ function AppAuthed({ session }) {
             >
               Exportar standings (CSV)
             </button>
+
+            <button className="text-xs px-3 py-1 rounded border" onClick={autopickMe}>
+              Autopick para mí
+            </button>
+
+            {me?.role === "admin" && (
+              <button className="text-xs px-3 py-1 rounded border" onClick={autopickLeague}>
+                Autopick (liga)
+              </button>
+            )}
           </div>
         </div>
 
-        {/* Resumen rápido (opcionalmente puedes poner “Top 3 sugerencias” aquí) */}
+        {/* Resumen */}
         <div className="md:col-span-2 p-4 border rounded-2xl bg-white">
           <h3 className="font-semibold">Resumen</h3>
           <p className="text-sm text-gray-600">
@@ -880,7 +902,7 @@ function AppAuthed({ session }) {
         </div>
       </section>
 
-      {/* Partidos (score + stats + boxes) */}
+      {/* Partidos */}
       <section className="mt-4 p-4 border rounded-2xl bg-white">
         <h2 className="font-semibold mb-3">Partidos W{week}</h2>
         <div className="space-y-3">
@@ -894,7 +916,7 @@ function AppAuthed({ session }) {
                 key={g.id}
                 className={`p-4 border rounded-xl ${locked ? "opacity-60" : ""}`}
               >
-                {/* Encabezado: nombres completos + kickoff/lock */}
+                {/* Encabezado */}
                 <div className="flex items-center justify-between">
                   <div className="text-sm flex items-center gap-2 flex-wrap">
                     <TeamChip id={g.away_team} />
@@ -902,17 +924,21 @@ function AppAuthed({ session }) {
                     <TeamChip id={g.home_team} />
                   </div>
                   <div className="text-xs text-gray-600">
-                    Kickoff: <span className="px-1.5 py-0.5 rounded bg-gray-100">{local}</span> · Lock: <Countdown iso={g.start_time} />
+                    Kickoff:{" "}
+                    <span className="px-1.5 py-0.5 rounded bg-gray-100">
+                      {local}
+                    </span>{" "}
+                    · Lock: <Countdown iso={g.start_time} />
                   </div>
                 </div>
 
-                {/* Score en grande + estado */}
+                {/* Score + estado + quick stats */}
                 <div className="mt-3">
                   <ScoreStrip g={g} />
                   <LiveQuickStats g={g} />
                 </div>
 
-                {/* Solo los 2 boxes minimalistas para elegir */}
+                {/* Boxes de selección */}
                 <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <TeamBox game={g} teamId={g.home_team} />
                   <TeamBox game={g} teamId={g.away_team} />
@@ -1154,6 +1180,7 @@ function AppAuthed({ session }) {
     </div>
   );
 }
+
 
 
 
