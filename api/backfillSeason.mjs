@@ -1,15 +1,6 @@
 // api/backfillSeason.mjs
-// Backfill de temporadas históricas NFL (ESPN) a la tabla "games" de Supabase
-// Uso:
-//   Regular season:   /api/backfillSeason?season=2021&token=CRON_TOKEN
-//   Con playoffs:     /api/backfillSeason?season=2021&playoffs=true&token=CRON_TOKEN
-//
-// Requiere env:
-//   - SUPABASE_URL
-//   - SUPABASE_SERVICE_ROLE (o anon con políticas que permitan upsert en games; recomendable service role)
-//   - CRON_TOKEN
-//
-// Nota: usa fetch nativo de Node 18+ (Vercel OK). No instales node-fetch.
+// Backfill NFL (ESPN) a "games" usando external_id para upsert seguro.
+// Llamado: /api/backfillSeason?season=2021&token=CRON_TOKEN[&playoffs=true]
 
 import { createClient } from "@supabase/supabase-js";
 
@@ -18,39 +9,22 @@ const supabaseKey =
   process.env.SUPABASE_SERVICE_ROLE || process.env.SUPABASE_ANON_KEY;
 const CRON_TOKEN = process.env.CRON_TOKEN;
 
-const sb = createClient(supabaseUrl, supabaseKey, {
-  auth: { persistSession: false },
-});
+if (!globalThis.fetch) {
+  // Node 18+ ya trae fetch. Esto es por si tu runtime es más viejo.
+  // pero en Vercel es Node 18/20/22, así que fetch existe.
+}
 
-// Normaliza abreviaturas de ESPN a tus IDs en tabla teams
+const sb = createClient(supabaseUrl, supabaseKey, { auth: { persistSession: false } });
+
+// Normaliza abreviaturas para que coincidan con tus teams.id
 const TEAM_MAP = {
-  JAX: "JAC", // ESPN usa JAX, tabla suele tener JAC
-  WSH: "WAS", // Washington
-  // Si en tu tabla usas LVR o LA, ajusta aquí. NFL actual: LV (Raiders), LAR (Rams), LAC (Chargers)
-  LV: "LV",
-  LVR: "LV",
-  LAR: "LAR",
-  LAC: "LAC",
-  NO: "NO",
-  SF: "SF",
-  TB: "TB",
-  // agrega aquí cualquier otro mapeo especial que tengas
+  JAX: "JAC",
+  WSH: "WAS",
+  // Ajusta si fuera necesario: LV/LVR, LAR, LAC etc.
 };
+const normTeam = (a) => TEAM_MAP[a] || a;
 
-function normTeam(id) {
-  return TEAM_MAP[id] || id;
-}
-
-function pickScore(obj, teamAbbr) {
-  // Devuelve {homeScore, awayScore} según team order
-  // pero vamos a leer del array de competitors directamente
-  return obj;
-}
-
-function parseGame(event, season, week) {
-  // ESPN structure:
-  // event.competitions[0].competitors -> [{homeAway:'home'|'away', team:{abbreviation}, score}, ...]
-  // event.status.type.state -> 'pre' | 'in' | 'post'
+function parseGame(event, season, week, seasonType) {
   const comp = (event.competitions || [])[0] || {};
   const competitors = comp.competitors || [];
   const home = competitors.find((c) => c.homeAway === "home");
@@ -62,24 +36,18 @@ function parseGame(event, season, week) {
   const home_score = home?.score != null ? Number(home.score) : null;
   const away_score = away?.score != null ? Number(away.score) : null;
 
-  const statusState = event?.status?.type?.state || "pre";
-  // nuestro campo status admite: 'scheduled' | 'in_progress' | 'final'
+  const state = event?.status?.type?.state || "pre";
   const status =
-    statusState === "post"
-      ? "final"
-      : statusState === "in"
-      ? "in_progress"
-      : "scheduled";
+    state === "post" ? "final" : state === "in" ? "in_progress" : "scheduled";
 
   const venue = comp.venue || {};
   const venue_city = venue?.address?.city || null;
 
-  // id estable: usa event.id + season + week para evitar colisiones multi-temporada
-  // si ya tienes una convención distinta, ajústalo (por ej. event.id string ya es único por temporada)
-  const id = `${season}-W${week}-${awayId}@${homeId}-${event.id}`;
+  // external_id único por temporada/evento (no usamos games.id)
+  const external_id = `${season}:${seasonType}:${week}:${event.id}`;
 
   return {
-    id,
+    external_id,
     season,
     week,
     start_time: event?.date || null,
@@ -89,79 +57,70 @@ function parseGame(event, season, week) {
     home_score,
     away_score,
     venue_city,
-    // Opcionales si tu tabla los tiene: period, clock, possession, red_zone...
   };
 }
 
 async function fetchWeek(season, week, seasonType) {
-  // seasonType: 2=regular, 3=postseason
   const url = `https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?season=${season}&seasontype=${seasonType}&week=${week}`;
   const r = await fetch(url);
-  if (!r.ok) throw new Error(`ESPN ${season}/${week} (${seasonType}) HTTP ${r.status}`);
+  if (!r.ok) throw new Error(`ESPN HTTP ${r.status} - ${url}`);
   const j = await r.json();
   const events = j?.events || [];
-  return events.map((ev) => parseGame(ev, season, week));
+  return events.map((ev) => parseGame(ev, season, week, seasonType));
 }
 
 async function upsertGames(rows) {
-  if (!rows.length) return { count: 0 };
-  // Ajusta columnas según tu schema real de "games"
-  const { data, error } = await sb
-    .from("games")
-    .upsert(rows, { onConflict: "id" });
+  if (!rows.length) return 0;
+  const { error } = await sb.from("games").upsert(rows, {
+    onConflict: "external_id", // usa el índice único
+  });
   if (error) throw error;
-  return { count: rows.length };
+  return rows.length;
 }
 
 export default async function handler(req, res) {
   try {
+    // Validación básica
+    if (!supabaseUrl || !supabaseKey) {
+      return res.status(500).json({ ok: false, error: "Missing SUPABASE envs" });
+    }
+    if (!CRON_TOKEN) {
+      return res.status(500).json({ ok: false, error: "Missing CRON_TOKEN env" });
+    }
+
     const url = new URL(req.url, `http://${req.headers.host}`);
     const token = url.searchParams.get("token");
     const season = Number(url.searchParams.get("season"));
     const playoffs = url.searchParams.get("playoffs") === "true";
 
-    if (!CRON_TOKEN) {
-      return res
-        .status(500)
-        .json({ ok: false, error: "Missing CRON_TOKEN env" });
-    }
-    if (!token || token !== CRON_TOKEN) {
+    if (token !== CRON_TOKEN) {
       return res.status(401).json({ ok: false, error: "Bad token" });
     }
     if (!season || season < 2010 || season > 2025) {
-      return res
-        .status(400)
-        .json({ ok: false, error: "season inválido (2010–2025)" });
+      return res.status(400).json({ ok: false, error: "season inválido (2010–2025)" });
     }
 
     let total = 0;
 
-    // Regular season W1–W18 (seasontype=2)
+    // Regular (seasontype=2)
     for (let w = 1; w <= 18; w++) {
-      const games = await fetchWeek(season, w, 2);
-      if (games.length) {
-        const { count } = await upsertGames(games);
-        total += count;
-      }
-      // pequeña pausa para no saturar (opcional)
+      const rows = await fetchWeek(season, w, 2);
+      if (rows.length) total += await upsertGames(rows);
       await new Promise((r) => setTimeout(r, 120));
     }
 
-    // Playoffs (seasontype=3). ESPN usa ~5 semanas (WC, Div, Conf, SB, a veces ProBowl no aplica).
+    // Playoffs (seasontype=3) — 1..5 suele bastar
     if (playoffs) {
       for (let w = 1; w <= 5; w++) {
-        const games = await fetchWeek(season, w, 3);
-        if (games.length) {
-          const { count } = await upsertGames(games);
-          total += count;
-        }
+        const rows = await fetchWeek(season, w, 3);
+        if (rows.length) total += await upsertGames(rows);
         await new Promise((r) => setTimeout(r, 120));
       }
     }
 
-    return res.json({ ok: true, season, playoffs, inserted_or_updated: total });
+    return res.json({ ok: true, season, playoffs, upserted: total });
   } catch (e) {
-    console.error(e);
-    return res.status(500).json({ ok: false, error: String(e.message || e) });
+    console.error("backfillSeason error:", e);
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
 }
