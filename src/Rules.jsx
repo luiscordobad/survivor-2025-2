@@ -30,7 +30,7 @@ export default function Rules() {
       <section className="mt-6 space-y-2">
         <h2 className="text-xl font-semibold">Recordatorios</h2>
         <ul className="list-disc ml-6 text-sm leading-6">
-          <li>Enviamos recordatorio ~3h antes del siguiente kickoff a quien no tenga pick.</li>
+          <li>Recordatorio ~3 h antes del siguiente kickoff a quien no tenga pick.</li>
           <li>Puedes editar tu pick hasta el lock de su partido.</li>
         </ul>
       </section>
@@ -45,6 +45,3 @@ export default function Rules() {
   );
 }
 
-    </div>
-  );
-}
