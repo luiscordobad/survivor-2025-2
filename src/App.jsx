@@ -47,7 +47,7 @@ function downloadCSV(filename, rows) {
 
 function winProbFromSpread(spreadForTeam) {
   if (spreadForTeam == null) return null;
-  // curva logística aproximada: spread negativo favorece al equipo
+  // Aproximación logística: spread negativo favorece al equipo
   const k = 0.23;
   const p = 1 / (1 + Math.exp(-k * (-spreadForTeam)));
   return Math.round(p * 100);
@@ -483,7 +483,7 @@ function AppAuthed({ session }) {
     return mins <= 90 && mins > 0;
   }, [myPickThisWeek, nextKickoffISO]);
 
-  // Notificación local T-90 (si la app está abierta en 2do plano)
+  // Notificación local T-90
   useEffect(() => {
     if (!("Notification" in window)) return;
     if (!nextKickoffISO) return;
@@ -558,9 +558,10 @@ function AppAuthed({ session }) {
     await loadLeaguePicks(week);
   };
 
+  /* ---------- Autopick (actualizado a /api/control) ---------- */
   const autopickMe = async () => {
     try {
-      const url = `${SITE}/api/autopickOne?week=${week}&user_id=${encodeURIComponent(
+      const url = `${SITE}/api/control?action=autopickOne&week=${week}&user_id=${encodeURIComponent(
         session.user.id
       )}&token=${encodeURIComponent(CRON_TOKEN)}`;
       const r = await fetch(url);
@@ -580,7 +581,7 @@ function AppAuthed({ session }) {
 
   const autopickLeague = async () => {
     try {
-      const url = `${SITE}/api/autopick?week=${week}&token=${encodeURIComponent(
+      const url = `${SITE}/api/control?action=autopick&week=${week}&token=${encodeURIComponent(
         CRON_TOKEN
       )}`;
       const r = await fetch(url);
@@ -1702,10 +1703,11 @@ function NewsTab() {
     load(team);
   }, [team]);
 
+  // ---- ACTUALIZADO: usa /api/control?action=syncNews ----
   const syncNow = async (scopeTeam) => {
     const url = scopeTeam
-      ? `${SITE}/api/syncNews?team=${encodeURIComponent(scopeTeam)}&token=${encodeURIComponent(CRON_TOKEN)}`
-      : `${SITE}/api/syncNews?token=${encodeURIComponent(CRON_TOKEN)}`;
+      ? `${SITE}/api/control?action=syncNews&team=${encodeURIComponent(scopeTeam)}&token=${encodeURIComponent(CRON_TOKEN)}`
+      : `${SITE}/api/control?action=syncNews&token=${encodeURIComponent(CRON_TOKEN)}`;
     const r = await fetch(url);
     const j = await r.json().catch(() => ({}));
     if (!r.ok || j.ok === false) return alert(j.error || "Error sincronizando");
