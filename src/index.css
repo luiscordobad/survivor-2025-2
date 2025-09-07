@@ -65,7 +65,7 @@ button{font:inherit}
 }
 .input:focus{
   border-color:#cbd5e1; /* slate-300 */
-  box-shadow: 0 0 0 3px rgba(59,130,246,.15); /* focus ring */
+  box-shadow: 0 0 0 3px rgba(59,130,246,.15);
 }
 
 /* ---------- Buttons ---------- */
@@ -139,12 +139,12 @@ button{font:inherit}
 }
 .progress .bar{
   height: 100%;
-  background: #111827; /* negro */
+  background: #111827;
   width: 0%;
   transition: width .35s ease;
 }
 
-/* ---------- Game card tweaks ---------- */
+/* ---------- Game card / Picks ---------- */
 .game-card{
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -162,8 +162,23 @@ button{font:inherit}
   transition: background .2s ease, border-color .2s ease, transform .02s ease;
 }
 .pick-box:hover{ background:#f8fafc; border-color:#d1d5db; }
-.pick-box.selected{ border-color:#10b981; background:#ecfdf5; }  /* emerald */
+.pick-box.selected{ border-color:#10b981; background:#ecfdf5; }
 .pick-box.disabled{ opacity:.55; cursor:not-allowed; }
+
+/* ---------- LOGOS: tamaños consistentes ---------- */
+/* utilidades tipo Tailwind */
+.h-4{height:1rem} .w-4{width:1rem}
+.h-5{height:1.25rem} .w-5{width:1.25rem}
+.h-6{height:1.5rem} .w-6{width:1.5rem}
+.h-8{height:2rem} .w-8{width:2rem}
+.object-contain{object-fit:contain}
+.rounded-full{border-radius:9999px}
+
+/* límites por contexto (sin tocar JSX) */
+.table td img{ height:20px; width:20px; object-fit:contain; border-radius:50%; }
+.game-card .pick-box img{ height:22px; width:22px; object-fit:contain; border-radius:50%; }
+.game-card .header img{ height:20px; width:20px; object-fit:contain; border-radius:50%; }
+.pop-list img{ height:18px; width:18px; object-fit:contain; border-radius:50%; }
 
 /* ---------- Responsive ---------- */
 @media (max-width: 640px){
