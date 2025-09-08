@@ -73,14 +73,11 @@ function hasGameEnded(g) {
   if (["final", "completed", "complete", "closed", "postgame", "ended", "finished"].includes(s)) {
     return true;
   }
-
-  // Final por periodo y reloj
   const periodOk = (g?.period ?? 0) >= 4;
   const clockStr = String(g?.clock || "").trim();
   const clockDone = clockStr === "0:00" || clockStr === "00:00" || clockStr === "" || clockStr === "Final";
   if (periodOk && clockDone && !isLiveStatus(s)) return true;
 
-  // Heurística de respaldo: si han pasado ≥3.5h desde kickoff y hay scores, lo damos por finalizado
   if (g?.start_time) {
     const hrs = DateTime.now().diff(DateTime.fromISO(g.start_time), "hours").hours;
     const haveScores = g.home_score != null && g.away_score != null;
@@ -309,7 +306,6 @@ function GamesTab() {
     return () => {
       supabase.removeChannel(ch);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [week]);
 
   /* ---------- Cargas base ---------- */
@@ -408,8 +404,6 @@ function GamesTab() {
     setAllPicksSeason(pks || []);
   };
 
-  const [userNames, setUserNames] = useState({});
-
   // Recalcular standings de jugadores
   const recomputePlayerStandings = (allPicks, allGames) => {
     const gamesMap = {};
@@ -459,14 +453,12 @@ function GamesTab() {
   useEffect(() => {
     if (!session) return;
     initAll();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session]);
 
   useEffect(() => {
     loadGames(week);
     loadLeaguePicks(week);
     localStorage.setItem("week", String(week));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [week]);
 
   useEffect(() => localStorage.setItem("dayFilter", dayFilter), [dayFilter]);
@@ -516,11 +508,9 @@ function GamesTab() {
       if (!same) return { ok: false, reason: "FROZEN" };
     }
 
-    // Lock por kickoff del partido candidato
     const lockedCandidate = DateTime.fromISO(candidateGame.start_time) <= DateTime.now();
     if (lockedCandidate) return { ok: false, reason: "LOCK" };
 
-    // No repetir equipos ya usados en la temporada
     const used = (picks || []).some((p) => p.team_id === candidateTeam && p.user_id === session.user.id);
     if (used && !(myPickThisWeek && myPickThisWeek.team_id === candidateTeam)) {
       return { ok: false, reason: "USED" };
@@ -570,7 +560,7 @@ function GamesTab() {
 
     await loadMyPicks();
     await loadLeaguePicks(week);
-    await loadSeasonData(); // para standings de jugadores
+    await loadSeasonData();
     const { data: st } = await supabase.from("standings").select("*");
     setStandings(st || []);
     setPendingPick(null);
@@ -588,7 +578,6 @@ function GamesTab() {
 
   // ---- NUEVO: banner + manejo de vidas cuando se resuelve mi pick
   async function onMyPickResolved(res) {
-    // banner gracioso
     let msg = "";
     let type = res;
     if (res === "win") {
@@ -600,7 +589,6 @@ function GamesTab() {
     }
     setResultBanner({ type, msg });
 
-    // si perdio: restar vida
     if (res === "loss") {
       try {
         const { data: prof } = await supabase
@@ -636,7 +624,6 @@ function GamesTab() {
       if (!p.result || p.result === "pending") {
         if (res !== "pending") {
           updates.push({ id: p.id, result: res });
-          // Para banner, sólo si es mi pick de la semana
           if (p.user_id === session.user.id) myResolvedResult = res;
         }
       }
@@ -649,7 +636,6 @@ function GamesTab() {
       }
     }
 
-    // Banner + vidas sólo 1 vez por semana
     if (myResolvedResult) {
       const key = bannerKey(currentWeek, session.user.id);
       if (!localStorage.getItem(key)) {
@@ -695,7 +681,6 @@ function GamesTab() {
         await fetch(url);
       } catch {}
     })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [games, picks, leaguePicks, week]);
 
   /* ---------- UI helpers ---------- */
@@ -1551,10 +1536,9 @@ function NewsTab() {
         try { await syncNow(""); } catch {}
       }
     })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  useEffect(() => { load(team); /* eslint-disable-line */ }, [team]);
+  useEffect(() => { load(team); }, [team]);
 
   return (
     <div className="max-w-6xl mx-auto p-4 md:p-6">
