@@ -1,3 +1,4 @@
+// src/App.jsx
 import { useEffect, useMemo, useRef, useState } from "react";
 import { DateTime } from "luxon";
 import { supabase } from "./lib/supabaseClient";
@@ -45,6 +46,7 @@ function downloadCSV(filename, rows) {
   URL.revokeObjectURL(url);
 }
 
+// Win% estimado desde spread (ligera logística)
 function winProbFromSpread(spreadForTeam) {
   if (spreadForTeam == null) return null;
   const k = 0.23;
@@ -52,6 +54,7 @@ function winProbFromSpread(spreadForTeam) {
   return Math.round(p * 100);
 }
 
+// Decide WIN/LOSS/PUSH para un teamId dado el boxscore final del juego
 function computePickResultFromGame(game, teamId) {
   if (!game || (game.status || "") !== "final") return "pending";
   const hs = Number(game.home_score ?? 0);
@@ -59,6 +62,17 @@ function computePickResultFromGame(game, teamId) {
   if (hs === as) return "push";
   const winner = hs > as ? game.home_team : game.away_team;
   return winner === teamId ? "win" : "loss";
+}
+
+// Un pick queda "congelado" si su juego ya empezó/terminó, o ya tiene resultado
+function isPickFrozen(pick, gamesMap) {
+  if (!pick) return false;
+  const g = gamesMap[pick.game_id];
+  if (!g) return false;
+  if (pick.result && pick.result !== "pending") return true;
+  const started = DateTime.fromISO(g.start_time) <= DateTime.now();
+  const notScheduled = (g.status || "scheduled") !== "scheduled";
+  return started || notScheduled;
 }
 
 /* ========================= Sesión/Login ========================= */
@@ -75,7 +89,7 @@ function useSession() {
 }
 
 function Login() {
-  const [tab, setTab] = useState("password");
+  const [tab, setTab] = useState("password"); // 'password' | 'magic'
   const [email, setEmail] = useState("");
   const [pwd, setPwd] = useState("");
   const [signup, setSignup] = useState(false);
@@ -122,7 +136,6 @@ function Login() {
     <div className="min-h-screen flex items-center justify-center bg-white p-6">
       <div className="w-full max-w-md card p-6">
         <h1 className="text-2xl font-extrabold text-center">{LEAGUE}</h1>
-
         <div className="mt-4 flex gap-2 justify-center">
           <button
             className={clsx("seg", tab === "password" && "seg-active")}
@@ -268,7 +281,7 @@ function GamesTab() {
   );
   const searchRef = useRef(null);
 
-  // realtime
+  // realtime: picks, games, odds
   useEffect(() => {
     const ch = supabase
       .channel("realtime-app")
@@ -297,10 +310,14 @@ function GamesTab() {
           }
         }
       )
-      .on("postgres_changes", { event: "*", schema: "public", table: "odds" }, () => {
-        loadGames(week);
-        setLastUpdated(new Date().toISOString());
-      })
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "odds" },
+        () => {
+          loadGames(week);
+          setLastUpdated(new Date().toISOString());
+        }
+      )
       .subscribe();
     return () => {
       supabase.removeChannel(ch);
@@ -448,6 +465,17 @@ function GamesTab() {
     [picks, week]
   );
 
+  const gamesMap = useMemo(() => {
+    const m = {};
+    (games || []).forEach((g) => (m[g.id] = g));
+    return m;
+  }, [games]);
+
+  const pickFrozen = useMemo(
+    () => isPickFrozen(myPickThisWeek, gamesMap),
+    [myPickThisWeek, gamesMap]
+  );
+
   const nextKickoffISO = useMemo(() => {
     const up = (games || []).find(
       (g) => DateTime.fromISO(g.start_time) > DateTime.now()
@@ -464,23 +492,41 @@ function GamesTab() {
   const popPct = (teamId) =>
     popularity.find((p) => p.team_id === teamId)?.pct ?? 0;
 
-  const canPick = (g, team) => {
-    const locked = DateTime.fromISO(g.start_time) <= DateTime.now();
-    if (locked) return { ok: false, reason: "LOCK" };
+  // Reglas para poder pickear (incluye FROZEN)
+  const canPick = (candidateGame, candidateTeam) => {
+    // Si mi pick actual está congelado, no puedo cambiarlo por otro
+    if (pickFrozen) {
+      const same =
+        myPickThisWeek?.game_id === candidateGame.id &&
+        myPickThisWeek?.team_id === candidateTeam;
+      if (!same) return { ok: false, reason: "FROZEN" };
+    }
+
+    // Lock por kickoff del partido candidato
+    const lockedCandidate = DateTime.fromISO(candidateGame.start_time) <= DateTime.now();
+    if (lockedCandidate) return { ok: false, reason: "LOCK" };
+
+    // No repetir equipos ya usados en la temporada
     const used = (picks || []).some(
-      (p) => p.team_id === team && p.user_id === session.user.id
+      (p) => p.team_id === candidateTeam && p.user_id === session.user.id
     );
-    if (used && !(myPickThisWeek && myPickThisWeek.team_id === team))
+    if (used && !(myPickThisWeek && myPickThisWeek.team_id === candidateTeam)) {
       return { ok: false, reason: "USED" };
+    }
     return { ok: true };
   };
 
   const confirmPick = (game, teamId) => {
     const c = canPick(game, teamId);
-    if (!c.ok)
-      return alert(
-        c.reason === "LOCK" ? "Cerrado por kickoff" : "Ya usaste este equipo"
-      );
+    if (!c.ok) {
+      const msg =
+        c.reason === "FROZEN"
+          ? "Tu pick de esta semana ya quedó congelado porque su partido ya inició/terminó."
+          : c.reason === "LOCK"
+          ? "Este partido ya está cerrado por kickoff."
+          : "Ya usaste este equipo antes.";
+      return alert(msg);
+    }
     setPendingPick({ game, teamId });
   };
 
@@ -516,12 +562,7 @@ function GamesTab() {
     setLastUpdated(new Date().toISOString());
   };
 
-  const gamesMap = useMemo(() => {
-    const m = {};
-    (games || []).forEach((g) => (m[g.id] = g));
-    return m;
-  }, [games]);
-
+  // Derivar resultado mostrado aunque DB aún no lo guarde
   function derivedResultForPick(pick) {
     if (pick?.result) return pick.result;
     const g = gamesMap[pick?.game_id];
@@ -529,6 +570,7 @@ function GamesTab() {
     return computePickResultFromGame(g, pick.team_id);
   }
 
+  // Asentar automáticamente MIS picks cuando queden "final"
   async function settleMyPicksIfNeeded(currentWeek, gamesArr, myPicksArr) {
     const finals = {};
     (gamesArr || []).forEach((g) => {
@@ -554,9 +596,39 @@ function GamesTab() {
     }
   }
 
+  // Asentar automáticamente picks de la LIGA (para tabla)
+  async function settleLeaguePicksIfNeeded(currentWeek, gamesArr, leaguePicksArr) {
+    const finals = {};
+    (gamesArr || []).forEach((g) => {
+      if ((g.status || "") === "final") finals[g.id] = g;
+    });
+    const updates = [];
+    (leaguePicksArr || []).forEach((p) => {
+      if (p.week !== currentWeek) return;
+      if (p.result) return;
+      const g = finals[p.game_id];
+      if (!g) return;
+      const res = computePickResultFromGame(g, p.team_id);
+      if (res !== "pending") updates.push({ id: p.id, result: res });
+    });
+    if (updates.length) {
+      for (const row of updates) {
+        const { error } = await supabase
+          .from("picks")
+          .update({ result: row.result })
+          .eq("id", row.id);
+        if (error) console.warn("settleLeaguePicksIfNeeded error:", error.message);
+      }
+    }
+  }
+
+  // Al cambiar juegos/picks, reflejar resultados y best-effort al backend
   useEffect(() => {
-    if (!games?.length || !picks?.length) return;
-    settleMyPicksIfNeeded(week, games, picks);
+    if (!games?.length) return;
+
+    if (picks?.length) settleMyPicksIfNeeded(week, games, picks);
+    if (leaguePicks?.length) settleLeaguePicksIfNeeded(week, games, leaguePicks);
+
     (async () => {
       try {
         const url = `${SITE}/api/control?action=settleWeek&week=${week}&token=${encodeURIComponent(
@@ -566,7 +638,7 @@ function GamesTab() {
       } catch {}
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [games, picks, week]);
+  }, [games, picks, leaguePicks, week]);
 
   /* ---------- UI helpers ---------- */
   const TeamMini = ({ id }) => {
@@ -1129,10 +1201,12 @@ function AutoPickButtons({ week }) {
   );
 }
 
-/* ========================= Standings NFL ========================= */
+/* ========================= Standings NFL (con fallback) ========================= */
 function StandingsTab() {
   const [rows, setRows] = useState([]);
+  const [fallback, setFallback] = useState([]);
 
+  // Intentar vista materializada
   useEffect(() => {
     (async () => {
       const { data } = await supabase
@@ -1145,23 +1219,66 @@ function StandingsTab() {
     })();
   }, []);
 
+  // Fallback: calcular desde games final + teams
+  useEffect(() => {
+    if (rows && rows.length) return;
+    (async () => {
+      const { data: teams } = await supabase.from("teams").select("id,conference,division");
+      const { data: games } = await supabase
+        .from("games")
+        .select("home_team,away_team,home_score,away_score,status,season")
+        .eq("season", SEASON);
+
+      const by = {};
+      teams?.forEach((t) => {
+        by[t.id] = { team_id: t.id, conference: t.conference, division: t.division, w: 0, l: 0, t_: 0, diff: 0 };
+      });
+
+      (games || []).forEach((g) => {
+        if ((g.status || "") !== "final") return;
+        const hs = Number(g.home_score ?? 0);
+        const as = Number(g.away_score ?? 0);
+        if (hs === as) {
+          by[g.home_team].t_++; by[g.away_team].t_++;
+        } else if (hs > as) {
+          by[g.home_team].w++; by[g.away_team].l++;
+        } else {
+          by[g.away_team].w++; by[g.home_team].l++;
+        }
+        by[g.home_team].diff += (hs - as);
+        by[g.away_team].diff += (as - hs);
+      });
+
+      const list = Object.values(by).map((r) => ({
+        conference: r.conference,
+        division: r.division,
+        team_id: r.team_id,
+        w: r.w,
+        l: r.l,
+        t: r.t_,
+        diff: r.diff,
+      }));
+      setFallback(list);
+    })();
+  }, [rows]);
+
+  const dataToUse = rows?.length ? rows : fallback;
+
   const groups = useMemo(() => {
     const out = {};
-    (rows || []).forEach((r) => {
+    (dataToUse || []).forEach((r) => {
       const key = `${r.conference}__${r.division}`;
       if (!out[key]) out[key] = { conference: r.conference, division: r.division, list: [] };
       out[key].list.push(r);
     });
     return Object.values(out);
-  }, [rows]);
+  }, [dataToUse]);
 
   return (
     <div className="max-w-6xl mx-auto p-4 md:p-6">
       <h1 className="text-2xl font-extrabold mb-3">Standings NFL</h1>
-      {(!rows || rows.length === 0) && (
-        <p className="text-sm text-slate-500">
-          Sin datos en <code>nfl_standings</code>. Verifica la vista o la sync.
-        </p>
+      {(!dataToUse || dataToUse.length === 0) && (
+        <p className="text-sm text-slate-500">Sin datos todavía.</p>
       )}
 
       <div className="grid md:grid-cols-2 gap-4">
@@ -1174,23 +1291,21 @@ function StandingsTab() {
               <table className="w-full table-minimal">
                 <thead>
                   <tr>
-                    <th>Equipo</th>
-                    <th>W</th>
-                    <th>L</th>
-                    <th>T</th>
-                    <th>Diff</th>
+                    <th>Equipo</th><th>W</th><th>L</th><th>T</th><th>Diff</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {g.list.map((r) => (
-                    <tr key={r.team_id}>
-                      <td className="font-mono">{r.team_id}</td>
-                      <td className="text-emerald-700 font-medium">{r.w}</td>
-                      <td className="text-rose-600 font-medium">{r.l}</td>
-                      <td className="text-slate-600">{r.t}</td>
-                      <td>{r.diff}</td>
-                    </tr>
-                  ))}
+                  {g.list
+                    .sort((a,b)=> (b.w - a.w) || (a.l - b.l) || (b.diff - a.diff))
+                    .map((r) => (
+                      <tr key={r.team_id}>
+                        <td className="font-mono">{r.team_id}</td>
+                        <td className="text-emerald-700 font-medium">{r.w}</td>
+                        <td className="text-rose-600 font-medium">{r.l}</td>
+                        <td className="text-slate-600">{r.t}</td>
+                        <td>{r.diff}</td>
+                      </tr>
+                    ))}
                 </tbody>
               </table>
             </div>
@@ -1201,7 +1316,7 @@ function StandingsTab() {
   );
 }
 
-/* ========================= Asistente de Picks ========================= */
+/* ========================= Asistente de Picks (con mismas reglas) ========================= */
 function AssistantTab() {
   const session = useSession();
   const [teams, setTeams] = useState({});
@@ -1280,7 +1395,17 @@ function AssistantTab() {
   const used = new Set((picks || []).map((p) => p.team_id));
   const getPop = (team) => pop.find((x) => x.team === team)?.pct ?? 0;
 
+  const myPickThisWeek = (picks || []).find((p) => p.week === week && p.season === SEASON);
+
+  const gamesMap = useMemo(() => {
+    const m = {}; (games || []).forEach((g)=> m[g.id]=g); return m;
+  }, [games]);
+
+  const pickFrozen = isPickFrozen(myPickThisWeek, gamesMap);
+
+  // Solo considerar partidos FUTUROS para recomendar
   const rows = (games || [])
+    .filter((g)=> DateTime.fromISO(g.start_time) > DateTime.now())
     .flatMap((g) => {
       const o = odds[g.id] || {};
       const sHome = o.spread_home;
@@ -1298,6 +1423,7 @@ function AssistantTab() {
     .slice(0, 8);
 
   const confirm = async (r) => {
+    if (pickFrozen) return alert("Tu pick de esta semana ya quedó congelado.");
     setBusy(true);
     try {
       const { error } = await supabase.from("picks").insert({
@@ -1366,7 +1492,7 @@ function AssistantTab() {
             </div>
             <div className="mt-2 flex gap-2">
               <button
-                disabled={busy || r.used}
+                disabled={busy || r.used || pickFrozen}
                 className="btn disabled:opacity-50"
                 onClick={() => confirm(r)}
               >
@@ -1396,12 +1522,13 @@ function TeamMiniSimple({ teams, id }) {
   );
 }
 
-/* ========================= Noticias ========================= */
+/* ========================= Noticias (auto-sync si vacío) ========================= */
 function NewsTab() {
-  const [team, setTeam] = useState("");
+  const [team, setTeam] = useState(""); // "" = general
   const [teams, setTeams] = useState([]);
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(false);
+  const didAutoSync = useRef(false);
 
   const load = async (t) => {
     setLoading(true);
@@ -1414,32 +1541,44 @@ function NewsTab() {
     const { data } = await q;
     setItems(data || []);
     setLoading(false);
+    return data || [];
   };
-
-  useEffect(() => {
-    (async () => {
-      const { data: ts } = await supabase.from("teams").select("id,name").order("id");
-      setTeams(ts || []);
-      await load("");
-    })();
-  }, []);
-
-  useEffect(() => {
-    load(team);
-  }, [team]);
 
   const syncNow = async (scopeTeam) => {
     const url = scopeTeam
       ? `${SITE}/api/control?action=syncNews&team=${encodeURIComponent(
           scopeTeam
         )}&token=${encodeURIComponent(CRON_TOKEN)}`
-      : `${SITE}/api/control?action=syncNews&token=${encodeURIComponent(CRON_TOKEN)}`;
+      : `${SITE}/api/control?action=syncNews&token=${encodeURIComponent(
+          CRON_TOKEN
+        )}`;
     const r = await fetch(url);
     const j = await r.json().catch(() => ({}));
     if (!r.ok || j.ok === false) return alert(j.error || "Error sincronizando");
     await load(team);
-    alert(`Noticias sincronizadas (${j.inserted || 0})`);
+    if (scopeTeam) alert(`Noticias sincronizadas (${j.inserted || 0})`);
   };
+
+  useEffect(() => {
+    (async () => {
+      const { data: ts } = await supabase.from("teams").select("id,name").order("id");
+      setTeams(ts || []);
+      const first = await load("");
+      // Si no hay noticias, intenta un sync general automáticamente (una sola vez)
+      if (!didAutoSync.current && (!first || first.length === 0)) {
+        didAutoSync.current = true;
+        try {
+          await syncNow("");
+        } catch {}
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    load(team);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [team]);
 
   return (
     <div className="max-w-6xl mx-auto p-4 md:p-6">
@@ -1475,7 +1614,11 @@ function NewsTab() {
         {(items || []).map((n) => (
           <li key={n.id} className="card p-3">
             <div className="kicker flex items-center gap-2">
-              {n.team_id ? <span className="badge">{n.team_id}</span> : <span className="badge">NFL</span>}
+              {n.team_id ? (
+                <span className="badge">{n.team_id}</span>
+              ) : (
+                <span className="badge">NFL</span>
+              )}
               <span>{n.source || "ESPN"}</span>
               <span>
                 ·{" "}
