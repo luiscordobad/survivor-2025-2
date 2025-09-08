@@ -46,7 +46,7 @@ function downloadCSV(filename, rows) {
   URL.revokeObjectURL(url);
 }
 
-/* ===== Win% y resultado ===== */
+// Win% estimado desde spread (logística ligera)
 function winProbFromSpread(spreadForTeam) {
   if (spreadForTeam == null) return null;
   const k = 0.23;
@@ -54,19 +54,21 @@ function winProbFromSpread(spreadForTeam) {
   return Math.round(p * 100);
 }
 
-// --- NUEVO (1) y (2): helpers de estado normalizado ---
+/* ---------- NUEVO: normalización de estados ---------- */
+// ¿Ya empezó?
 function hasGameStarted(g) {
   if (!g?.start_time) return false;
   return DateTime.fromISO(g.start_time) <= DateTime.now();
 }
 
+// ¿Ya terminó? (normaliza status y agrega heurística si el feed no marca "final")
 function hasGameEnded(g) {
   const s = String(g?.status || "").toLowerCase();
   if (
     ["final", "completed", "complete", "closed", "postgame", "ended", "finished"].includes(s)
   ) return true;
 
-  // Heurística: si han pasado >6h desde kickoff y hay marcador, se asume finalizado
+  // Heurística de respaldo: >6h desde kickoff y hay score
   if (g?.start_time) {
     const hrs = DateTime.now().diff(DateTime.fromISO(g.start_time), "hours").hours;
     const haveScores = g.home_score != null && g.away_score != null;
@@ -75,7 +77,7 @@ function hasGameEnded(g) {
   return false;
 }
 
-// --- NUEVO (3): usa estado normalizado
+// Decide WIN/LOSS/PUSH para un teamId dado el juego
 function computePickResultFromGame(game, teamId) {
   if (!game || !hasGameEnded(game)) return "pending";
   const hs = Number(game.home_score ?? 0);
@@ -85,7 +87,7 @@ function computePickResultFromGame(game, teamId) {
   return winner === teamId ? "win" : "loss";
 }
 
-// --- NUEVO (4): pick congelado si empezó/terminó o ya tiene result
+// Un pick queda "congelado" si su juego ya empezó/terminó, o ya tiene resultado
 function isPickFrozen(pick, gamesMap) {
   if (!pick) return false;
   const g = gamesMap[pick.game_id];
@@ -519,9 +521,12 @@ function GamesTab() {
         myPickThisWeek?.team_id === candidateTeam;
       if (!same) return { ok: false, reason: "FROZEN" };
     }
+
+    // Lock por kickoff del partido candidato
     const lockedCandidate = DateTime.fromISO(candidateGame.start_time) <= DateTime.now();
     if (lockedCandidate) return { ok: false, reason: "LOCK" };
 
+    // No repetir equipos ya usados en la temporada
     const used = (picks || []).some(
       (p) => p.team_id === candidateTeam && p.user_id === session.user.id
     );
@@ -687,10 +692,16 @@ function GamesTab() {
     );
   };
 
-  // --- NUEVO: usa hasGameEnded para mostrar FINAL
   const ScoreStrip = ({ g }) => {
-    const status = g.status || "scheduled";
+    const status = String(g.status || "scheduled").toLowerCase();
     const ended = hasGameEnded(g);
+    const live =
+      status === "in_progress" ||
+      status === "inprogress" ||
+      status === "live" ||
+      status === "ongoing" ||
+      status === "playing" ||
+      status === "active";
 
     const score = (
       <div className="flex items-center gap-4">
@@ -712,7 +723,7 @@ function GamesTab() {
         </div>
       );
     }
-    if ((status || "").toLowerCase() === "in_progress") {
+    if (live) {
       return (
         <div className="flex items-center justify-between">
           {score}
@@ -732,8 +743,48 @@ function GamesTab() {
     return (
       <div className="flex items-center justify-between">
         {score}
-        <span className="badge">Kickoff en&nbsp;<Countdown iso={g.start_time} /></span>
+        <span className="badge">
+          Kickoff en&nbsp;<Countdown iso={g.start_time} />
+        </span>
       </div>
+    );
+  };
+
+  const TeamBox = ({ game, teamId }) => {
+    const disabled = !canPick(game, teamId).ok;
+    const selected =
+      myPickThisWeek?.game_id === game.id && myPickThisWeek?.team_id === teamId;
+    const { last } = oddsPairs[game.id] || {};
+    const fav =
+      last &&
+      ((teamId === game.home_team &&
+        ((last.spread_home ?? 0) < (last.spread_away ?? 0) ||
+          (last.ml_home ?? 9999) < (last.ml_away ?? 9999))) ||
+        (teamId === game.away_team &&
+          ((last.spread_away ?? 0) < (last.spread_home ?? 0) ||
+            (last.ml_away ?? 9999) < (last.ml_home ?? 9999))));
+    const pct = popPct(teamId);
+
+    return (
+      <button
+        onClick={() => confirmPick(game, teamId)}
+        disabled={disabled}
+        className={clsx(
+          "w-full text-left rounded-xl border transition px-4 py-3",
+          selected
+            ? "border-emerald-500 bg-emerald-50 card"
+            : "border-slate-200 hover:bg-slate-50 card",
+          disabled && "opacity-50 cursor-not-allowed"
+        )}
+      >
+        <div className="flex items-center justify-between">
+          <TeamMini id={teamId} />
+          <div className="flex items-center gap-2">
+            {fav && <span className="badge badge-warn">Fav</span>}
+            {pct < 15 && <span className="badge">DIF</span>}
+          </div>
+        </div>
+      </button>
     );
   };
 
@@ -1207,7 +1258,7 @@ function StandingsTab() {
       const { data: teams } = await supabase.from("teams").select("id,conference,division");
       const { data: games } = await supabase
         .from("games")
-        .select("home_team,away_team,home_score,away_score,status,season")
+        .select("home_team,away_team,home_score,away_score,status,season,start_time")
         .eq("season", SEASON);
 
       const by = {};
@@ -1216,7 +1267,7 @@ function StandingsTab() {
       });
 
       (games || []).forEach((g) => {
-        if ((g.status || "") !== "final") return;
+        if (!hasGameEnded(g)) return;
         const hs = Number(g.home_score ?? 0);
         const as = Number(g.away_score ?? 0);
         if (hs === as) {
@@ -1297,7 +1348,7 @@ function StandingsTab() {
   );
 }
 
-/* ========================= Asistente de Picks (con mismas reglas) ========================= */
+/* ========================= Asistente de Picks (mismas reglas) ========================= */
 function AssistantTab() {
   const session = useSession();
   const [teams, setTeams] = useState({});
@@ -1384,7 +1435,7 @@ function AssistantTab() {
 
   const pickFrozen = isPickFrozen(myPickThisWeek, gamesMap);
 
-  // Solo considerar partidos FUTUROS para recomendar
+  // Solo FUTUROS para recomendar
   const rows = (games || [])
     .filter((g)=> DateTime.fromISO(g.start_time) > DateTime.now())
     .flatMap((g) => {
@@ -1545,7 +1596,6 @@ function NewsTab() {
       const { data: ts } = await supabase.from("teams").select("id,name").order("id");
       setTeams(ts || []);
       const first = await load("");
-      // Si no hay noticias, intenta un sync general automáticamente (una sola vez)
       if (!didAutoSync.current && (!first || first.length === 0)) {
         didAutoSync.current = true;
         try {
