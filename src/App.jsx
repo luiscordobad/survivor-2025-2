@@ -4,12 +4,11 @@ import { DateTime } from "luxon";
 import { supabase } from "./lib/supabaseClient";
 import Rules from "./Rules";
 
-/* ===== Config ===== */
 const TZ = import.meta.env.VITE_TZ || "America/Mexico_City";
 const SITE = import.meta.env.VITE_SITE_URL || "";
 const CRON_TOKEN = import.meta.env.VITE_CRON_TOKEN || "";
 
-/* ===== Utilidades ===== */
+/* ========================= Utilidades UI ========================= */
 function Countdown({ iso }) {
   const [left, setLeft] = useState("");
   useEffect(() => {
@@ -29,24 +28,11 @@ function Countdown({ iso }) {
   }, [iso]);
   return <span>{left}</span>;
 }
+const cls = (...xs) => xs.filter(Boolean).join(" ");
+const toLocal = (iso) =>
+  DateTime.fromISO(iso).setZone(TZ).toFormat("EEE dd LLL HH:mm");
 
-function downloadCSV(filename, rows) {
-  const esc = (v) => (v == null ? "" : `"${String(v).replaceAll('"', '""')}"`);
-  const csv = rows.map((r) => r.map(esc).join(",")).join("\n") + "\n";
-  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(url);
-}
-
-/* win% simple desde spread favorito */
-const winProbFromSpread = (s) =>
-  Math.round((1 / (1 + Math.exp(-0.23 * Math.max(0, s || 0)))) * 100);
-
-/* ===== Sesión ===== */
+/* ========================= Sesión ========================= */
 function useSession() {
   const [session, setSession] = useState(null);
   useEffect(() => {
@@ -59,193 +45,201 @@ function useSession() {
   return session;
 }
 
-/* ===== Login ===== */
+/* ========================= Login simple ========================= */
 function Login() {
-  const [tab, setTab] = useState("password");
+  const [tab, setTab] = useState("password"); // password | magic
   const [busy, setBusy] = useState(false);
 
-  // magic
-  const [email, setEmail] = useState("");
-  const [sent, setSent] = useState(false);
-
-  // password
+  // Password
   const [passEmail, setPassEmail] = useState("");
   const [passPwd, setPassPwd] = useState("");
   const [isSignup, setIsSignup] = useState(false);
-  const [displayName, setDisplayName] = useState("");
 
-  // reset
-  const [resetEmail, setResetEmail] = useState("");
-  const [newPwd, setNewPwd] = useState("");
-  const [resetInfo, setResetInfo] = useState("");
-
-  useEffect(() => {
-    if ((window.location.hash || "").includes("type=recovery")) setTab("reset");
-  }, []);
-
-  const magic = async (e) => {
-    e.preventDefault();
-    const { error } = await supabase.auth.signInWithOtp({
-      email,
-      options: { emailRedirectTo: import.meta.env.VITE_SITE_URL || window.location.origin },
-    });
-    if (!error) setSent(true); else alert(error.message);
-  };
+  // Magic
+  const [email, setEmail] = useState("");
+  const [sent, setSent] = useState(false);
 
   const passwordAuth = async (e) => {
     e.preventDefault();
     setBusy(true);
     try {
       if (isSignup) {
-        const { data, error } = await supabase.auth.signUp({
-          email: passEmail, password: passPwd,
+        const { error } = await supabase.auth.signUp({
+          email: passEmail,
+          password: passPwd,
           options: {
-            data: { display_name: displayName || passEmail.split("@")[0] },
-            emailRedirectTo: import.meta.env.VITE_SITE_URL || window.location.origin,
+            emailRedirectTo: SITE || window.location.origin,
           },
         });
         if (error) throw error;
-        if (data.user) {
-          await supabase.from("profiles").upsert({
-            id: data.user.id,
-            email: passEmail,
-            display_name: displayName || passEmail.split("@")[0],
-            lives: 2,
-            is_admin: false,
-          });
-        }
         alert("Cuenta creada. Revisa tu correo para confirmar.");
       } else {
         const { error } = await supabase.auth.signInWithPassword({
-          email: passEmail, password: passPwd,
+          email: passEmail,
+          password: passPwd,
         });
         if (error) throw error;
       }
-    } catch (e2) { alert(e2.message); } finally { setBusy(false); }
+    } catch (e) {
+      alert(e.message);
+    } finally {
+      setBusy(false);
+    }
   };
-
-  const sendReset = async (e) => {
+  const magic = async (e) => {
     e.preventDefault();
-    setBusy(true);
-    try {
-      const { error } = await supabase.auth.resetPasswordForEmail(resetEmail, {
-        redirectTo: import.meta.env.VITE_SITE_URL || window.location.origin,
-      });
-      if (error) throw error;
-      setResetInfo("Enlace enviado, revisa tu correo.");
-    } catch (e2) { alert(e2.message); } finally { setBusy(false); }
-  };
-  const applyNew = async (e) => {
-    e.preventDefault();
-    if (!newPwd || newPwd.length < 6) return alert("Mínimo 6 caracteres.");
-    setBusy(true);
-    try {
-      const { error } = await supabase.auth.updateUser({ password: newPwd });
-      if (error) throw error;
-      setResetInfo("Contraseña actualizada."); setTimeout(()=>setTab("password"),1200);
-    } catch (e2) { alert(e2.message); } finally { setBusy(false); }
+    const { error } = await supabase.auth.signInWithOtp({
+      email,
+      options: { emailRedirectTo: SITE || window.location.origin },
+    });
+    if (!error) setSent(true);
+    else alert(error.message);
   };
 
   return (
     <div className="min-h-screen flex items-center justify-center p-6 bg-white">
-      <div className="w-full max-w-md space-y-4 p-6 card">
+      <div className="w-full max-w-md space-y-4 p-6 border rounded-2xl bg-white">
         <h1 className="text-3xl font-extrabold tracking-tight text-center">
           {import.meta.env.VITE_LEAGUE_NAME || "Survivor 2025"}
         </h1>
 
         <div className="flex gap-2 justify-center">
-          <button className={`btn ${tab==="password"?"primary":""}`} onClick={()=>setTab("password")}>Email + Password</button>
-          <button className={`btn ${tab==="magic"?"primary":""}`} onClick={()=>setTab("magic")}>Magic link</button>
-          <button className={`btn ${tab==="reset"?"primary":""}`} onClick={()=>setTab("reset")}>Olvidé mi contraseña</button>
+          <button
+            className={cls(
+              "px-3 py-1 rounded border",
+              tab === "password" && "bg-black text-white"
+            )}
+            onClick={() => setTab("password")}
+          >
+            Email + Password
+          </button>
+          <button
+            className={cls(
+              "px-3 py-1 rounded border",
+              tab === "magic" && "bg-black text-white"
+            )}
+            onClick={() => setTab("magic")}
+          >
+            Magic link
+          </button>
         </div>
 
-        {tab==="password" && (
+        {tab === "password" && (
           <form onSubmit={passwordAuth} className="space-y-3">
             <div className="flex items-center justify-between">
-              <label className="text-sm">{isSignup ? "Crear cuenta" : "Iniciar sesión"}</label>
-              <button type="button" className="text-xs underline" onClick={()=>setIsSignup(!isSignup)}>
-                {isSignup ? "¿Ya tienes cuenta? Inicia sesión" : "¿No tienes cuenta? Regístrate"}
+              <label className="text-sm">
+                {isSignup ? "Crear cuenta" : "Iniciar sesión"}
+              </label>
+              <button
+                type="button"
+                className="text-xs underline"
+                onClick={() => setIsSignup(!isSignup)}
+              >
+                {isSignup
+                  ? "¿Ya tienes cuenta? Inicia sesión"
+                  : "¿No tienes cuenta? Regístrate"}
               </button>
             </div>
-            {isSignup && (
-              <input className="input" placeholder="Nombre para mostrar"
-                value={displayName} onChange={(e)=>setDisplayName(e.target.value)} />
-            )}
-            <input type="email" className="input" placeholder="email"
-              value={passEmail} onChange={(e)=>setPassEmail(e.target.value)} required />
-            <input type="password" className="input" placeholder="contraseña"
-              value={passPwd} onChange={(e)=>setPassPwd(e.target.value)} required />
-            <button disabled={busy} className="btn primary w-full">{isSignup?"Crear cuenta":"Entrar"}</button>
+            <input
+              type="email"
+              className="border w-full p-2 rounded-lg"
+              placeholder="email"
+              value={passEmail}
+              onChange={(e) => setPassEmail(e.target.value)}
+              required
+            />
+            <input
+              type="password"
+              className="border w-full p-2 rounded-lg"
+              placeholder="contraseña"
+              value={passPwd}
+              onChange={(e) => setPassPwd(e.target.value)}
+              required
+            />
+            <button
+              disabled={busy}
+              className="bg-black text-white px-4 py-2 w-full rounded-lg disabled:opacity-60"
+            >
+              {isSignup ? "Crear cuenta" : "Entrar"}
+            </button>
           </form>
         )}
 
-        {tab==="magic" && (
+        {tab === "magic" && (
           <form onSubmit={magic} className="space-y-3">
-            <input type="email" className="input" placeholder="tu@email.com"
-              value={email} onChange={(e)=>setEmail(e.target.value)} required />
-            <button className="btn primary w-full">Enviar magic link</button>
-            {sent && <p className="text-xs text-muted">Revisa tu correo.</p>}
+            <input
+              type="email"
+              className="border w-full p-2 rounded-lg"
+              placeholder="tu@email.com"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+            />
+            <button className="bg-black text-white px-4 py-2 w-full rounded-lg">
+              Enviar magic link
+            </button>
+            {sent && <p className="text-xs text-gray-600">Revisa tu correo.</p>}
           </form>
         )}
-
-        {tab==="reset" && (window.location.hash.includes("type=recovery") ? (
-          <form onSubmit={applyNew} className="space-y-3">
-            <input type="password" className="input" placeholder="nueva contraseña"
-              value={newPwd} onChange={(e)=>setNewPwd(e.target.value)} required />
-            <button disabled={busy} className="btn primary w-full">Guardar</button>
-            {resetInfo && <p className="text-xs text-emerald-700">{resetInfo}</p>}
-          </form>
-        ) : (
-          <form onSubmit={sendReset} className="space-y-3">
-            <input type="email" className="input" placeholder="tu email"
-              value={resetEmail} onChange={(e)=>setResetEmail(e.target.value)} required />
-            <button disabled={busy} className="btn primary w-full">Enviar enlace</button>
-            {resetInfo && <p className="text-xs text-emerald-700">{resetInfo}</p>}
-          </form>
-        ))}
       </div>
     </div>
   );
 }
 
-/* ===== Root con tabs ===== */
+/* ========================= Root con Tabs ========================= */
 function AppRoot() {
   const session = useSession();
-  const [tab, setTab] = useState("games"); // games | assistant | nfl | news | rules
+  const [tab, setTab] = useState("games"); // games | assistant | news | rules
   if (!session) return <Login />;
 
   return (
     <div className="min-h-screen bg-white text-slate-900">
-      <div className="topbar safe-top">
-        <div className="container flex items-center gap-2">
-          {[
-            ["games","Partidos"],
-            ["assistant","Asistente"],
-            ["nfl","NFL"],
-            ["news","Noticias"],
-            ["rules","Reglas"],
-          ].map(([k,label])=>(
-            <button key={k} className={`btn ${tab===k?"primary":""}`} onClick={()=>setTab(k)}>{label}</button>
-          ))}
-          <div style={{flex:1}} />
-          <button className="text-sm underline" onClick={()=>supabase.auth.signOut()}>Salir</button>
+      {/* Navbar */}
+      <div className="w-full border-b bg-white sticky top-0 z-50">
+        <div className="max-w-6xl mx-auto px-4 py-2 flex items-center justify-between">
+          <div className="flex gap-2">
+            {[
+              ["games", "Partidos"],
+              ["assistant", "Asistente"],
+              ["news", "Noticias"],
+              ["rules", "Reglas"],
+            ].map(([k, label]) => (
+              <button
+                key={k}
+                className={cls(
+                  "text-sm px-3 py-1 rounded border",
+                  tab === k && "bg-black text-white"
+                )}
+                onClick={() => setTab(k)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <button
+            className="text-sm underline"
+            onClick={() => supabase.auth.signOut()}
+          >
+            Salir
+          </button>
         </div>
       </div>
 
-      {tab==="games" && <AppAuthed session={session} />}
-      {tab==="assistant" && <Assistant session={session} />}
-      {tab==="nfl" && <NFLTab />}
-      {tab==="news" && <NewsHub />}
-      {tab==="rules" && <div className="container"><Rules/></div>}
+      {tab === "games" && <AppAuthed session={session} />}
+      {tab === "assistant" && <Assistant session={session} />}
+      {tab === "news" && <NewsTab />}
+      {tab === "rules" && <Rules />}
     </div>
   );
 }
 export default AppRoot;
 
-/* ===== Partidos + Liga ===== */
+/* ========================= AppAuthed (Partidos) ========================= */
 function AppAuthed({ session }) {
   const [me, setMe] = useState(null);
-  const [week, setWeek] = useState(()=>Number(localStorage.getItem("week"))||1);
+  const [week, setWeek] = useState(
+    () => Number(localStorage.getItem("week")) || 1
+  );
 
   const [teamsMap, setTeamsMap] = useState({});
   const [games, setGames] = useState([]);
@@ -254,679 +248,954 @@ function AppAuthed({ session }) {
   const [leaguePicks, setLeaguePicks] = useState([]);
   const [userNames, setUserNames] = useState({});
   const [popularity, setPopularity] = useState([]);
-  const [standingsLeague, setStandingsLeague] = useState([]);
-
-  // confirmación modal
-  const [pendingPick, setPendingPick] = useState(null); // {game, teamId}
+  const [standings, setStandings] = useState([]);
 
   // filtros
-  const [dayFilter, setDayFilter] = useState(localStorage.getItem("dayFilter")||"ALL");
-  const [teamQuery, setTeamQuery] = useState(localStorage.getItem("teamQuery")||"");
+  const [dayFilter, setDayFilter] = useState(
+    localStorage.getItem("dayFilter") || "ALL"
+  );
+  const [teamQuery, setTeamQuery] = useState(
+    localStorage.getItem("teamQuery") || ""
+  );
   const searchRef = useRef(null);
 
-  /* ----- carga base ----- */
+  // confirmación
+  const [pendingPick, setPendingPick] = useState(null); // { game, teamId }
+
+  /* ---------- carga base ---------- */
   const loadTeams = async () => {
     const { data } = await supabase.from("teams").select("*");
-    const m={}; (data||[]).forEach(t=>m[t.id]=t); setTeamsMap(m);
+    const m = {};
+    (data || []).forEach((t) => (m[t.id] = t));
+    setTeamsMap(m);
   };
+  const TeamMini = ({ id }) => {
+    const t = teamsMap[id] || {};
+    const src = t.logo_url || `/teams/${id}.png`;
+    return (
+      <span className="inline-flex items-center gap-1">
+        <img src={src} alt={id} className="h-5 w-5 rounded-full object-contain" />
+        <span className="font-mono font-semibold">{id}</span>
+      </span>
+    );
+  };
+  const TeamChip = ({ id }) => {
+    const t = teamsMap[id] || {};
+    const src = t.logo_url || `/teams/${id}.png`;
+    return (
+      <span className="inline-flex items-center gap-2">
+        <img src={src} alt={id} className="h-6 w-6 rounded-full object-contain" />
+        <span className="font-medium">{t.name || id}</span>
+      </span>
+    );
+  };
+
   const loadGames = async (w) => {
-    const { data: gs } = await supabase.from("games").select("*").eq("week",w).order("start_time");
-    setGames(gs||[]);
-    const ids=(gs||[]).map(g=>g.id);
-    if(ids.length){
+    const { data: gs } = await supabase
+      .from("games")
+      .select("*")
+      .eq("week", w)
+      .order("start_time");
+    setGames(gs || []);
+
+    const ids = (gs || []).map((g) => g.id);
+    if (ids.length) {
       const { data } = await supabase
         .from("odds")
-        .select("game_id, spread_home, spread_away, ml_home, ml_away, fetched_at")
+        .select(
+          "game_id, spread_home, spread_away, ml_home, ml_away, fetched_at"
+        )
         .in("game_id", ids)
-        .order("fetched_at",{ascending:false});
-      const by={};
-      for(const r of data||[]){
-        if(!by[r.game_id]) by[r.game_id]={last:r, prev:null};
-        else if(!by[r.game_id].prev) by[r.game_id].prev=r;
-      } setOddsPairs(by);
-    } else setOddsPairs({});
+        .order("fetched_at", { ascending: false });
+      const by = {};
+      for (const row of data || []) {
+        if (!by[row.game_id]) by[row.game_id] = { last: row, prev: null };
+        else if (!by[row.game_id].prev) by[row.game_id].prev = row;
+      }
+      setOddsPairs(by);
+    } else {
+      setOddsPairs({});
+    }
   };
-  const loadPicksMine = async ()=> {
-    const { data } = await supabase.from("picks").select("*").eq("user_id",session.user.id);
-    setPicks(data||[]);
-  };
-  const loadLeaguePicks = async (w)=> {
-    const { data: pks } = await supabase.from("picks")
-      .select("id,user_id,team_id,result,auto_pick,updated_at,week").eq("week",w);
-    setLeaguePicks(pks||[]);
-    const ids=[...new Set((pks||[]).map(x=>x.user_id))];
-    if(ids.length){
-      const { data: profs } = await supabase.from("profiles").select("id,display_name").in("id",ids);
-      const m={}; (profs||[]).forEach(p=>m[p.id]=p.display_name); setUserNames(m);
+
+  const loadLeaguePicks = async (w) => {
+    const { data: pks } = await supabase
+      .from("picks")
+      .select("id,user_id,team_id,result,auto_pick,updated_at,week,game_id")
+      .eq("week", w);
+    setLeaguePicks(pks || []);
+
+    const ids = [...new Set((pks || []).map((x) => x.user_id))];
+    if (ids.length) {
+      const { data: profs } = await supabase
+        .from("profiles")
+        .select("id,display_name")
+        .in("id", ids);
+      const m = {};
+      (profs || []).forEach((p) => (m[p.id] = p.display_name));
+      setUserNames(m);
     } else setUserNames({});
-    const { data: totalProfiles } = await supabase.from("profiles").select("id");
-    const total = totalProfiles?.length || 1;
-    const counts={};
-    (pks||[]).forEach(x=>{ if(x.team_id) counts[x.team_id]=(counts[x.team_id]||0)+1; });
-    const list = Object.entries(counts).map(([team_id, count])=>({
-      team_id, count, pct: Math.round((count*100)/total)
-    })).sort((a,b)=>b.count-a.count);
+
+    const { data: total } = await supabase.from("profiles").select("id"); // todos los registrados
+    const counts = {};
+    (pks || []).forEach((x) => {
+      if (x.team_id) counts[x.team_id] = (counts[x.team_id] || 0) + 1;
+    });
+    const list = Object.entries(counts)
+      .map(([team_id, count]) => ({
+        team_id,
+        count,
+        pct: total?.length ? Math.round((count * 100) / total.length) : 0,
+      }))
+      .sort((a, b) => b.count - a.count);
     setPopularity(list);
   };
-  const loadLeagueStandings = async ()=>{
-    const { data } = await supabase.from("standings").select("*").order("wins",{ascending:false});
-    setStandingsLeague(data||[]);
+
+  const loadStandings = async () => {
+    const { data } = await supabase.from("standings").select("*");
+    setStandings(data || []);
   };
 
-  const init = async ()=>{
+  const initAll = async () => {
     const email = session.user.email;
-    let { data: prof } = await supabase.from("profiles").select("*").eq("email",email).single();
-    if(!prof){
-      await supabase.from("profiles").insert({ id:session.user.id, email, display_name: email.split("@")[0], lives:2 });
-      const r = await supabase.from("profiles").select("*").eq("email",email).single();
-      prof=r.data;
+    let { data: prof } = await supabase
+      .from("profiles")
+      .select("*")
+      .eq("email", email)
+      .single();
+    if (!prof) {
+      await supabase.from("profiles").insert({
+        id: session.user.id,
+        email,
+        display_name: email.split("@")[0],
+      });
+      const r = await supabase
+        .from("profiles")
+        .select("*")
+        .eq("email", email)
+        .single();
+      prof = r.data;
     }
     setMe(prof);
+
     await loadTeams();
-    await loadPicksMine();
-    await loadLeagueStandings();
+
+    const { data: pk } = await supabase
+      .from("picks")
+      .select("*")
+      .eq("user_id", session.user.id);
+    setPicks(pk || []);
+
     await loadGames(week);
     await loadLeaguePicks(week);
+    await loadStandings();
   };
 
-  useEffect(()=>{init(); /* eslint-disable-next-line */},[]);
-  useEffect(()=>{
-    loadGames(week); loadLeaguePicks(week);
-    localStorage.setItem("week",String(week));
-    /* eslint-disable-next-line */
-  },[week]);
+  useEffect(() => {
+    initAll();
+    // realtime picks — escucha cambios para refrescar
+    const ch = supabase
+      .channel("realtime-picks")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "picks" },
+        () => {
+          loadLeaguePicks(week);
+          supabase
+            .from("picks")
+            .select("*")
+            .eq("user_id", session.user.id)
+            .then(({ data }) => setPicks(data || []));
+        }
+      )
+      .subscribe();
+    return () => supabase.removeChannel(ch);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  // autorefresh si hay juegos en vivo
-  useEffect(()=>{
-    const anyLive=(games||[]).some(g=>g.status==="in_progress");
-    if(!anyLive) return;
-    const id=setInterval(()=>{ loadGames(week); loadLeaguePicks(week); },30000);
-    return ()=>clearInterval(id);
-    // eslint-disable-next-line
-  },[games,week]);
+  useEffect(() => {
+    loadGames(week);
+    loadLeaguePicks(week);
+    localStorage.setItem("week", String(week));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [week]);
 
-  useEffect(()=>localStorage.setItem("dayFilter",dayFilter),[dayFilter]);
-  useEffect(()=>localStorage.setItem("teamQuery",teamQuery),[teamQuery]);
+  // auto-refresh si hay juegos en vivo
+  useEffect(() => {
+    const anyLive = (games || []).some((g) => g.status === "in_progress");
+    if (!anyLive) return;
+    const id = setInterval(() => loadGames(week), 30000);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [games, week]);
 
-  const myPickThisWeek = useMemo(()=> (picks||[]).find(p=>p.week===week),[picks,week]);
-  const nextKickoffISO = useMemo(()=>{
-    const up=(games||[]).find(g=>DateTime.fromISO(g.start_time)>DateTime.now());
-    return up?.start_time||null;
-  },[games]);
-  const showPickAlert = useMemo(()=>{
-    if(myPickThisWeek || !nextKickoffISO) return false;
+  useEffect(() => localStorage.setItem("dayFilter", dayFilter), [dayFilter]);
+  useEffect(() => localStorage.setItem("teamQuery", teamQuery), [teamQuery]);
+
+  /* ---------- helpers ---------- */
+  const myPickThisWeek = useMemo(
+    () => (picks || []).find((p) => p.week === week),
+    [picks, week]
+  );
+
+  const nextKickoffISO = useMemo(() => {
+    const up = (games || []).find(
+      (g) => DateTime.fromISO(g.start_time) > DateTime.now()
+    );
+    return up?.start_time || null;
+  }, [games]);
+
+  const showPickAlert = useMemo(() => {
+    if (myPickThisWeek || !nextKickoffISO) return false;
     const mins = DateTime.fromISO(nextKickoffISO).diffNow("minutes").minutes;
-    return mins<=90 && mins>0;
-  },[myPickThisWeek,nextKickoffISO]);
+    return mins <= 90 && mins > 0;
+  }, [myPickThisWeek, nextKickoffISO]);
 
-  /* ----- helpers ----- */
-  const canPick=(g,team)=>{
-    const locked = DateTime.fromISO(g.start_time)<=DateTime.now();
-    if(locked) return {ok:false, reason:"LOCK"};
-    const used=(picks||[]).some(p=>p.team_id===team && p.user_id===session.user.id);
-    if(used && !(myPickThisWeek && myPickThisWeek.team_id===team))
-      return {ok:false, reason:"USED"};
-    return {ok:true};
-  };
+  const popPct = (teamId) =>
+    popularity.find((p) => p.team_id === teamId)?.pct ?? 0;
 
-  const confirmPick=(game,teamId)=>{
-    const c=canPick(game,teamId);
-    if(!c.ok) return alert(c.reason==="LOCK"?"Cerrado por kickoff":"Ya usaste este equipo");
-    setPendingPick({game,teamId});
-  };
+  /** Regla de LOCK reforzada
+   * - Si no hay pick: se puede escoger cualquier juego futuro.
+   * - Si ya hay pick:
+   *     - Si el juego pickeado ya **inició** o está **final**, NO puede cambiarse.
+   *     - Si el juego pickeado no inició aún, se puede cambiar siempre que el nuevo juego tampoco haya iniciado.
+   */
+  const canPick = (g, team) => {
+    const nowStarted = DateTime.fromISO(g.start_time) <= DateTime.now();
+    if (nowStarted) return { ok: false, reason: "LOCK_GAME_STARTED" };
 
-  const doPick = async ()=>{
-    if(!pendingPick) return;
-    const { game, teamId } = pendingPick;
-    if(myPickThisWeek){
-      const { error } = await supabase.from("picks")
-        .update({ team_id:teamId, game_id:game.id, updated_at:new Date().toISOString() })
-        .eq("id", myPickThisWeek.id);
-      if(error) return alert(error.message);
-    } else {
-      const { error } = await supabase.from("picks")
-        .insert({ user_id:session.user.id, game_id:game.id, team_id:teamId, week, season:2025 });
-      if(error) return alert(error.message);
+    // equipo ya usado esta temporada por mí
+    const used = (picks || []).some(
+      (p) => p.team_id === team && p.user_id === session.user.id && p.week !== week
+    );
+    if (used) return { ok: false, reason: "TEAM_USED" };
+
+    if (!myPickThisWeek) return { ok: true };
+
+    // tengo pick; ¿el juego pickeado ya inició?
+    const pickedGame = (games || []).find((x) => x.id === myPickThisWeek.game_id);
+    if (pickedGame) {
+      const pickedStarted =
+        DateTime.fromISO(pickedGame.start_time) <= DateTime.now();
+      if (pickedStarted || pickedGame.status === "in_progress" || pickedGame.status === "final")
+        return { ok: false, reason: "LOCK_ALREADY_STARTED" };
     }
-    await loadPicksMine(); await loadLeaguePicks(week); setPendingPick(null);
+    return { ok: true };
   };
 
-  /* ----- UI: equipos ----- */
-  const TeamMini=({id,strong})=>{
-    const t=teamsMap[id]||{}; const src=t.logo_url || `/teams/${id}.png`;
-    return (
-      <span className="inline-flex items-center gap-2">
-        <img src={src} alt={id} className="h-7 w-7 rounded-full object-contain"/>
-        <span className={`font-mono ${strong?"font-bold":"font-semibold"}`}>{id}</span>
-      </span>
-    );
-  };
-  const TeamChip=({id})=>{
-    const t=teamsMap[id]||{}; const src=t.logo_url || `/teams/${id}.png`;
-    return (
-      <span className="inline-flex items-center gap-2">
-        <img src={src} alt={id} className="h-6 w-6 rounded-full object-contain"/>
-        <span className="font-medium">{t.name||id}</span>
-      </span>
-    );
+  const confirmPick = (game, teamId) => {
+    const c = canPick(game, teamId);
+    if (!c.ok) {
+      alert(
+        {
+          LOCK_GAME_STARTED:
+            "Este partido ya está bloqueado (kickoff iniciado).",
+          TEAM_USED: "Ya usaste este equipo en la temporada.",
+          LOCK_ALREADY_STARTED:
+            "No puedes cambiar tu pick: el partido previamente elegido ya inició/terminó.",
+        }[c.reason] || "No permitido"
+      );
+      return;
+    }
+    setPendingPick({ game, teamId });
   };
 
-  /* ----- filtros ----- */
-  const gamesByDay = useMemo(()=>{
-    if(dayFilter==="ALL") return games;
-    const map={THU:4,FRI:5,SAT:6,SUN:7,MON:1}; const want=map[dayFilter];
-    return (games||[]).filter(g=>DateTime.fromISO(g.start_time).setZone(TZ).weekday===want);
-  },[games,dayFilter]);
+  const doPick = async () => {
+    if (!pendingPick) return;
+    const { game, teamId } = pendingPick;
 
-  const gamesFiltered = useMemo(()=>{
-    const q=teamQuery.trim().toLowerCase(); if(!q) return gamesByDay;
-    const match=(id)=>{ const t=teamsMap[id]; return id.toLowerCase().includes(q) || (t?.name||"").toLowerCase().includes(q); };
-    return (gamesByDay||[]).filter(g=>match(g.away_team)||match(g.home_team));
-  },[gamesByDay,teamQuery,teamsMap]);
+    // última validación antes de escribir
+    const check = canPick(game, teamId);
+    if (!check.ok) return alert("El pick ya no es válido (lock).");
 
-  /* ----- Score + estado ----- */
-  const ScoreStrip=({g})=>{
-    const score=(
+    if (myPickThisWeek) {
+      const { error } = await supabase
+        .from("picks")
+        .update({
+          team_id: teamId,
+          game_id: game.id,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", myPickThisWeek.id);
+      if (error) return alert(error.message);
+    } else {
+      const { error } = await supabase.from("picks").insert({
+        user_id: session.user.id,
+        game_id: game.id,
+        team_id: teamId,
+        week,
+        season: 2025,
+      });
+      if (error) return alert(error.message);
+    }
+    // refresh
+    const { data: pk } = await supabase
+      .from("picks")
+      .select("*")
+      .eq("user_id", session.user.id);
+    setPicks(pk || []);
+    setPendingPick(null);
+  };
+
+  /* ---------- UI helpers ---------- */
+  const ScoreStrip = ({ g }) => {
+    const score = (
       <div className="flex items-center gap-4">
-        <div className="text-xl font-bold">{g.away_team} <span className="tabular-nums">{g.away_score??0}</span></div>
-        <div className="text-muted">—</div>
-        <div className="text-xl font-bold">{g.home_team} <span className="tabular-nums">{g.home_score??0}</span></div>
-      </div>
-    );
-    if(g.status==="final") return <div className="flex items-center justify-between">{score}<span className="badge">FINAL</span></div>;
-    if(g.status==="in_progress") return (
-      <div className="flex items-center justify-between">
-        {score}
-        <div className="text-xs flex items-center gap-2">
-          <span className="badge warn">Q{g.period??""} {g.clock??""}</span>
-          {g.possession && <span className="badge">⬤ {g.possession}</span>}
+        <div className="text-xl font-bold">
+          {g.away_team} <span className="tabular-nums">{g.away_score ?? 0}</span>
+        </div>
+        <div className="text-gray-300">—</div>
+        <div className="text-xl font-bold">
+          {g.home_team} <span className="tabular-nums">{g.home_score ?? 0}</span>
         </div>
       </div>
     );
+    if (g.status === "final") {
+      return (
+        <div className="flex items-center justify-between">
+          {score}
+          <span className="text-xs px-2 py-0.5 rounded bg-gray-100">FINAL</span>
+        </div>
+      );
+    }
+    if (g.status === "in_progress") {
+      return (
+        <div className="flex items-center justify-between">
+          {score}
+          <div className="text-xs flex items-center gap-2">
+            <span className="px-2 py-0.5 rounded bg-amber-100 text-amber-900">
+              Q{g.period ?? ""} {g.clock ?? ""}
+            </span>
+            {g.possession && (
+              <span className="px-2 py-0.5 rounded bg-gray-100">
+                ⬤ {g.possession}
+              </span>
+            )}
+          </div>
+        </div>
+      );
+    }
     return (
       <div className="flex items-center justify-between">
         {score}
-        <span className="badge">Kickoff en <Countdown iso={g.start_time}/></span>
+        <div className="text-xs">
+          <span className="px-2 py-0.5 rounded bg-gray-100">
+            Kickoff: {toLocal(g.start_time)}
+          </span>
+        </div>
       </div>
     );
   };
 
-  /* ----- Caja de pick (formato anterior: solo logo + sigla) ----- */
-  const TeamPickBox = ({ game, teamId }) => {
-    const disabled = !canPick(game, teamId).ok;
-    const selected = myPickThisWeek?.game_id === game.id && myPickThisWeek?.team_id === teamId;
-
+  const TeamBox = ({ game, teamId }) => {
+    const allowed = canPick(game, teamId).ok;
+    const selected =
+      myPickThisWeek?.game_id === game.id && myPickThisWeek?.team_id === teamId;
+    const pct = popPct(teamId);
     const { last } = oddsPairs[game.id] || {};
-    let fav=false, spread=null, ml=null, favBy=0;
-    if(last){
-      if(teamId===game.home_team){
-        spread=last.spread_home; ml=last.ml_home;
-        fav=(last.spread_home??999)<(last.spread_away??999) || (last.ml_home??9999)<(last.ml_away??9999);
-        favBy=Math.abs(last.spread_home||0);
-      } else {
-        spread=last.spread_away; ml=last.ml_away;
-        fav=(last.spread_away??999)<(last.spread_home??999) || (last.ml_away??9999)<(last.ml_home??9999);
-        favBy=Math.abs(last.spread_away||0);
-      }
-    }
-    const pct = popularity.find(p=>p.team_id===teamId)?.pct ?? 0;
-    const winPct = fav ? winProbFromSpread(favBy) : null;
+    const fav =
+      last &&
+      ((teamId === game.home_team &&
+        ((last.spread_home ?? 0) < (last.spread_away ?? 0) ||
+          (last.ml_home ?? 9999) < (last.ml_away ?? 9999))) ||
+        (teamId === game.away_team &&
+          ((last.spread_away ?? 0) < (last.spread_home ?? 0) ||
+            (last.ml_away ?? 9999) < (last.ml_home ?? 9999))));
 
     return (
       <button
         onClick={() => confirmPick(game, teamId)}
-        disabled={disabled}
-        className={`pick-box ${selected ? "selected" : ""} ${disabled ? "disabled" : ""}`}
-        style={{display:"flex", alignItems:"center", justifyContent:"space-between"}}
+        disabled={!allowed}
+        className={cls(
+          "w-full text-left rounded-xl border transition px-4 py-3",
+          selected ? "border-emerald-500 bg-emerald-50" : "border-gray-200 hover:bg-gray-50",
+          !allowed && "opacity-50 cursor-not-allowed"
+        )}
       >
-        {/* Izquierda: solo logo + sigla, como antes */}
-        <TeamMini id={teamId} strong />
-
-        {/* Derecha: chips compactas */}
-        <div className="text-xs flex items-center gap-2">
-          {fav && <span className="badge warn">Fav</span>}
-          {pct < 15 && <span className="badge info">DIF</span>}
-          {spread!=null && <span className="badge">Spr {spread>0?`+${spread}`:spread}</span>}
-          {ml!=null && <span className="badge">ML {ml>0?`+${ml}`:ml}</span>}
-          {winPct!=null && <span className="badge ok">{winPct}%</span>}
-          <span className="badge">{pct}%</span>
+        <div className="flex items-center justify-between">
+          <TeamMini id={teamId} />
+          <div className="flex items-center gap-2">
+            {fav && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-900">
+                Fav
+              </span>
+            )}
+            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-gray-100">
+              Liga {pct}%
+            </span>
+          </div>
         </div>
       </button>
     );
   };
 
-  /* ===================== RENDER ===================== */
+  /* ---------- filtros ---------- */
+  const gamesByDay = useMemo(() => {
+    if (dayFilter === "ALL") return games;
+    const map = { THU: 4, FRI: 5, SAT: 6, SUN: 7, MON: 1 };
+    const want = map[dayFilter];
+    return (games || []).filter(
+      (g) => DateTime.fromISO(g.start_time).setZone(TZ).weekday === want
+    );
+  }, [games, dayFilter]);
+
+  const gamesFiltered = useMemo(() => {
+    const q = teamQuery.trim().toLowerCase();
+    if (!q) return gamesByDay;
+    const match = (id) => {
+      const t = teamsMap[id];
+      return (
+        id.toLowerCase().includes(q) ||
+        (t?.name || "").toLowerCase().includes(q)
+      );
+    };
+    return (gamesByDay || []).filter(
+      (g) => match(g.away_team) || match(g.home_team)
+    );
+  }, [gamesByDay, teamQuery, teamsMap]);
+
+  /* ========================= Render ========================= */
   return (
-    <div className="container">
+    <div className="max-w-6xl mx-auto p-4 md:p-6">
       <header className="flex items-center justify-between gap-4">
         <div>
           <h1 className="text-3xl font-extrabold tracking-tight">
-            {import.meta.env.VITE_LEAGUE_NAME || "2025"}
+            {import.meta.env.VITE_LEAGUE_NAME || "Survivor 2025"}
           </h1>
-          <p className="text-sm text-muted">
-            Hola, <b>{me?.display_name}</b> · Vidas: <span className="badge ok">{me?.lives ?? 0}</span>
+          <p className="text-sm text-gray-700">
+            Hola, <b>{me?.display_name}</b> · Vidas:{" "}
+            <span className="inline-block px-2 py-0.5 rounded bg-emerald-100 text-emerald-800">
+              {me?.lives}
+            </span>
           </p>
         </div>
       </header>
 
+      {/* Alertas */}
       {showPickAlert && (
         <div className="mt-3 p-3 border-2 border-red-300 rounded-xl bg-red-50 text-red-900 text-sm">
-          🔔 Aún no tienes pick en W{week}. Kickoff en <b><Countdown iso={nextKickoffISO}/></b>.
+          🔔 Aún no tienes pick en W{week}. Primer kickoff en{" "}
+          <b>
+            <Countdown iso={nextKickoffISO} />
+          </b>
+          .
         </div>
       )}
 
       {/* Toolbar */}
       <section className="mt-4 grid md:grid-cols-3 gap-4">
-        <div className="card">
+        <div className="p-4 border rounded-2xl bg-white">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <label className="text-xs text-muted">Semana</label>
-              <select className="input" style={{width:90}} value={week} onChange={(e)=>setWeek(Number(e.target.value))}>
-                {Array.from({length:18},(_,i)=>i+1).map(w=><option key={w} value={w}>W{w}</option>)}
+              <label className="text-xs text-gray-500">Semana</label>
+              <select
+                className="border p-1 rounded-lg"
+                value={week}
+                onChange={(e) => setWeek(Number(e.target.value))}
+              >
+                {Array.from({ length: 18 }, (_, i) => i + 1).map((w) => (
+                  <option key={w} value={w}>
+                    W{w}
+                  </option>
+                ))}
               </select>
             </div>
             <div className="flex gap-1 text-xs">
-              {["ALL","THU","FRI","SAT","SUN","MON"].map(d=>(
-                <button key={d} className={`btn ${dayFilter===d?"primary":""}`} onClick={()=>setDayFilter(d)}>{d}</button>
+              {["ALL", "THU", "FRI", "SAT", "SUN", "MON"].map((d) => (
+                <button
+                  key={d}
+                  className={cls(
+                    "px-2 py-1 rounded border",
+                    dayFilter === d && "bg-black text-white"
+                  )}
+                  onClick={() => setDayFilter(d)}
+                >
+                  {d}
+                </button>
               ))}
             </div>
           </div>
 
-          <input ref={searchRef} className="input mt-3" placeholder="Buscar equipo..."
-            value={teamQuery} onChange={(e)=>setTeamQuery(e.target.value)} />
-
-          <div className="mt-3 grid grid-cols-2 gap-2">
-            <button className="btn text-xs" onClick={()=>downloadCSV("mis_picks.csv",[
-              ["week","team_id","result","auto_pick","updated_at"],
-              ...(picks||[]).map(p=>[p.week,p.team_id,p.result,p.auto_pick,p.updated_at]),
-            ])}>Exportar mis picks (CSV)</button>
-
-            <button className="btn text-xs" onClick={()=>downloadCSV(`picks_w${week}.csv`,[
-              ["player","team","result","auto","updated"],
-              ...(leaguePicks||[]).map(x=>[
-                userNames[x.user_id]||x.user_id.slice(0,6), x.team_id, x.result, x.auto_pick?"sí":"no", x.updated_at
-              ])
-            ])}>Exportar liga (CSV)</button>
-
-            <button className="btn text-xs" onClick={async()=>{
-              try{
-                if(!SITE || !CRON_TOKEN) throw new Error("Falta SITE o CRON_TOKEN");
-                const url = `${SITE}/api/autopickOne?week=${week}&user_id=${encodeURIComponent(session.user.id)}&token=${encodeURIComponent(CRON_TOKEN)}`;
-                const r=await fetch(url); const j=await r.json().catch(()=>({}));
-                if(!r.ok||j.ok===false) throw new Error(j.error||"Error autopick");
-                alert("Autopick aplicado.");
-                await loadPicksMine(); await loadLeaguePicks(week);
-              }catch(e){ alert(e.message); }
-            }}>Autopick para mí</button>
-          </div>
+          <input
+            ref={searchRef}
+            className="mt-3 border w-full p-2 rounded-lg"
+            placeholder="Buscar equipo..."
+            value={teamQuery}
+            onChange={(e) => setTeamQuery(e.target.value)}
+          />
         </div>
 
-        <div className="md:col-span-2 card">
+        <div className="md:col-span-2 p-4 border rounded-2xl bg-white">
           <h3 className="font-semibold">Resumen</h3>
-          <p className="text-sm text-muted">
-            Elige tu pick abajo (lock “rolling”). Cada caja es solo <b>logo + sigla</b> como antes.
-            Verás chips de <b>Fav</b>, <b>DIF</b>, <b>Spread</b>, <b>ML</b>, <b>Win%</b> y <b>% liga</b>.
+          <p className="text-sm text-gray-600">
+            El lock es por partido (“rolling”). Puedes cambiar tu pick hasta el
+            kickoff de tu partido; si tu pick ya arrancó o terminó, **no** se puede
+            cambiar.
           </p>
         </div>
       </section>
 
       {/* Partidos */}
-      <section className="mt-4 card">
+      <section className="mt-4 p-4 border rounded-2xl bg-white">
         <h2 className="font-semibold mb-3">Partidos W{week}</h2>
         <div className="space-y-3">
-          {gamesFiltered.map((g)=>{
-            const locked = DateTime.fromISO(g.start_time)<=DateTime.now();
-            const local = DateTime.fromISO(g.start_time).setZone(TZ).toFormat("EEE dd LLL HH:mm");
-            return (
-              <div key={g.id} className={`game-card ${locked?"opacity-60":""}`}>
-                {/* Encabezado */}
-                <div className="flex items-center justify-between">
-                  <div className="text-sm flex items-center gap-2 flex-wrap">
-                    <TeamChip id={g.away_team}/><span className="mx-1 text-muted">@</span><TeamChip id={g.home_team}/>
-                  </div>
-                  <div className="text-xs text-muted">
-                    Kickoff: <span className="badge">{local}</span> · Lock: <Countdown iso={g.start_time}/>
-                  </div>
+          {gamesFiltered.map((g) => (
+            <div key={g.id} className="p-4 border rounded-xl">
+              {/* encabezado */}
+              <div className="flex items-center justify-between">
+                <div className="text-sm flex items-center gap-2 flex-wrap">
+                  <TeamChip id={g.away_team} />
+                  <span className="mx-1 text-gray-400">@</span>
+                  <TeamChip id={g.home_team} />
                 </div>
-
-                {/* Score */}
-                <div className="mt-3"><ScoreStrip g={g}/></div>
-
-                {/* Boxes (solo logo + sigla) */}
-                <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <TeamPickBox game={g} teamId={g.home_team}/>
-                  <TeamPickBox game={g} teamId={g.away_team}/>
+                <div className="text-xs text-gray-600">
+                  <span className="px-1.5 py-0.5 rounded bg-gray-100">
+                    Kickoff: {toLocal(g.start_time)}
+                  </span>{" "}
+                  · Lock:&nbsp;
+                  <Countdown iso={g.start_time} />
                 </div>
               </div>
-            );
-          })}
-          {(!gamesFiltered || gamesFiltered.length===0) && (
-            <div className="text-sm text-muted">No hay partidos para este filtro o búsqueda.</div>
+
+              {/* score + estado */}
+              <div className="mt-3">
+                <ScoreStrip g={g} />
+              </div>
+
+              {/* boxes */}
+              <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <TeamBox game={g} teamId={g.home_team} />
+                <TeamBox game={g} teamId={g.away_team} />
+              </div>
+            </div>
+          ))}
+          {(!gamesFiltered || gamesFiltered.length === 0) && (
+            <div className="text-sm text-gray-500">
+              No hay partidos para este filtro o búsqueda.
+            </div>
           )}
         </div>
       </section>
 
       {/* Liga: picks + popularidad */}
       <section className="mt-6 grid md:grid-cols-2 gap-4">
-        <div className="card">
+        <div className="p-4 border rounded-2xl bg-white">
           <h2 className="font-semibold">Picks de la liga (W{week})</h2>
           <div className="overflow-x-auto">
-            <table className="table mt-3">
-              <thead><tr><th>Jugador</th><th>Equipo</th><th>Resultado</th><th>Auto</th><th>Actualizado</th></tr></thead>
+            <table className="w-full text-sm mt-3">
+              <thead>
+                <tr className="text-left text-gray-500">
+                  <th>Jugador</th>
+                  <th>Equipo</th>
+                  <th>Resultado</th>
+                  <th>Auto</th>
+                  <th>Actualizado</th>
+                </tr>
+              </thead>
               <tbody>
-                {(leaguePicks||[]).slice().sort((a,b)=>(userNames[a.user_id]||"").localeCompare(userNames[b.user_id]||""))
-                  .map(p=>(
-                  <tr key={p.id}>
-                    <td>{userNames[p.user_id]||p.user_id.slice(0,6)}</td>
-                    <td><TeamMini id={p.team_id}/></td>
-                    <td>
-                      <span className={
-                        p.result==="win"?"text-emerald-700 font-semibold":
-                        p.result==="loss"?"text-red-600 font-semibold":
-                        p.result==="push"?"text-muted":"text-muted"
-                      }>{p.result||"pending"}</span>
-                    </td>
-                    <td>{p.auto_pick?"Sí":"No"}</td>
-                    <td className="text-xs text-muted">
-                      {p.updated_at? DateTime.fromISO(p.updated_at).setZone(TZ).toFormat("dd LLL HH:mm"):"-"}
+                {(leaguePicks || []).length > 0 ? (
+                  leaguePicks
+                    .slice()
+                    .sort((a, b) =>
+                      (userNames[a.user_id] || "").localeCompare(
+                        userNames[b.user_id] || ""
+                      )
+                    )
+                    .map((p) => (
+                      <tr key={p.id} className="border-t">
+                        <td className="py-1.5">
+                          {userNames[p.user_id] || p.user_id.slice(0, 6)}
+                        </td>
+                        <td>
+                          <TeamMini id={p.team_id} />
+                        </td>
+                        <td>
+                          <span
+                            className={cls(
+                              p.result === "win" && "text-emerald-700 font-semibold",
+                              p.result === "loss" && "text-red-600 font-semibold",
+                              p.result === "push" && "text-gray-600",
+                              !p.result && "text-gray-500"
+                            )}
+                          >
+                            {p.result || "-"}
+                          </span>
+                        </td>
+                        <td>{p.auto_pick ? "Sí" : "No"}</td>
+                        <td className="text-xs text-gray-500">
+                          {p.updated_at
+                            ? DateTime.fromISO(p.updated_at)
+                                .setZone(TZ)
+                                .toFormat("dd LLL HH:mm")
+                            : "-"}
+                        </td>
+                      </tr>
+                    ))
+                ) : (
+                  <tr>
+                    <td className="py-2 text-gray-500" colSpan={5}>
+                      Aún no hay picks esta semana.
                     </td>
                   </tr>
-                ))}
-                {(!leaguePicks||leaguePicks.length===0) && <tr><td colSpan={5} className="text-muted">Aún no hay picks.</td></tr>}
+                )}
               </tbody>
             </table>
           </div>
         </div>
 
-        <div className="card">
+        <div className="p-4 border rounded-2xl bg-white">
           <h2 className="font-semibold">Popularidad de equipos</h2>
-          <p className="text-xs text-muted">Porcentaje de jugadores que pickearon ese equipo.</p>
+          <p className="text-xs text-gray-600">
+            Porcentaje de jugadores que pickearon ese equipo.
+          </p>
           <div className="mt-3 space-y-2">
-            {(popularity||[]).map(row=>(
-              <div key={row.team_id}>
-                <div className="flex items-center justify-between text-sm">
-                  <div className="flex items-center gap-2"><TeamMini id={row.team_id}/> <span className="text-muted">({row.count})</span></div>
-                  <span>{row.pct}%</span>
+            {(popularity || []).length > 0 ? (
+              popularity.map((row) => (
+                <div key={row.team_id}>
+                  <div className="flex items-center justify-between text-sm">
+                    <div className="flex items-center gap-2">
+                      <TeamMini id={row.team_id} />{" "}
+                      <span className="text-gray-500">({row.count})</span>
+                    </div>
+                    <span className="text-gray-700">{row.pct}%</span>
+                  </div>
+                  <div className="h-2 bg-gray-100 rounded mt-1">
+                    <div
+                      className="h-2 rounded bg-black"
+                      style={{ width: `${row.pct}%` }}
+                    />
+                  </div>
                 </div>
-                <div className="progress mt-1"><div className="bar" style={{width:`${row.pct}%`}}/></div>
+              ))
+            ) : (
+              <div className="text-sm text-gray-500">
+                Sin picks registrados esta semana.
               </div>
-            ))}
-            {(!popularity||popularity.length===0) && <div className="text-sm text-muted">Aún no hay picks.</div>}
+            )}
           </div>
         </div>
       </section>
 
-      {/* Standings liga */}
-      <section className="mt-6 card">
-        <h2 className="font-semibold">Standings de la liga</h2>
-        <div className="overflow-x-auto">
-          <table className="table mt-3">
-            <thead><tr><th>Jugador</th><th>Vidas</th><th>W</th><th>L</th><th>Push</th><th>Margen</th></tr></thead>
-            <tbody>
-              {(standingsLeague||[]).map(s=>(
-                <tr key={s.user_id}>
-                  <td>{s.display_name}</td><td>{s.lives}</td>
-                  <td className="text-emerald-700 font-medium">{s.wins}</td>
-                  <td className="text-red-600 font-medium">{s.losses}</td>
-                  <td className="text-muted">{s.pushes}</td>
-                  <td>{s.margin_sum}</td>
+      {/* Standings + Historial */}
+      <section className="mt-6 grid md:grid-cols-2 gap-4">
+        <div className="p-4 border rounded-2xl bg-white">
+          <h2 className="font-semibold">Tabla de supervivientes</h2>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm mt-3">
+              <thead>
+                <tr className="text-left text-gray-500">
+                  <th>Jugador</th>
+                  <th>Vidas</th>
+                  <th>W</th>
+                  <th>L</th>
+                  <th>Push</th>
+                  <th>Margen</th>
                 </tr>
-              ))}
-              {(!standingsLeague||standingsLeague.length===0) && <tr><td colSpan={6} className="text-muted">Aún no hay standings.</td></tr>}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {(standings || []).length ? (
+                  standings.map((s) => (
+                    <tr key={s.user_id} className="border-t">
+                      <td className="py-1.5">{s.display_name}</td>
+                      <td>{s.lives}</td>
+                      <td className="text-emerald-700 font-medium">{s.wins}</td>
+                      <td className="text-red-600 font-medium">{s.losses}</td>
+                      <td className="text-gray-600">{s.pushes}</td>
+                      <td>{s.margin_sum}</td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td className="py-2 text-gray-500" colSpan={6}>
+                      Aún no hay standings.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div className="p-4 border rounded-2xl bg-white">
+          <h2 className="font-semibold">Historial de tus picks</h2>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm mt-3">
+              <thead>
+                <tr className="text-left text-gray-500">
+                  <th>W</th>
+                  <th>Equipo</th>
+                  <th>Resultado</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(picks || [])
+                  .slice()
+                  .sort((a, b) => a.week - b.week)
+                  .map((p) => (
+                    <tr key={p.id} className="border-t">
+                      <td className="py-1.5">{p.week}</td>
+                      <td>
+                        <TeamMini id={p.team_id} />
+                      </td>
+                      <td>
+                        <span
+                          className={cls(
+                            p.result === "win" && "text-emerald-700 font-semibold",
+                            p.result === "loss" && "text-red-600 font-semibold",
+                            p.result === "push" && "text-gray-600",
+                            !p.result && "text-gray-500"
+                          )}
+                        >
+                          {p.result || "pending"}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                {(!picks || picks.length === 0) && (
+                  <tr>
+                    <td className="py-2 text-gray-500" colSpan={3}>
+                      Aún no has hecho picks.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
       </section>
 
-      {/* Modal de confirmación (formato anterior) */}
+      {/* Modal confirmación */}
       {pendingPick && (
         <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50">
-          <div className="w-full max-w-sm bg-white rounded-2xl p-5 card" style={{boxShadow:"0 16px 40px rgba(0,0,0,.18)"}}>
+          <div className="w-full max-w-sm bg-white rounded-2xl p-5 border">
             <h3 className="font-semibold text-lg">Confirmar pick</h3>
             <p className="mt-2 text-sm">
               ¿Confirmas tu pick de <b>{pendingPick.teamId}</b> en W{week}?
             </p>
             <div className="mt-4 flex gap-2">
-              <button className="btn" onClick={()=>setPendingPick(null)}>Cancelar</button>
-              <button className="btn primary" onClick={doPick}>Confirmar</button>
+              <button
+                className="px-4 py-2 rounded border"
+                onClick={() => setPendingPick(null)}
+              >
+                Cancelar
+              </button>
+              <button
+                className="px-4 py-2 rounded bg-black text-white"
+                onClick={doPick}
+              >
+                Confirmar
+              </button>
             </div>
           </div>
         </div>
       )}
 
       {!myPickThisWeek && nextKickoffISO && (
-        <div className="fixed bottom-4 right-4 px-4 py-2 rounded-xl bg-black text-white text-sm shadow-lg safe-bottom">
-          Recuerda elegir: <Countdown iso={nextKickoffISO}/>
+        <div className="fixed bottom-4 right-4 px-4 py-2 rounded-xl bg-black text-white text-sm shadow-lg">
+          Recuerda elegir: kickoff en <Countdown iso={nextKickoffISO} />
         </div>
       )}
     </div>
   );
 }
 
-/* ===== Asistente ===== */
+/* ========================= Asistente (sugerencias + autopick) ========================= */
 function Assistant({ session }) {
-  const [week, setWeek] = useState(()=>Number(localStorage.getItem("week"))||1);
+  const [week, setWeek] = useState(
+    () => Number(localStorage.getItem("week")) || 1
+  );
   const [teamsMap, setTeamsMap] = useState({});
   const [games, setGames] = useState([]);
   const [oddsPairs, setOddsPairs] = useState({});
   const [picks, setPicks] = useState([]);
-  const [popularity, setPopularity] = useState([]);
+  const [suggestions, setSuggestions] = useState([]);
 
-  const loadTeams=async()=>{ const {data}=await supabase.from("teams").select("*"); const m={};(data||[]).forEach(t=>m[t.id]=t); setTeamsMap(m); };
-  const loadGames=async(w)=>{ const {data}=await supabase.from("games").select("*").eq("week",w).order("start_time"); setGames(data||[]); const ids=(data||[]).map(g=>g.id);
-    if(ids.length){ const {data:od}=await supabase.from("odds").select("game_id, spread_home, spread_away, ml_home, ml_away, fetched_at").in("game_id",ids).order("fetched_at",{ascending:false});
-      const by={}; for(const r of od||[]){ if(!by[r.game_id]) by[r.game_id]={last:r,prev:null}; else if(!by[r.game_id].prev) by[r.game_id].prev=r; } setOddsPairs(by);
-    } else setOddsPairs({}); };
-  const loadPicksMine=async()=>{ const {data}=await supabase.from("picks").select("*").eq("user_id",session.user.id); setPicks(data||[]); };
-  const loadPopularity=async(w)=>{ const {data:pks}=await supabase.from("picks").select("team_id").eq("week",w); const {data:all}=await supabase.from("profiles").select("id");
-    const total=all?.length||1; const counts={}; (pks||[]).forEach(x=>{ if(x.team_id) counts[x.team_id]=(counts[x.team_id]||0)+1; });
-    setPopularity(Object.entries(counts).map(([team_id,count])=>({team_id, pct:Math.round((count*100)/total), count})));
+  const loadTeams = async () => {
+    const { data } = await supabase.from("teams").select("*");
+    const m = {};
+    (data || []).forEach((t) => (m[t.id] = t));
+    setTeamsMap(m);
+  };
+  const TeamMini = ({ id }) => {
+    const t = teamsMap[id] || {};
+    const src = t.logo_url || `/teams/${id}.png`;
+    return (
+      <span className="inline-flex items-center gap-1">
+        <img src={src} alt={id} className="h-5 w-5 rounded-full object-contain" />
+        <span className="font-mono font-semibold">{id}</span>
+      </span>
+    );
   };
 
-  useEffect(()=>{ loadTeams(); loadPicksMine(); loadGames(week); loadPopularity(week); /* eslint-disable-next-line */ },[week]);
+  const loadBasics = async () => {
+    await loadTeams();
+    const { data: gs } = await supabase
+      .from("games")
+      .select("*")
+      .eq("week", week)
+      .order("start_time");
+    setGames(gs || []);
 
-  const usedTeams=new Set((picks||[]).map(p=>p.team_id));
-  const suggestions=useMemo(()=>{
-    const rows=[];
-    (games||[]).forEach(g=>{
-      const o=oddsPairs[g.id]?.last; if(!o) return;
-      [
-        {team:g.home_team, spread:o.spread_home, ml:o.ml_home},
-        {team:g.away_team, spread:o.spread_away, ml:o.ml_away},
-      ].forEach(s=>{
-        const fav=(s.spread??999)<0 || (s.ml??9999)<0;
-        const win=fav?winProbFromSpread(Math.abs(s.spread||0)):50;
-        const pop=popularity.find(p=>p.team_id===s.team)?.pct ?? 0;
-        const used=usedTeams.has(s.team);
-        const score=(win-pop)-(used?100:0);
-        if(!used) rows.push({team:s.team, game:g, fav, win, pop, score});
-      });
-    });
-    return rows.sort((a,b)=>b.score-a.score).slice(0,8);
-  },[games,oddsPairs,popularity,usedTeams]);
+    const ids = (gs || []).map((g) => g.id);
+    const { data: pk } = await supabase
+      .from("picks")
+      .select("*")
+      .eq("user_id", session.user.id);
+    setPicks(pk || []);
 
-  const pickQuick=async(teamId,gameId)=>{
-    try{
-      const { data:w }=await supabase.from("games").select("week").eq("id",gameId).single();
-      const wk=w?.week||week;
-      const { error }=await supabase.from("picks").insert({ user_id:session.user.id, game_id:gameId, team_id:teamId, week:wk, season:2025 });
-      if(error) throw error;
-      alert("Pick guardado.");
-    }catch(e){ alert(e.message); }
+    if (ids.length) {
+      const { data } = await supabase
+        .from("odds")
+        .select(
+          "game_id, spread_home, spread_away, ml_home, ml_away, fetched_at"
+        )
+        .in("game_id", ids)
+        .order("fetched_at", { ascending: false });
+      const by = {};
+      for (const row of data || []) {
+        if (!by[row.game_id]) by[row.game_id] = { last: row, prev: null };
+        else if (!by[row.game_id].prev) by[row.game_id].prev = row;
+      }
+      setOddsPairs(by);
+    } else setOddsPairs({});
+  };
+
+  useEffect(() => {
+    loadBasics();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [week]);
+
+  useEffect(() => {
+    // construir sugerencias
+    const usedTeams = new Set((picks || []).map((x) => x.team_id));
+    const list = [];
+    for (const g of games || []) {
+      const { last } = oddsPairs[g.id] || {};
+      const score = (teamId) => {
+        // metrica simple: moneyline más bajo -> mejor
+        if (!last) return 0;
+        const ml =
+          teamId === g.home_team ? last.ml_home ?? 9999 : last.ml_away ?? 9999;
+        return -ml; // más alto mejor (más favorito)
+      };
+      const a = g.away_team;
+      const h = g.home_team;
+      const aAllowed =
+        DateTime.fromISO(g.start_time) > DateTime.now() && !usedTeams.has(a);
+      const hAllowed =
+        DateTime.fromISO(g.start_time) > DateTime.now() && !usedTeams.has(h);
+      if (aAllowed) list.push({ game: g, teamId: a, s: score(a) });
+      if (hAllowed) list.push({ game: g, teamId: h, s: score(h) });
+    }
+    list.sort((x, y) => y.s - x.s);
+    setSuggestions(list.slice(0, 6));
+  }, [games, oddsPairs, picks]);
+
+  const autopickMe = async () => {
+    try {
+      const url = `${SITE}/api/autopickOne?week=${week}&user_id=${encodeURIComponent(
+        session.user.id
+      )}&token=${encodeURIComponent(CRON_TOKEN)}`;
+      const r = await fetch(url);
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || j.ok === false) throw new Error(j.error || "Error autopick");
+      alert("Listo: se aplicó autopick para ti.");
+    } catch (e) {
+      alert(e.message);
+    }
   };
 
   return (
-    <div className="container">
-      <h1 className="text-2xl font-extrabold tracking-tight">Asistente</h1>
-      <div className="mt-3 card">
+    <div className="max-w-4xl mx-auto p-4 md:p-6">
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-bold">Asistente</h1>
         <div className="flex items-center gap-2">
-          <label className="text-xs text-muted">Semana</label>
-          <select className="input" style={{width:90}} value={week} onChange={(e)=>setWeek(Number(e.target.value))}>
-            {Array.from({length:18},(_,i)=>i+1).map(w=><option key={w} value={w}>W{w}</option>)}
+          <label className="text-xs text-gray-500">Semana</label>
+          <select
+            className="border p-1 rounded-lg"
+            value={week}
+            onChange={(e) => setWeek(Number(e.target.value))}
+          >
+            {Array.from({ length: 18 }, (_, i) => i + 1).map((w) => (
+              <option key={w} value={w}>
+                W{w}
+              </option>
+            ))}
           </select>
         </div>
-        <p className="text-sm text-muted mt-2">Picks sugeridos: win% alto, no-usado y bajo % en liga.</p>
       </div>
 
-      <section className="mt-4 grid-auto">
-        {suggestions.map((s,i)=>(
-          <div key={i} className="card">
+      <p className="text-sm text-gray-600 mt-2">
+        Sugerencias basadas en momios (moneyline) y equipos no usados. Puedes
+        aplicar Autopick para elegir al favorito más fuerte disponible.
+      </p>
+
+      <div className="mt-4 grid sm:grid-cols-2 gap-3">
+        {suggestions.map((s, idx) => (
+          <div key={idx} className="p-3 border rounded-xl">
             <div className="flex items-center justify-between">
-              <div className="text-sm"><b>{s.team}</b> · W{week}</div>
-              {s.fav&&<span className="badge warn">Fav</span>}
-            </div>
-            <div className="text-xs text-muted mt-1">Win {s.win}% · Liga {s.pop}%</div>
-            <div className="mt-2 flex gap-2">
-              <button className="btn primary" onClick={()=>pickQuick(s.team, s.game.id)}>Elegir por mí</button>
-              <span className="text-xs text-muted self-center">({s.game.away_team}@{s.game.home_team})</span>
-            </div>
-          </div>
-        ))}
-        {suggestions.length===0 && <div className="text-sm text-muted">Sin sugerencias por ahora.</div>}
-      </section>
-    </div>
-  );
-}
-
-/* ===== NFL Tab (conf/div) ===== */
-function NFLTab() {
-  const [teamsMap, setTeamsMap] = useState({});
-  const [games, setGames] = useState([]);
-
-  const loadTeams = async()=>{ const {data}=await supabase.from("teams").select("*"); const m={};(data||[]).forEach(t=>m[t.id]=t); setTeamsMap(m); };
-  const loadAllGames = async()=>{ const { data } = await supabase.from("games").select("*").order("start_time"); setGames(data||[]); };
-
-  useEffect(()=>{ loadTeams(); loadAllGames(); },[]);
-
-  const TeamMini=({id})=>{
-    const t=teamsMap[id]||{}; const src=t.logo_url || `/teams/${id}.png`;
-    return <span className="inline-flex items-center gap-1">
-      <img src={src} alt={id} className="h-5 w-5 rounded-full object-contain"/><span className="font-mono font-semibold">{id}</span>
-    </span>;
-  };
-
-  const standings = useMemo(()=>{
-    const rec={};
-    (games||[]).filter(g=>g.status==="final").forEach(g=>{
-      const ah=g.away_score||0, hh=g.home_score||0;
-      const away=g.away_team, home=g.home_team;
-      if(!rec[away]) rec[away]={w:0,l:0,t:0,diff:0};
-      if(!rec[home]) rec[home]={w:0,l:0,t:0,diff:0};
-      if(ah>hh){ rec[away].w++; rec[home].l++; } else if(hh>ah){ rec[home].w++; rec[away].l++; } else { rec[away].t++; rec[home].t++; }
-      rec[away].diff += (ah-hh); rec[home].diff += (hh-ah);
-    });
-    const byConf={}, byDiv={};
-    Object.entries(teamsMap).forEach(([id,t])=>{
-      const r=rec[id]||{w:0,l:0,t:0,diff:0};
-      (byConf[t.conference] ||= []).push({team:id, ...r});
-      (byDiv[`${t.conference}-${t.division}`] ||= []).push({team:id, ...r});
-    });
-    const sorter=(a,b)=> b.w-a.w || (b.diff||0)-(a.diff||0);
-    Object.keys(byConf).forEach(k=>byConf[k].sort(sorter));
-    Object.keys(byDiv).forEach(k=>byDiv[k].sort(sorter));
-    return { byConf, byDiv };
-  },[games,teamsMap]);
-
-  return (
-    <div className="container">
-      <h1 className="text-2xl font-extrabold tracking-tight">NFL</h1>
-
-      <section className="mt-4 grid md:grid-cols-2 gap-4">
-        {["AFC","NFC"].map(conf=>(
-          <div key={conf} className="card">
-            <h2 className="font-semibold">{conf} · Standings</h2>
-            <table className="table mt-3">
-              <thead><tr><th>Equipo</th><th>W</th><th>L</th><th>T</th><th>Diff</th></tr></thead>
-              <tbody>
-                {(standings.byConf[conf]||[]).map(r=>(
-                  <tr key={r.team}>
-                    <td><TeamMini id={r.team}/></td>
-                    <td>{r.w}</td><td>{r.l}</td><td>{r.t}</td><td>{r.diff}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ))}
-      </section>
-
-      <section className="mt-4 card">
-        <h2 className="font-semibold">Por División</h2>
-        <div className="grid md:grid-cols-2 gap-3 mt-2">
-          {Object.entries(standings.byDiv).map(([k,rows])=>{
-            const [conf,div]=k.split("-");
-            return (
-              <div key={k}>
-                <h3 className="text-sm font-semibold mb-1">{conf} - {div}</h3>
-                <table className="table">
-                  <thead><tr><th>Equipo</th><th>W</th><th>L</th><th>T</th><th>Diff</th></tr></thead>
-                  <tbody>
-                    {rows.map(r=>(
-                      <tr key={r.team}>
-                        <td><TeamMini id={r.team}/></td>
-                        <td>{r.w}</td><td>{r.l}</td><td>{r.t}</td><td>{r.diff}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+              <div className="text-sm flex items-center gap-2">
+                <TeamMini id={s.teamId} />
+                <span className="text-gray-400">en</span>
+                <span className="font-mono">
+                  {s.teamId === s.game.away_team
+                    ? s.game.home_team
+                    : s.game.away_team}
+                </span>
               </div>
-            );
-          })}
-        </div>
-      </section>
-    </div>
-  );
-}
-
-/* ===== Noticias ===== */
-function NewsHub() {
-  const [team, setTeam] = useState("ALL");
-  const [news, setNews] = useState([]);
-  const [loading, setLoading] = useState(false);
-
-  const TEAMS = [
-    "ALL","ARI","ATL","BAL","BUF","CAR","CHI","CIN","CLE","DAL","DEN","DET",
-    "GB","HOU","IND","JAX","KC","LV","LAC","LAR","MIA","MIN","NE","NO","NYG",
-    "NYJ","PHI","PIT","SEA","SF","TB","TEN","WAS"
-  ];
-
-  const fetchNews = async()=>{
-    setLoading(true);
-    try{
-      let url="https://site.api.espn.com/apis/site/v2/sports/football/nfl/news";
-      if(team!=="ALL") url=`https://site.api.espn.com/apis/site/v2/sports/football/nfl/teams/${team.toLowerCase()}/news`;
-      const r=await fetch(url,{mode:"cors"}); const j=await r.json().catch(()=>({}));
-      const items=j?.articles||j?.feed||[]; setNews(items.slice(0,20));
-    }catch{ setNews([]); } finally{ setLoading(false); }
-  };
-  useEffect(()=>{ fetchNews(); /* eslint-disable-next-line */ },[team]);
-
-  return (
-    <div className="container">
-      <h1 className="text-2xl font-extrabold tracking-tight">Noticias</h1>
-      <div className="mt-3 card">
-        <div className="flex items-center gap-2">
-          <label className="text-xs text-muted">Equipo</label>
-          <select className="input" style={{width:140}} value={team} onChange={(e)=>setTeam(e.target.value)}>
-            {TEAMS.map(t=><option key={t} value={t}>{t}</option>)}
-          </select>
-        </div>
+              <div className="text-xs text-gray-600">
+                Kickoff: {toLocal(s.game.start_time)}
+              </div>
+            </div>
+          </div>
+        ))}
+        {suggestions.length === 0 && (
+          <div className="text-sm text-gray-500">No hay sugerencias.</div>
+        )}
       </div>
-      <div className="mt-4 grid-auto">
-        {loading && <div className="text-sm text-muted">Cargando…</div>}
-        {!loading && news.map((n,i)=>(
-          <a key={i} className="card" href={n.links?.web?.href||n.link} target="_blank" rel="noreferrer">
-            <div className="flex gap-3">
-              {n.images?.[0]?.url && <img src={n.images[0].url} alt="" style={{width:96,height:96,objectFit:"cover",borderRadius:12}}/>}
-              <div>
-                <h3 className="font-semibold">{n.headline||n.title}</h3>
-                <p className="text-sm text-muted mt-1">{n.description||n.summary}</p>
-                <p className="text-xs text-muted mt-1">{n.byline}</p>
-              </div>
-            </div>
-          </a>
-        ))}
-        {!loading && news.length===0 && <div className="text-sm text-muted">No hay noticias.</div>}
+
+      <div className="mt-4">
+        <button className="px-4 py-2 rounded border" onClick={autopickMe}>
+          Autopick para mí
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* ========================= Noticias ========================= */
+function NewsTab() {
+  const [q, setQ] = useState("");
+  const [team, setTeam] = useState("");
+  const open = () => {
+    const term = (team || q || "NFL").trim();
+    const url = `https://news.google.com/search?q=${encodeURIComponent(
+      term + " NFL"
+    )}&hl=es-419&gl=MX&ceid=MX:es-419`;
+    window.open(url, "_blank", "noopener,noreferrer");
+  };
+  return (
+    <div className="max-w-3xl mx-auto p-4 md:p-6">
+      <h1 className="text-2xl font-bold">Noticias</h1>
+      <p className="text-sm text-gray-600 mt-2">
+        Busca noticias por equipo o término (se abre Google News en una pestaña).
+      </p>
+      <div className="mt-4 grid sm:grid-cols-3 gap-2">
+        <input
+          className="border p-2 rounded-lg"
+          placeholder="Equipo (e.g., DAL)"
+          value={team}
+          onChange={(e) => setTeam(e.target.value)}
+        />
+        <input
+          className="border p-2 rounded-lg"
+          placeholder="Búsqueda libre (opcional)"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+        />
+        <button className="px-4 py-2 rounded border" onClick={open}>
+          Abrir noticias
+        </button>
       </div>
     </div>
   );
