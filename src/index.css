@@ -208,3 +208,30 @@ button{font:inherit}
 .mb-1{ margin-bottom:6px; } .mb-2{ margin-bottom:10px; } .mb-3{ margin-bottom:14px; }
 .rounded{ border-radius: var(--radius-sm); }
 .border{ border:1px solid var(--border); }
+
+/* ——— Minimal polish ——— */
+.card {
+  background:#fff;
+  border:1px solid #e5e7eb;
+  border-radius:16px;
+  box-shadow:0 1px 0 0 rgba(0,0,0,.02);
+}
+.badge {
+  display:inline-flex; align-items:center; gap:.35rem;
+  padding:.15rem .5rem; border-radius:999px; font-size:.7rem;
+  border:1px solid #e5e7eb; background:#f8fafc; color:#475569;
+}
+.badge-okay { background:#ecfdf5; color:#065f46; border-color:#d1fae5; }
+.badge-warn { background:#fff7ed; color:#9a3412; border-color:#ffedd5; }
+.badge-danger{ background:#fef2f2; color:#991b1b; border-color:#fee2e2; }
+.table-minimal th {
+  font-weight:600; color:#6b7280; font-size:.8rem;
+  padding:.4rem .25rem; text-align:left; white-space:nowrap;
+}
+.table-minimal td {
+  padding:.5rem .25rem; vertical-align:middle;
+  border-top:1px solid #f1f5f9;
+}
+.progressbar { height:8px; background:#f1f5f9; border-radius:8px; overflow:hidden;}
+.progressbar > div { height:100%; background:#0f172a; }
+
