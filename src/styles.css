@@ -1,0 +1,88 @@
+/* Tailwind base layers */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ====== Tokens simples ====== */
+:root{
+  --ring: 0 0% 9%;
+  --card: 0 0% 100%;
+  --border: 214 32% 91%;
+  --muted: 215 16% 47%;
+}
+
+/* ====== Cards ====== */
+.card{
+  @apply bg-white border border-slate-200 rounded-2xl shadow-[0_1px_2px_rgba(0,0,0,0.04)] transition-all duration-200;
+}
+.card:hover{
+  @apply shadow-[0_6px_16px_rgba(0,0,0,0.06)];
+}
+
+/* ====== Badges (pill) ====== */
+.badge{
+  @apply inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium border border-slate-200 text-slate-700 bg-slate-50;
+}
+.badge-warn{
+  @apply border-amber-200 bg-amber-50 text-amber-700;
+}
+.badge-danger{
+  @apply border-rose-200 bg-rose-50 text-rose-700;
+}
+
+/* ====== Progressbar popularidad ====== */
+.progressbar{
+  @apply h-2 w-full rounded-full bg-slate-100 overflow-hidden;
+}
+.progressbar > div{
+  @apply h-full rounded-full bg-slate-900 transition-[width] duration-500;
+}
+
+/* ====== Tabla minimal ====== */
+.table-minimal{
+  @apply text-sm;
+}
+.table-minimal thead th{
+  @apply text-left font-semibold text-slate-600 bg-slate-50 border-b border-slate-200 px-3 py-2 first:rounded-tl-xl last:rounded-tr-xl;
+}
+.table-minimal tbody td{
+  @apply px-3 py-2 border-b border-slate-100 align-middle;
+}
+.table-minimal tbody tr:hover td{
+  @apply bg-slate-50/60;
+}
+
+/* ====== Botones base ====== */
+.btn{
+  @apply inline-flex items-center justify-center gap-2 px-3 py-1.5 rounded-lg border border-slate-200 text-slate-800 bg-white hover:bg-slate-50 transition;
+}
+.btn-primary{
+  @apply border-slate-900 bg-slate-900 text-white hover:bg-black;
+}
+.btn-ghost{
+  @apply border-transparent bg-transparent hover:bg-slate-50;
+}
+
+/* ====== Segmented (tabs del header) ====== */
+.seg{
+  @apply inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-slate-200 text-[13px] font-medium bg-white hover:bg-slate-50 transition;
+}
+.seg-active{
+  @apply bg-slate-900 text-white border-slate-900 hover:bg-black;
+}
+
+/* ====== Inputs ====== */
+.input{
+  @apply border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-slate-900/10;
+}
+.select{
+  @apply border border-slate-200 rounded-lg px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10;
+}
+
+/* ====== Utilidades extra ====== */
+.sticky-nav{
+  @apply sticky top-0 z-50 bg-white/80 backdrop-blur supports-[backdrop-filter]:bg-white/60 border-b border-slate-200;
+}
+.kicker{
+  @apply text-[11px] text-slate-500;
+}
