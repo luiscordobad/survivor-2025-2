@@ -198,7 +198,7 @@ function Login() {
 /* ========================= Root / Tabs ========================= */
 export default function AppRoot() {
   const session = useSession();
-  const [view, setView] = useState("game"); // game | assistant | news | rules
+  const [view, setView] = useState("game"); // game | standings | assistant | news | rules
 
   useEffect(() => {
     if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js");
@@ -212,6 +212,7 @@ export default function AppRoot() {
         <div className="max-w-6xl mx-auto px-4 py-2 flex items-center gap-2">
           {[
             ["game", "Partidos"],
+            ["standings", "Standings"],
             ["assistant", "Asistente"],
             ["news", "Noticias"],
             ["rules", "Reglas"],
@@ -232,6 +233,8 @@ export default function AppRoot() {
 
       {view === "game" ? (
         <GamesTab />
+      ) : view === "standings" ? (
+        <StandingsTab />
       ) : view === "assistant" ? (
         <AssistantTab />
       ) : view === "news" ? (
@@ -421,10 +424,8 @@ function GamesTab() {
   const popPct = (teamId) => popularity.find((p) => p.team_id === teamId)?.pct ?? 0;
 
   const canPick = (g, team) => {
-    // no permite cambiar si ya empezó o finalizó
     const locked = DateTime.fromISO(g.start_time) <= DateTime.now() || (g.status || "") === "final";
     if (locked) return { ok: false, reason: "LOCK" };
-    // no repetir equipos (excepto si es el pick de la semana que estás editando)
     const used = (picks || []).some((p) => p.team_id === team && p.user_id === session.user.id);
     if (used && !(myPickThisWeek && myPickThisWeek.team_id === team))
       return { ok: false, reason: "USED" };
@@ -639,7 +640,7 @@ function GamesTab() {
         </div>
       </header>
 
-      {/* barra superior como en tus capturas */}
+      {/* barra superior */}
       <section className="mt-4 grid md:grid-cols-[1fr,2fr] gap-4">
         <div className="p-3 md:p-4 border rounded-2xl bg-white">
           <div className="flex items-center gap-2 flex-wrap">
@@ -981,6 +982,260 @@ function GamesTab() {
           Recuerda elegir: kickoff en <Countdown iso={nextKickoffISO} />
         </div>
       )}
+    </div>
+  );
+}
+
+/* ========================= Standings (NFL) ========================= */
+function StandingsTab() {
+  const [teams, setTeams] = useState([]); // {id,name,conference,division}
+  const [games, setGames] = useState([]); // season finals
+  const [loading, setLoading] = useState(true);
+
+  // realtime para refrescar cuando entran finales
+  useEffect(() => {
+    const ch = supabase
+      .channel("realtime-standings")
+      .on("postgres_changes", { event: "*", schema: "public", table: "games" }, () => {
+        fetchData();
+      })
+      .subscribe();
+    return () => supabase.removeChannel(ch);
+  }, []);
+
+  const fetchData = async () => {
+    setLoading(true);
+    const { data: ts } = await supabase
+      .from("teams")
+      .select("id,name,conference,division,logo_url")
+      .order("id");
+    const { data: gs } = await supabase
+      .from("games")
+      .select("id,home_team,away_team,home_score,away_score,status,season")
+      .eq("season", SEASON)
+      .eq("status", "final");
+    setTeams(ts || []);
+    setGames(gs || []);
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    fetchData();
+  }, []);
+
+  // calcula W/L/T y diferencial por equipo
+  const records = useMemo(() => {
+    const rec = {};
+    teams.forEach((t) => {
+      rec[t.id] = { team: t.id, conf: t.conference, div: t.division, w: 0, l: 0, t: 0, diff: 0 };
+    });
+    (games || []).forEach((g) => {
+      const hs = Number(g.home_score ?? 0);
+      const as = Number(g.away_score ?? 0);
+      if (!rec[g.home_team] || !rec[g.away_team]) return;
+      if (hs === as) {
+        rec[g.home_team].t += 1;
+        rec[g.away_team].t += 1;
+      } else if (hs > as) {
+        rec[g.home_team].w += 1;
+        rec[g.away_team].l += 1;
+      } else {
+        rec[g.away_team].w += 1;
+        rec[g.home_team].l += 1;
+      }
+      rec[g.home_team].diff += hs - as;
+      rec[g.away_team].diff += as - hs;
+    });
+    return rec;
+  }, [games, teams]);
+
+  // helpers UI
+  const TeamMini = ({ id }) => {
+    const t = teams.find((x) => x.id === id) || {};
+    const logo = t.logo_url || `/teams/${id}.png`;
+    return (
+      <span className="inline-flex items-center gap-1">
+        <img
+          src={logo}
+          alt={id}
+          className="h-4 w-4 object-contain"
+          onError={(e) => (e.currentTarget.style.visibility = "hidden")}
+        />
+        <span className="font-mono text-xs font-semibold">{id}</span>
+      </span>
+    );
+  };
+
+  const divisions = ["EAST", "NORTH", "SOUTH", "WEST"];
+  const byConf = (conf) =>
+    teams.filter((t) => t.conference === conf).sort((a, b) => a.id.localeCompare(b.id));
+
+  const sortStand = (a, b) => {
+    const ra = records[a.id] || {};
+    const rb = records[b.id] || {};
+    if ((rb.w || 0) !== (ra.w || 0)) return (rb.w || 0) - (ra.w || 0);
+    if ((ra.l || 0) !== (rb.l || 0)) return (ra.l || 0) - (rb.l || 0);
+    return (rb.diff || 0) - (ra.diff || 0);
+  };
+
+  return (
+    <div className="max-w-6xl mx-auto p-4 md:p-6">
+      <header className="flex items-center justify-between">
+        <h1 className="text-2xl font-extrabold">Standings NFL ({SEASON})</h1>
+      </header>
+
+      {loading && <p className="mt-3 text-sm text-gray-500">Cargando…</p>}
+
+      {/* por División */}
+      <section className="mt-4 grid md:grid-cols-2 gap-4">
+        <div className="p-4 border rounded-2xl bg-white">
+          <h2 className="font-semibold">Standings por División ({SEASON}) — AFC</h2>
+          <div className="mt-3 grid sm:grid-cols-2 gap-3">
+            {divisions.map((d) => {
+              const rows = byConf("AFC")
+                .filter((t) => t.division === d)
+                .sort(sortStand);
+              return (
+                <div key={`AFC-${d}`} className="border rounded-xl p-3">
+                  <div className="text-xs text-gray-500 mb-1">AFC — {d}</div>
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="text-left text-gray-500">
+                        <th>Equipo</th>
+                        <th>W</th>
+                        <th>L</th>
+                        <th>T</th>
+                        <th>Diff</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {rows.map((t) => {
+                        const r = records[t.id] || {};
+                        return (
+                          <tr key={t.id} className="border-t">
+                            <td className="py-1.5">
+                              <TeamMini id={t.id} />{" "}
+                            </td>
+                            <td>{r.w || 0}</td>
+                            <td>{r.l || 0}</td>
+                            <td>{r.t || 0}</td>
+                            <td>{r.diff || 0}</td>
+                          </tr>
+                        );
+                      })}
+                      {rows.length === 0 && (
+                        <tr>
+                          <td className="py-1.5 text-gray-500" colSpan={5}>
+                            Sin datos
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="p-4 border rounded-2xl bg-white">
+          <h2 className="font-semibold">Standings por División ({SEASON}) — NFC</h2>
+          <div className="mt-3 grid sm:grid-cols-2 gap-3">
+            {divisions.map((d) => {
+              const rows = byConf("NFC")
+                .filter((t) => t.division === d)
+                .sort(sortStand);
+              return (
+                <div key={`NFC-${d}`} className="border rounded-xl p-3">
+                  <div className="text-xs text-gray-500 mb-1">NFC — {d}</div>
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="text-left text-gray-500">
+                        <th>Equipo</th>
+                        <th>W</th>
+                        <th>L</th>
+                        <th>T</th>
+                        <th>Diff</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {rows.map((t) => {
+                        const r = records[t.id] || {};
+                        return (
+                          <tr key={t.id} className="border-t">
+                            <td className="py-1.5">
+                              <TeamMini id={t.id} />{" "}
+                            </td>
+                            <td>{r.w || 0}</td>
+                            <td>{r.l || 0}</td>
+                            <td>{r.t || 0}</td>
+                            <td>{r.diff || 0}</td>
+                          </tr>
+                        );
+                      })}
+                      {rows.length === 0 && (
+                        <tr>
+                          <td className="py-1.5 text-gray-500" colSpan={5}>
+                            Sin datos
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </section>
+
+      {/* por Conferencia */}
+      <section className="mt-6 grid md:grid-cols-2 gap-4">
+        {["AFC", "NFC"].map((conf) => {
+          const rows = byConf(conf).sort(sortStand);
+          return (
+            <div key={conf} className="p-4 border rounded-2xl bg-white">
+              <h2 className="font-semibold">Standings por Conferencia ({SEASON}) — {conf}</h2>
+              <div className="mt-3 overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-gray-500">
+                      <th>Equipo</th>
+                      <th>W</th>
+                      <th>L</th>
+                      <th>T</th>
+                      <th>Diff</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.map((t) => {
+                      const r = records[t.id] || {};
+                      return (
+                        <tr key={t.id} className="border-t">
+                          <td className="py-1.5">
+                            <TeamMini id={t.id} /> <span className="text-xs text-gray-500">({t.division})</span>
+                          </td>
+                          <td className="text-emerald-700 font-medium">{r.w || 0}</td>
+                          <td className="text-red-600 font-medium">{r.l || 0}</td>
+                          <td className="text-gray-600">{r.t || 0}</td>
+                          <td>{r.diff || 0}</td>
+                        </tr>
+                      );
+                    })}
+                    {rows.length === 0 && (
+                      <tr>
+                        <td className="py-2 text-gray-500" colSpan={5}>
+                          Sin datos
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          );
+        })}
+      </section>
     </div>
   );
 }
