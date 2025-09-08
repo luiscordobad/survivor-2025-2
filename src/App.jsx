@@ -267,10 +267,14 @@ function GamesTab() {
   const [pendingPick, setPendingPick] = useState(null);
   const [lastUpdated, setLastUpdated] = useState(null);
 
-  // NUEVO: data de toda la temporada para standings de jugadores
+  // temporada para standings de jugadores
   const [allGamesSeason, setAllGamesSeason] = useState([]);
   const [allPicksSeason, setAllPicksSeason] = useState([]);
   const [playerStandings, setPlayerStandings] = useState([]);
+
+  // Banner resultado
+  const [resultBanner, setResultBanner] = useState(null); // {type:'win'|'loss'|'push', msg:string}
+  const bannerKey = (w, uid) => `resultShown-W${w}-${uid}`;
 
   const [dayFilter, setDayFilter] = useState(localStorage.getItem("dayFilter") || "ALL");
   const [teamQuery, setTeamQuery] = useState(localStorage.getItem("teamQuery") || "");
@@ -404,6 +408,8 @@ function GamesTab() {
     setAllPicksSeason(pks || []);
   };
 
+  const [userNames, setUserNames] = useState({});
+
   // Recalcular standings de jugadores
   const recomputePlayerStandings = (allPicks, allGames) => {
     const gamesMap = {};
@@ -433,7 +439,7 @@ function GamesTab() {
     const email = session.user.email;
     let { data: prof } = await supabase.from("profiles").select("*").eq("email", email).single();
     if (!prof) {
-      await supabase.from("profiles").insert({ id: session.user.id, email, display_name: email.split("@")[0] });
+      await supabase.from("profiles").insert({ id: session.user.id, email, display_name: email.split("@")[0], lives: 2 });
       const r = await supabase.from("profiles").select("*").eq("email", email).single();
       prof = r.data;
     }
@@ -499,8 +505,10 @@ function GamesTab() {
 
   const popPct = (teamId) => popularity.find((p) => p.team_id === teamId)?.pct ?? 0;
 
-  // Reglas para poder pickear (incluye FROZEN)
+  // Reglas para poder pickear (incluye FROZEN y ELIMINADO)
   const canPick = (candidateGame, candidateTeam) => {
+    if ((me?.lives ?? 0) <= 0) return { ok: false, reason: "ELIMINATED" };
+
     if (pickFrozen) {
       const same =
         myPickThisWeek?.game_id === candidateGame.id &&
@@ -524,7 +532,9 @@ function GamesTab() {
     const c = canPick(game, teamId);
     if (!c.ok) {
       const msg =
-        c.reason === "FROZEN"
+        c.reason === "ELIMINATED"
+          ? "Estás eliminado 😵‍💫. Puedes ver cómo van los demás, pero ya no puedes pickear."
+          : c.reason === "FROZEN"
           ? "Tu pick de esta semana ya quedó congelado porque su partido ya inició/terminó."
           : c.reason === "LOCK"
           ? "Este partido ya está cerrado por kickoff."
@@ -576,6 +586,38 @@ function GamesTab() {
     return computePickResultFromGame(g, pick.team_id);
   }
 
+  // ---- NUEVO: banner + manejo de vidas cuando se resuelve mi pick
+  async function onMyPickResolved(res) {
+    // banner gracioso
+    let msg = "";
+    let type = res;
+    if (res === "win") {
+      msg = "¡Ganaste esta semana! 🕺 Te luciste. A ver si así te invita a cenar la suerte.";
+    } else if (res === "loss") {
+      msg = "Perdiste esta semana 😬… te falló la bola mágica. ¡A levantarse que aún hay NFL!";
+    } else {
+      msg = "Push… ni fu ni fa. Como pedir tacos y que te den ensalada. 🥗";
+    }
+    setResultBanner({ type, msg });
+
+    // si perdio: restar vida
+    if (res === "loss") {
+      try {
+        const { data: prof } = await supabase
+          .from("profiles")
+          .select("lives")
+          .eq("id", session.user.id)
+          .single();
+        const currentLives = prof?.lives ?? me?.lives ?? 0;
+        const newLives = Math.max(0, currentLives - 1);
+        await supabase.from("profiles").update({ lives: newLives }).eq("id", session.user.id);
+        setMe((m) => ({ ...m, lives: newLives }));
+      } catch (e) {
+        console.warn("Error restando vida:", e.message);
+      }
+    }
+  }
+
   // Asentar automáticamente MIS picks cuando queden "final"
   async function settleMyPicksIfNeeded(currentWeek, gamesArr, myPicksArr) {
     const finals = {};
@@ -583,23 +625,41 @@ function GamesTab() {
       if (hasGameEnded(g)) finals[g.id] = g;
     });
     const updates = [];
+    let myResolvedResult = null;
+
     (myPicksArr || []).forEach((p) => {
       if (p.week !== currentWeek) return;
-      if (p.result && p.result !== "pending") return;
       const g = finals[p.game_id];
       if (!g) return;
+
       const res = computePickResultFromGame(g, p.team_id);
-      if (res !== "pending") updates.push({ id: p.id, result: res });
+      if (!p.result || p.result === "pending") {
+        if (res !== "pending") {
+          updates.push({ id: p.id, result: res });
+          // Para banner, sólo si es mi pick de la semana
+          if (p.user_id === session.user.id) myResolvedResult = res;
+        }
+      }
     });
+
     if (updates.length) {
       for (const row of updates) {
         const { error } = await supabase.from("picks").update({ result: row.result }).eq("id", row.id);
         if (error) console.warn("settleMyPicksIfNeeded error:", error.message);
       }
     }
+
+    // Banner + vidas sólo 1 vez por semana
+    if (myResolvedResult) {
+      const key = bannerKey(currentWeek, session.user.id);
+      if (!localStorage.getItem(key)) {
+        await onMyPickResolved(myResolvedResult);
+        localStorage.setItem(key, "1");
+      }
+    }
   }
 
-  // Asentar picks de la LIGA (best-effort; si RLS no deja, se ignora)
+  // Asentar picks de la LIGA (best-effort)
   async function settleLeaguePicksIfNeeded(currentWeek, gamesArr, leaguePicksArr) {
     const finals = {};
     (gamesArr || []).forEach((g) => {
@@ -772,7 +832,9 @@ function GamesTab() {
         <div className="flex items-center gap-3">
           <p className="text-sm text-slate-700">
             Hola, <b>{me?.display_name}</b> · Vidas:{" "}
-            <span className="inline-block px-2 py-0.5 rounded bg-emerald-100 text-emerald-800">{me?.lives}</span>
+            <span className={clsx("inline-block px-2 py-0.5 rounded", (me?.lives ?? 0) > 0 ? "bg-emerald-100 text-emerald-800" : "bg-rose-100 text-rose-800")}>
+              {me?.lives ?? 0}
+            </span>
           </p>
           <button className="btn-ghost text-sm" onClick={() => supabase.auth.signOut()}>
             Salir
@@ -780,7 +842,13 @@ function GamesTab() {
         </div>
       </header>
 
-      {showPickAlert && (
+      {(me?.lives ?? 0) <= 0 && (
+        <div className="mt-3 border-2 border-rose-300 rounded-xl bg-rose-50 text-rose-900 text-sm px-3 py-2">
+          Estás <b>eliminado</b> 😵‍💫 — puedes seguir chismoseando la liga, pero ya no puedes hacer picks.
+        </div>
+      )}
+
+      {showPickAlert && (me?.lives ?? 0) > 0 && (
         <div className="mt-3 border-2 border-amber-300 rounded-xl bg-amber-50 text-amber-900 text-sm px-3 py-2">
           🔔 Aún no tienes pick en W{week}. El primer kickoff es en <b><Countdown iso={nextKick} /></b>.
         </div>
@@ -1037,7 +1105,7 @@ function GamesTab() {
         </div>
       </section>
 
-      {/* NUEVO: Standings de jugadores (W/L/T) temporada */}
+      {/* Standings de jugadores (2025) */}
       <section className="mt-6">
         <div className="card p-4">
           <h2 className="font-semibold">Standings de jugadores (2025)</h2>
@@ -1086,7 +1154,22 @@ function GamesTab() {
         </div>
       )}
 
-      {!myPickThisWeek && nextKick && (
+      {/* NUEVO: Banner de resultado */}
+      {resultBanner && (
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-[60]">
+          <div className="w-full max-w-sm card p-5 text-center">
+            <h3 className="font-semibold text-lg">
+              {resultBanner.type === "win" ? "¡Victoria!" : resultBanner.type === "loss" ? "Derrota" : "Push"}
+            </h3>
+            <p className="mt-2 text-sm">{resultBanner.msg}</p>
+            <button className="btn-primary mt-4" onClick={() => setResultBanner(null)}>
+              Cerrar
+            </button>
+          </div>
+        </div>
+      )}
+
+      {!myPickThisWeek && nextKick && (me?.lives ?? 0) > 0 && (
         <div className="fixed bottom-4 right-4 px-4 py-2 rounded-xl bg-slate-900 text-white text-sm shadow-lg">
           Recuerda elegir: kickoff en <Countdown iso={nextKick} />
         </div>
@@ -1252,6 +1335,7 @@ function AssistantTab() {
   const [week, setWeek] = useState(() => Number(localStorage.getItem("week")) || 1);
   const [pop, setPop] = useState([]);
   const [busy, setBusy] = useState(false);
+  const [me, setMe] = useState(null);
 
   useEffect(() => {
     localStorage.setItem("week", String(week));
@@ -1259,6 +1343,9 @@ function AssistantTab() {
 
   useEffect(() => {
     (async () => {
+      const { data: prof } = await supabase.from("profiles").select("*").eq("id", session.user.id).single();
+      setMe(prof || null);
+
       const { data: ts } = await supabase.from("teams").select("*");
       const map = {};
       (ts || []).forEach((t) => (map[t.id] = t));
@@ -1334,6 +1421,7 @@ function AssistantTab() {
     .slice(0, 8);
 
   const confirm = async (r) => {
+    if ((me?.lives ?? 0) <= 0) return alert("Estás eliminado 😵‍💫. Ya no puedes pickear.");
     if (pickFrozen) return alert("Tu pick de esta semana ya quedó congelado.");
     setBusy(true);
     try {
@@ -1367,6 +1455,12 @@ function AssistantTab() {
         </div>
       </header>
 
+      {(me?.lives ?? 0) <= 0 && (
+        <div className="mt-3 border-2 border-rose-300 rounded-xl bg-rose-50 text-rose-900 text-sm px-3 py-2">
+          Estás <b>eliminado</b> 😵‍💫 — puedes seguir viendo recomendaciones (por curiosidad), pero no puedes elegir.
+        </div>
+      )}
+
       <p className="text-sm text-slate-600 mt-1">
         Ranking por Win% (spread), diferencial de popularidad y si te queda disponible.
       </p>
@@ -1396,7 +1490,7 @@ function AssistantTab() {
               </div>
             </div>
             <div className="mt-2 flex gap-2">
-              <button disabled={busy || r.used || pickFrozen} className="btn disabled:opacity-50" onClick={() => confirm(r)}>
+              <button disabled={busy || r.used || (me?.lives ?? 0) <= 0 || pickFrozen} className="btn disabled:opacity-50" onClick={() => confirm(r)}>
                 Elegir
               </button>
               <span className="ml-auto kicker">Score {Math.round(r.score)}</span>
