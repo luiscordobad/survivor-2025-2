@@ -11,7 +11,7 @@ const CRON_TOKEN = import.meta.env.VITE_CRON_TOKEN || "";
 const LEAGUE = import.meta.env.VITE_LEAGUE_NAME || "Maiztros Survivor 2025";
 const SEASON = 2025;
 
-/* ========================= Helpers ========================= */
+/* ========================= Utils ========================= */
 const clsx = (...xs) => xs.filter(Boolean).join(" ");
 
 function Countdown({ iso }) {
@@ -33,11 +33,9 @@ function Countdown({ iso }) {
   return <span>{left}</span>;
 }
 
-function escCSV(v) {
-  return v == null ? "" : `"${String(v).replaceAll('"', '""')}"`;
-}
 function downloadCSV(filename, rows) {
-  const csv = rows.map((r) => r.map(escCSV).join(",")).join("\n") + "\n";
+  const esc = (v) => (v == null ? "" : `"${String(v).replaceAll('"', '""')}"`);
+  const csv = rows.map((r) => r.map(esc).join(",")).join("\n") + "\n";
   const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -46,15 +44,25 @@ function downloadCSV(filename, rows) {
   a.click();
   URL.revokeObjectURL(url);
 }
-// prob. de victoria simple a partir del spread (aprox.)
+
 function winProbFromSpread(spreadForTeam) {
   if (spreadForTeam == null) return null;
-  const k = 0.23; // curva logística suave
+  const k = 0.23;
   const p = 1 / (1 + Math.exp(-k * (-spreadForTeam)));
   return Math.round(p * 100);
 }
 
-/* ========================= Sesión / Login ========================= */
+// Decide WIN/LOSS/PUSH para un teamId dado el boxscore final del juego
+function computePickResultFromGame(game, teamId) {
+  if (!game || (game.status || "") !== "final") return "pending";
+  const hs = Number(game.home_score ?? 0);
+  const as = Number(game.away_score ?? 0);
+  if (hs === as) return "push";
+  const winner = hs > as ? game.home_team : game.away_team;
+  return winner === teamId ? "win" : "loss";
+}
+
+/* ========================= Sesión/Login ========================= */
 function useSession() {
   const [session, setSession] = useState(null);
   useEffect(() => {
@@ -113,9 +121,8 @@ function Login() {
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-white p-6">
-      <div className="w-full max-w-md border rounded-2xl p-6 bg-white">
+      <div className="w-full max-w-md border rounded-2xl p-6 bg-white card">
         <h1 className="text-2xl font-extrabold text-center">{LEAGUE}</h1>
-
         <div className="mt-4 flex gap-2 justify-center">
           <button
             className={clsx(
@@ -195,7 +202,7 @@ function Login() {
   );
 }
 
-/* ========================= Root / Tabs ========================= */
+/* ========================= Root con tabs ========================= */
 export default function AppRoot() {
   const session = useSession();
   const [view, setView] = useState("game"); // game | standings | assistant | news | rules
@@ -246,80 +253,110 @@ export default function AppRoot() {
   );
 }
 
-/* ========================= Partidos ========================= */
+/* ========================= PARTIDOS ========================= */
 function GamesTab() {
   const session = useSession();
   const [me, setMe] = useState(null);
-  const [week, setWeek] = useState(() => Number(localStorage.getItem("week")) || 1);
+  const [week, setWeek] = useState(
+    () => Number(localStorage.getItem("week")) || 1
+  );
 
-  const [teams, setTeams] = useState({});
+  const [teamsMap, setTeamsMap] = useState({});
   const [games, setGames] = useState([]);
   const [oddsPairs, setOddsPairs] = useState({});
   const [picks, setPicks] = useState([]);
+  const [standings, setStandings] = useState([]);
   const [leaguePicks, setLeaguePicks] = useState([]);
   const [userNames, setUserNames] = useState({});
   const [popularity, setPopularity] = useState([]);
-  const [standings, setStandings] = useState([]);
-
   const [pendingPick, setPendingPick] = useState(null);
   const [lastUpdated, setLastUpdated] = useState(null);
 
-  const [dayFilter, setDayFilter] = useState(localStorage.getItem("dayFilter") || "ALL");
-  const [q, setQ] = useState(localStorage.getItem("teamQuery") || "");
+  const [dayFilter, setDayFilter] = useState(
+    localStorage.getItem("dayFilter") || "ALL"
+  );
+  const [teamQuery, setTeamQuery] = useState(
+    localStorage.getItem("teamQuery") || ""
+  );
+  const searchRef = useRef(null);
 
-  // realtime
+  // realtime: picks, games, odds
   useEffect(() => {
     const ch = supabase
-      .channel("realtime-games")
-      .on("postgres_changes", { event: "*", schema: "public", table: "picks" }, () => {
-        loadMyPicks();
-        loadLeaguePicks(week);
-        setLastUpdated(new Date().toISOString());
-      })
-      .on("postgres_changes", { event: "*", schema: "public", table: "games" }, () => {
-        loadGames(week);
-        setLastUpdated(new Date().toISOString());
-      })
-      .on("postgres_changes", { event: "*", schema: "public", table: "odds" }, () => {
-        loadGames(week);
-        setLastUpdated(new Date().toISOString());
-      })
+      .channel("realtime-app")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "picks" },
+        (payload) => {
+          const wk = payload.new?.week ?? payload.old?.week;
+          const ssn = payload.new?.season ?? payload.old?.season;
+          if (wk === week && ssn === SEASON) {
+            loadMyPicks();
+            loadLeaguePicks(week);
+            setLastUpdated(new Date().toISOString());
+          }
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "games" },
+        (payload) => {
+          const wk = payload.new?.week ?? payload.old?.week;
+          const ssn = payload.new?.season ?? payload.old?.season;
+          if (wk === week && ssn === SEASON) {
+            loadGames(week);
+            setLastUpdated(new Date().toISOString());
+          }
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "odds" },
+        () => {
+          loadGames(week);
+          setLastUpdated(new Date().toISOString());
+        }
+      )
       .subscribe();
-    return () => supabase.removeChannel(ch);
+    return () => {
+      supabase.removeChannel(ch);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [week]);
 
-  /* ---------- Cargas ---------- */
+  /* ---------- Cargas base ---------- */
   const loadTeams = async () => {
-    const { data } = await supabase.from("teams").select("*");
+    const { data: ts } = await supabase.from("teams").select("*");
     const map = {};
-    (data || []).forEach((t) => (map[t.id] = t));
-    setTeams(map);
+    (ts || []).forEach((t) => (map[t.id] = t));
+    setTeamsMap(map);
   };
+
   const loadGames = async (w) => {
     const { data: gs } = await supabase
       .from("games")
       .select("*")
-      .eq("season", SEASON)
       .eq("week", w)
+      .eq("season", SEASON)
       .order("start_time");
     setGames(gs || []);
 
     const ids = (gs || []).map((g) => g.id);
     if (ids.length) {
-      const { data: odds } = await supabase
+      const { data } = await supabase
         .from("odds")
-        .select("game_id,spread_home,spread_away,ml_home,ml_away,fetched_at")
+        .select("game_id, spread_home, spread_away, ml_home, ml_away, fetched_at")
         .in("game_id", ids)
         .order("fetched_at", { ascending: false });
       const by = {};
-      for (const row of odds || []) {
+      for (const row of data || []) {
         if (!by[row.game_id]) by[row.game_id] = { last: row, prev: null };
         else if (!by[row.game_id].prev) by[row.game_id].prev = row;
       }
       setOddsPairs(by);
     } else setOddsPairs({});
   };
+
   const loadMyPicks = async () => {
     const { data: pk } = await supabase
       .from("picks")
@@ -328,12 +365,13 @@ function GamesTab() {
       .eq("season", SEASON);
     setPicks(pk || []);
   };
+
   const loadLeaguePicks = async (w) => {
     const { data: pks } = await supabase
       .from("picks")
-      .select("id,user_id,team_id,result,auto_pick,updated_at,week,season")
-      .eq("season", SEASON)
-      .eq("week", w);
+      .select("id,user_id,team_id,result,auto_pick,updated_at,week,season,game_id")
+      .eq("week", w)
+      .eq("season", SEASON);
     setLeaguePicks(pks || []);
 
     const ids = [...new Set((pks || []).map((x) => x.user_id))];
@@ -354,31 +392,43 @@ function GamesTab() {
         .select("*", { count: "exact", head: true });
       totalPlayers = count || 0;
     } catch {
-      const { data: st } = await supabase.from("standings").select("user_id");
-      totalPlayers = st?.length || 0;
+      const { data: std } = await supabase.from("standings").select("user_id");
+      totalPlayers = std?.length || 0;
     }
+
     const counts = {};
-    (pks || []).forEach((x) => x.team_id && (counts[x.team_id] = (counts[x.team_id] || 0) + 1));
-    const poplist = Object.entries(counts)
+    (pks || []).forEach((x) => {
+      if (x.team_id) counts[x.team_id] = (counts[x.team_id] || 0) + 1;
+    });
+    const list = Object.entries(counts)
       .map(([team_id, count]) => ({
         team_id,
         count,
         pct: totalPlayers ? Math.round((count * 100) / totalPlayers) : 0,
       }))
       .sort((a, b) => b.count - a.count);
-    setPopularity(poplist);
+    setPopularity(list);
   };
 
-  const init = async () => {
+  const initAll = async () => {
+    // perfil
     const email = session.user.email;
-    let { data: prof } = await supabase.from("profiles").select("*").eq("email", email).single();
+    let { data: prof } = await supabase
+      .from("profiles")
+      .select("*")
+      .eq("email", email)
+      .single();
     if (!prof) {
       await supabase.from("profiles").insert({
         id: session.user.id,
         email,
         display_name: email.split("@")[0],
       });
-      const r = await supabase.from("profiles").select("*").eq("email", email).single();
+      const r = await supabase
+        .from("profiles")
+        .select("*")
+        .eq("email", email)
+        .single();
       prof = r.data;
     }
     setMe(prof);
@@ -386,98 +436,160 @@ function GamesTab() {
     await loadTeams();
     await loadGames(week);
     await loadMyPicks();
-    await loadLeaguePicks(week);
-
     const { data: st } = await supabase.from("standings").select("*");
     setStandings(st || []);
+    await loadLeaguePicks(week);
     setLastUpdated(new Date().toISOString());
   };
 
   useEffect(() => {
-    init();
+    if (!session) return;
+    initAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [session]);
+
   useEffect(() => {
     loadGames(week);
     loadLeaguePicks(week);
     localStorage.setItem("week", String(week));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [week]);
-  useEffect(() => localStorage.setItem("dayFilter", dayFilter), [dayFilter]);
-  useEffect(() => localStorage.setItem("teamQuery", q), [q]);
 
-  /* ---------- Helpers ---------- */
+  useEffect(() => localStorage.setItem("dayFilter", dayFilter), [dayFilter]);
+  useEffect(() => localStorage.setItem("teamQuery", teamQuery), [teamQuery]);
+
+  /* ---------- Helpers picks/alertas ---------- */
   const myPickThisWeek = useMemo(
     () => (picks || []).find((p) => p.week === week && p.season === SEASON),
     [picks, week]
   );
+
   const nextKickoffISO = useMemo(() => {
-    const up = (games || []).find((g) => DateTime.fromISO(g.start_time) > DateTime.now());
+    const up = (games || []).find(
+      (g) => DateTime.fromISO(g.start_time) > DateTime.now()
+    );
     return up?.start_time || null;
   }, [games]);
+
   const showPickAlert = useMemo(() => {
     if (myPickThisWeek || !nextKickoffISO) return false;
     const mins = DateTime.fromISO(nextKickoffISO).diffNow("minutes").minutes;
     return mins <= 90 && mins > 0;
   }, [myPickThisWeek, nextKickoffISO]);
 
-  const popPct = (teamId) => popularity.find((p) => p.team_id === teamId)?.pct ?? 0;
+  const popPct = (teamId) =>
+    popularity.find((p) => p.team_id === teamId)?.pct ?? 0;
 
   const canPick = (g, team) => {
-    const locked = DateTime.fromISO(g.start_time) <= DateTime.now() || (g.status || "") === "final";
+    const locked = DateTime.fromISO(g.start_time) <= DateTime.now();
     if (locked) return { ok: false, reason: "LOCK" };
-    const used = (picks || []).some((p) => p.team_id === team && p.user_id === session.user.id);
+    const used = (picks || []).some(
+      (p) => p.team_id === team && p.user_id === session.user.id
+    );
     if (used && !(myPickThisWeek && myPickThisWeek.team_id === team))
       return { ok: false, reason: "USED" };
     return { ok: true };
   };
 
-  const confirmPick = (g, teamId) => {
-    const c = canPick(g, teamId);
-    if (!c.ok) return alert(c.reason === "LOCK" ? "Cerrado por kickoff" : "Ya usaste este equipo");
-    setPendingPick({ g, teamId });
+  const confirmPick = (game, teamId) => {
+    const c = canPick(game, teamId);
+    if (!c.ok)
+      return alert(
+        c.reason === "LOCK" ? "Cerrado por kickoff" : "Ya usaste este equipo"
+      );
+    setPendingPick({ game, teamId });
   };
 
   const doPick = async () => {
     if (!pendingPick) return;
-    const { g, teamId } = pendingPick;
-
+    const { game, teamId } = pendingPick;
     if (myPickThisWeek) {
       const { error } = await supabase
         .from("picks")
-        .update({ team_id: teamId, game_id: g.id, updated_at: new Date().toISOString() })
+        .update({
+          team_id: teamId,
+          game_id: game.id,
+          updated_at: new Date().toISOString(),
+        })
         .eq("id", myPickThisWeek.id);
       if (error) return alert(error.message);
     } else {
-      const { error } = await supabase
-        .from("picks")
-        .insert({ user_id: session.user.id, game_id: g.id, team_id: teamId, week, season: SEASON });
+      const { error } = await supabase.from("picks").insert({
+        user_id: session.user.id,
+        game_id: game.id,
+        team_id: teamId,
+        week,
+        season: SEASON,
+      });
       if (error) return alert(error.message);
     }
 
     await loadMyPicks();
     await loadLeaguePicks(week);
+    const { data: st } = await supabase.from("standings").select("*");
+    setStandings(st || []);
     setPendingPick(null);
+    setLastUpdated(new Date().toISOString());
   };
 
-  /* ---------- Acciones ---------- */
-  const autopickMe = async () => {
-    try {
-      const url = `${SITE}/api/control?action=autopickOne&week=${week}&user_id=${encodeURIComponent(
-        session.user.id
-      )}&token=${encodeURIComponent(CRON_TOKEN)}`;
-      const r = await fetch(url);
-      const j = await r.json().catch(() => ({}));
-      if (!r.ok || j.ok === false) throw new Error(j.error || "Autopick falló");
-      alert("Autopick aplicado.");
-    } catch (e) {
-      alert(e.message);
+  // Deriva resultado para mostrar (si DB aún no lo guardó)
+  const gamesMap = useMemo(() => {
+    const m = {};
+    (games || []).forEach((g) => (m[g.id] = g));
+    return m;
+  }, [games]);
+
+  function derivedResultForPick(pick) {
+    if (pick?.result) return pick.result;
+    const g = gamesMap[pick?.game_id];
+    if (!g) return "pending";
+    return computePickResultFromGame(g, pick.team_id);
+  }
+
+  // Asentar automáticamente mis picks cuando queden "final"
+  async function settleMyPicksIfNeeded(currentWeek, gamesArr, myPicksArr) {
+    const finals = {};
+    (gamesArr || []).forEach((g) => {
+      if ((g.status || "") === "final") finals[g.id] = g;
+    });
+    const updates = [];
+    (myPicksArr || []).forEach((p) => {
+      if (p.week !== currentWeek) return;
+      if (p.result) return;
+      const g = finals[p.game_id];
+      if (!g) return;
+      const res = computePickResultFromGame(g, p.team_id);
+      if (res !== "pending") updates.push({ id: p.id, result: res });
+    });
+    if (updates.length) {
+      for (const row of updates) {
+        const { error } = await supabase
+          .from("picks")
+          .update({ result: row.result })
+          .eq("id", row.id);
+        if (error) console.warn("settleMyPicksIfNeeded error:", error.message);
+      }
     }
-  };
+  }
+
+  useEffect(() => {
+    if (!games?.length || !picks?.length) return;
+    settleMyPicksIfNeeded(week, games, picks);
+    (async () => {
+      // best-effort endpoint de liga (si existe)
+      try {
+        const url = `${SITE}/api/control?action=settleWeek&week=${week}&token=${encodeURIComponent(
+          CRON_TOKEN
+        )}`;
+        await fetch(url);
+      } catch {}
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [games, picks, week]);
 
   /* ---------- UI helpers ---------- */
   const TeamMini = ({ id }) => {
-    const logo = teams[id]?.logo_url || `/teams/${id}.png`;
+    const logo = teamsMap[id]?.logo_url || `/teams/${id}.png`;
     return (
       <span className="inline-flex items-center gap-1">
         <img
@@ -490,8 +602,9 @@ function GamesTab() {
       </span>
     );
   };
+
   const TeamChip = ({ id }) => {
-    const t = teams[id] || {};
+    const t = teamsMap[id] || {};
     const logo = t.logo_url || `/teams/${id}.png`;
     return (
       <span className="inline-flex items-center gap-2">
@@ -505,6 +618,7 @@ function GamesTab() {
       </span>
     );
   };
+
   const ScoreStrip = ({ g }) => {
     const status = g.status || "scheduled";
     const score = (
@@ -518,76 +632,69 @@ function GamesTab() {
         </div>
       </div>
     );
-    if (status === "final") {
+    if (status === "final")
       return (
         <div className="flex items-center justify-between">
           {score}
-          <span className="text-xs px-2 py-0.5 rounded bg-gray-100">FINAL</span>
+          <span className="badge">FINAL</span>
         </div>
       );
-    }
-    if (status === "in_progress") {
+    if (status === "in_progress")
       return (
         <div className="flex items-center justify-between">
           {score}
           <div className="text-xs flex items-center gap-2">
             {g.period != null && (
-              <span className="px-2 py-0.5 rounded bg-amber-100 text-amber-900">
-                Q{g.period} {g.clock || ""}
-              </span>
+              <span className="badge badge-warn">Q{g.period} {g.clock || ""}</span>
             )}
-            {g.possession && (
-              <span className="px-2 py-0.5 rounded bg-gray-100">⬤ {g.possession}</span>
+            {g.down != null && g.distance != null && (
+              <span className="badge">@ {g.down}&amp;{g.distance}</span>
             )}
+            {g.possession && <span className="badge">⬤ {g.possession}</span>}
+            {g.red_zone && <span className="badge badge-danger">Red Zone</span>}
           </div>
         </div>
       );
-    }
     return (
       <div className="flex items-center justify-between">
         {score}
-        <span className="text-xs px-2 py-0.5 rounded bg-gray-100">
-          Kickoff en <Countdown iso={g.start_time} />
+        <span className="badge">
+          Kickoff en&nbsp;<Countdown iso={g.start_time} />
         </span>
       </div>
     );
   };
-  const TeamBox = ({ g, teamId }) => {
-    const disabled = !canPick(g, teamId).ok;
-    const selected = myPickThisWeek?.game_id === g.id && myPickThisWeek?.team_id === teamId;
-    const { last } = oddsPairs[g.id] || {};
+
+  const TeamBox = ({ game, teamId }) => {
+    const disabled = !canPick(game, teamId).ok;
+    const selected =
+      myPickThisWeek?.game_id === game.id && myPickThisWeek?.team_id === teamId;
+    const { last } = oddsPairs[game.id] || {};
     const fav =
       last &&
-      ((teamId === g.home_team &&
+      ((teamId === game.home_team &&
         ((last.spread_home ?? 0) < (last.spread_away ?? 0) ||
           (last.ml_home ?? 9999) < (last.ml_away ?? 9999))) ||
-        (teamId === g.away_team &&
+        (teamId === game.away_team &&
           ((last.spread_away ?? 0) < (last.spread_home ?? 0) ||
             (last.ml_away ?? 9999) < (last.ml_home ?? 9999))));
     const pct = popPct(teamId);
+
     return (
       <button
-        onClick={() => confirmPick(g, teamId)}
+        onClick={() => confirmPick(game, teamId)}
         disabled={disabled}
         className={clsx(
           "w-full text-left rounded-xl border transition px-4 py-3",
-          selected ? "border-emerald-500 bg-emerald-50" : "border-gray-200 hover:bg-gray-50",
+          selected ? "border-emerald-500 bg-emerald-50 card" : "border-gray-200 hover:bg-gray-50 card",
           disabled && "opacity-50 cursor-not-allowed"
         )}
       >
         <div className="flex items-center justify-between">
           <TeamMini id={teamId} />
           <div className="flex items-center gap-2">
-            {fav && (
-              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-900">
-                Fav
-              </span>
-            )}
-            {pct < 15 && (
-              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-indigo-100 text-indigo-800">
-                DIF
-              </span>
-            )}
+            {fav && <span className="badge badge-warn">Fav</span>}
+            {pct < 15 && <span className="badge">DIF</span>}
           </div>
         </div>
       </button>
@@ -595,7 +702,7 @@ function GamesTab() {
   };
 
   /* ---------- Filtros ---------- */
-  const listByDay = useMemo(() => {
+  const gamesByDay = useMemo(() => {
     if (dayFilter === "ALL") return games;
     const map = { THU: 4, FRI: 5, SAT: 6, SUN: 7, MON: 1 };
     const want = map[dayFilter];
@@ -604,22 +711,26 @@ function GamesTab() {
     );
   }, [games, dayFilter]);
 
-  const filtered = useMemo(() => {
-    const query = q.trim().toLowerCase();
-    if (!query) return listByDay;
+  const gamesFiltered = useMemo(() => {
+    const q = teamQuery.trim().toLowerCase();
+    if (!q) return gamesByDay;
     const match = (id) => {
-      const t = teams[id];
-      return id.toLowerCase().includes(query) || (t?.name || "").toLowerCase().includes(query);
+      const t = teamsMap[id];
+      return id.toLowerCase().includes(q) || (t?.name || "").toLowerCase().includes(q);
     };
-    return (listByDay || []).filter((g) => match(g.away_team) || match(g.home_team));
-  }, [listByDay, q, teams]);
+    return (gamesByDay || []).filter(
+      (g) => match(g.away_team) || match(g.home_team)
+    );
+  }, [gamesByDay, teamQuery, teamsMap]);
 
-  /* ---------- Render ---------- */
+  /* ========================= Render ========================= */
+  const nextKick = nextKickoffISO;
+
   return (
     <div className="max-w-6xl mx-auto p-4 md:p-6">
       <header className="flex items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl md:text-3xl font-extrabold tracking-tight">{LEAGUE}</h1>
+          <h1 className="text-3xl font-extrabold tracking-tight">{LEAGUE}</h1>
           {lastUpdated && (
             <p className="text-xs text-gray-500">
               Actualizado:{" "}
@@ -640,12 +751,22 @@ function GamesTab() {
         </div>
       </header>
 
-      {/* barra superior */}
-      <section className="mt-4 grid md:grid-cols-[1fr,2fr] gap-4">
-        <div className="p-3 md:p-4 border rounded-2xl bg-white">
-          <div className="flex items-center gap-2 flex-wrap">
+      {showPickAlert && (
+        <div className="mt-3 p-3 border-2 border-red-300 rounded-xl bg-red-50 text-red-900 text-sm">
+          🔔 Aún no tienes pick en W{week}. El primer kickoff es en{" "}
+          <b>
+            <Countdown iso={nextKick} />
+          </b>
+          .
+        </div>
+      )}
+
+      {/* Toolbar */}
+      <section className="mt-4 grid md:grid-cols-3 gap-4">
+        <div className="p-4 border rounded-2xl bg-white card">
+          <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <span className="text-xs text-gray-500">Semana</span>
+              <label className="text-xs text-gray-500">Semana</label>
               <select
                 className="border p-1 rounded-lg"
                 value={week}
@@ -658,8 +779,7 @@ function GamesTab() {
                 ))}
               </select>
             </div>
-
-            <div className="ml-2 flex gap-1 text-xs">
+            <div className="flex gap-1 text-xs">
               {["ALL", "THU", "FRI", "SAT", "SUN", "MON"].map((d) => (
                 <button
                   key={d}
@@ -673,16 +793,17 @@ function GamesTab() {
                 </button>
               ))}
             </div>
-
-            <input
-              className="flex-1 md:flex-none md:w-56 border p-2 rounded-lg ml-auto"
-              placeholder="Buscar equipo..."
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-            />
           </div>
 
-          <div className="mt-3 flex gap-2">
+          <input
+            ref={searchRef}
+            className="mt-3 border w-full p-2 rounded-lg"
+            placeholder="Buscar equipo..."
+            value={teamQuery}
+            onChange={(e) => setTeamQuery(e.target.value)}
+          />
+
+          <div className="mt-3 grid grid-cols-2 gap-2">
             <button
               className="text-xs px-3 py-1 rounded border"
               onClick={() =>
@@ -718,97 +839,90 @@ function GamesTab() {
             >
               Exportar standings (CSV)
             </button>
-            <button className="text-xs px-3 py-1 rounded border" onClick={autopickMe}>
-              Autopick para mí
-            </button>
+            <AutoPickButtons week={week} />
           </div>
         </div>
 
-        <div className="p-3 md:p-4 border rounded-2xl bg-white">
+        <div className="md:col-span-2 p-4 border rounded-2xl bg-white card">
           <h3 className="font-semibold">Resumen</h3>
           <p className="text-sm text-gray-600">
-            Elige tu pick en los partidos de abajo. Lock “rolling” por partido. El tablero se
-            actualiza en tiempo real.
+            Elige tu pick en los partidos de abajo. Lock “rolling” por partido. Win/Loss
+            se marca automáticamente cuando el juego es FINAL.
           </p>
         </div>
       </section>
 
-      {/* alerta falta pick */}
-      {showPickAlert && (
-        <div className="mt-3 p-3 border-2 border-red-300 rounded-xl bg-red-50 text-red-900 text-sm">
-          🔔 Aún no tienes pick en W{week}. Kickoff en <b><Countdown iso={nextKickoffISO} /></b>.
-        </div>
-      )}
-
       {/* Partidos */}
-      <section className="mt-4 p-4 border rounded-2xl bg-white">
+      <section className="mt-4 p-4 border rounded-2xl bg-white card">
         <h2 className="font-semibold mb-3">Partidos W{week}</h2>
         <div className="space-y-3">
-          {filtered.map((g) => {
-            const local = DateTime.fromISO(g.start_time).setZone(TZ).toFormat("EEE dd LLL HH:mm");
-            const locked =
-              DateTime.fromISO(g.start_time) <= DateTime.now() || (g.status || "") === "final";
+          {gamesFiltered.map((g) => {
+            const locked = DateTime.fromISO(g.start_time) <= DateTime.now();
+            const local = DateTime.fromISO(g.start_time)
+              .setZone(TZ)
+              .toFormat("EEE dd LLL HH:mm");
             const { last } = oddsPairs[g.id] || {};
-            const wpHome = winProbFromSpread(last?.spread_home ?? null);
-            const wpAway = wpHome != null ? 100 - wpHome : null;
+            const spreadHome = last?.spread_home ?? null;
+            const spreadAway = last?.spread_away ?? null;
+            const mlHome = last?.ml_home ?? null;
+            const mlAway = last?.ml_away ?? null;
+            const wpHome =
+              winProbFromSpread(spreadHome) ?? null;
+            const wpAway =
+              winProbFromSpread(-spreadHome) ?? (wpHome != null ? 100 - wpHome : null);
 
             return (
-              <div key={g.id} className={clsx("p-4 border rounded-xl", locked && "opacity-60")}>
-                {/* encabezado: equipos + stats link */}
-                <div className="flex items-center justify-between gap-3 flex-wrap">
+              <div key={g.id} className={clsx("p-4 border rounded-xl card", locked && "opacity-60")}>
+                <div className="flex items-center justify-between">
                   <div className="text-sm flex items-center gap-2 flex-wrap">
                     <TeamChip id={g.away_team} />
                     <span className="mx-1 text-gray-400">@</span>
                     <TeamChip id={g.home_team} />
                   </div>
-                  <div className="text-xs flex items-center gap-3">
-                    <span className="px-1.5 py-0.5 rounded bg-gray-100">{local}</span>
+                  <div className="text-xs text-gray-600 flex items-center gap-2">
                     <a
                       href={`https://www.espn.com/nfl/game/_/gameId/${g.id}`}
                       target="_blank"
                       rel="noreferrer"
-                      className="underline text-gray-700"
+                      className="underline text-gray-500"
                     >
                       Stats
                     </a>
+                    <span className="badge">{local}</span>
                   </div>
                 </div>
 
-                {/* marcador/estado */}
                 <div className="mt-3">
                   <ScoreStrip g={g} />
                 </div>
 
-                {/* info momios / win% */}
                 <div className="mt-2 text-xs text-gray-700 flex gap-3 flex-wrap">
-                  {last?.spread_home != null && last?.spread_away != null && (
-                    <span className="px-2 py-0.5 rounded bg-gray-50 border">
-                      Spread: {g.home_team}{" "}
-                      {last.spread_home > 0 ? `+${last.spread_home}` : last.spread_home},{" "}
-                      {g.away_team} {last.spread_away > 0 ? `+${last.spread_away}` : last.spread_away}
+                  {spreadHome != null && (
+                    <span className="badge">
+                      Spread: {g.home_team} {spreadHome > 0 ? `+${spreadHome}` : spreadHome},
+                      &nbsp;{g.away_team} {spreadAway > 0 ? `+${spreadAway}` : spreadAway}
                     </span>
                   )}
-                  {last?.ml_home != null && last?.ml_away != null && (
-                    <span className="px-2 py-0.5 rounded bg-gray-50 border">
-                      ML: {g.home_team} {last.ml_home}, {g.away_team} {last.ml_away}
+                  {mlHome != null && mlAway != null && (
+                    <span className="badge">
+                      ML: {g.home_team} {mlHome}, {g.away_team} {mlAway}
                     </span>
                   )}
                   {(wpHome != null || wpAway != null) && (
-                    <span className="px-2 py-0.5 rounded bg-gray-50 border">
+                    <span className="badge">
                       Win%: {g.home_team} {wpHome ?? "—"}% · {g.away_team} {wpAway ?? "—"}%
                     </span>
                   )}
                 </div>
 
-                {/* boxes de selección */}
                 <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <TeamBox g={g} teamId={g.home_team} />
-                  <TeamBox g={g} teamId={g.away_team} />
+                  <TeamBox game={g} teamId={g.home_team} />
+                  <TeamBox game={g} teamId={g.away_team} />
                 </div>
               </div>
             );
           })}
-          {(!filtered || filtered.length === 0) && (
+          {(!gamesFiltered || gamesFiltered.length === 0) && (
             <div className="text-sm text-gray-500">No hay partidos con este filtro/búsqueda.</div>
           )}
         </div>
@@ -816,12 +930,12 @@ function GamesTab() {
 
       {/* Liga: picks + popularidad */}
       <section className="mt-6 grid md:grid-cols-2 gap-4">
-        <div className="p-4 border rounded-2xl bg-white">
+        <div className="p-4 border rounded-2xl bg-white card">
           <h2 className="font-semibold">Picks de la liga (W{week})</h2>
           <div className="overflow-x-auto">
-            <table className="w-full text-sm mt-3">
+            <table className="w-full text-sm mt-3 table-minimal">
               <thead>
-                <tr className="text-left text-gray-500">
+                <tr>
                   <th>Jugador</th>
                   <th>Equipo</th>
                   <th>Resultado</th>
@@ -830,45 +944,48 @@ function GamesTab() {
                 </tr>
               </thead>
               <tbody>
-                {(leaguePicks || []).length ? (
+                {(leaguePicks || []).length > 0 ? (
                   leaguePicks
                     .slice()
                     .sort((a, b) =>
-                      (userNames[a.user_id] || "").localeCompare(userNames[b.user_id] || "")
+                      (userNames[a.user_id] || "").localeCompare(
+                        userNames[b.user_id] || ""
+                      )
                     )
-                    .map((p) => (
-                      <tr key={p.id} className="border-t">
-                        <td className="py-1.5">{userNames[p.user_id] || p.user_id.slice(0, 6)}</td>
-                        <td>
-                          <TeamMini id={p.team_id} />
-                        </td>
-                        <td>
-                          <span
-                            className={
-                              p.result === "win"
-                                ? "text-emerald-700 font-semibold"
-                                : p.result === "loss"
-                                ? "text-red-600 font-semibold"
-                                : p.result === "push"
-                                ? "text-gray-600"
-                                : "text-gray-500"
-                            }
-                          >
-                            {p.result || "-"}
-                          </span>
-                        </td>
-                        <td>{p.auto_pick ? "Sí" : "No"}</td>
-                        <td className="text-xs text-gray-500">
-                          {p.updated_at
-                            ? DateTime.fromISO(p.updated_at).setZone(TZ).toFormat("dd LLL HH:mm")
-                            : "-"}
-                        </td>
-                      </tr>
-                    ))
+                    .map((p) => {
+                      const shownRes = derivedResultForPick(p);
+                      return (
+                        <tr key={p.id}>
+                          <td>{userNames[p.user_id] || p.user_id.slice(0, 6)}</td>
+                          <td><TeamMini id={p.team_id} /></td>
+                          <td>
+                            <span
+                              className={
+                                shownRes === "win"
+                                  ? "text-emerald-700 font-semibold"
+                                  : shownRes === "loss"
+                                  ? "text-red-600 font-semibold"
+                                  : shownRes === "push"
+                                  ? "text-gray-600"
+                                  : "text-gray-500"
+                              }
+                            >
+                              {shownRes}
+                            </span>
+                          </td>
+                          <td>{p.auto_pick ? "Sí" : "No"}</td>
+                          <td className="text-xs text-gray-500">
+                            {p.updated_at
+                              ? DateTime.fromISO(p.updated_at).setZone(TZ).toFormat("dd LLL HH:mm")
+                              : "-"}
+                          </td>
+                        </tr>
+                      );
+                    })
                 ) : (
                   <tr>
                     <td className="py-2 text-gray-500" colSpan={5}>
-                      Aún no hay picks.
+                      Aún no hay picks esta semana.
                     </td>
                   </tr>
                 )}
@@ -877,22 +994,26 @@ function GamesTab() {
           </div>
         </div>
 
-        <div className="p-4 border rounded-2xl bg-white">
+        <div className="p-4 border rounded-2xl bg-white card">
           <h2 className="font-semibold">Popularidad de equipos</h2>
-          <p className="text-xs text-gray-600">Porcentaje de jugadores que pickearon ese equipo.</p>
+          <p className="text-xs text-gray-600">
+            Porcentaje de jugadores que pickearon ese equipo.
+          </p>
           <div className="mt-3 space-y-2">
-            {(popularity || []).length ? (
+            {(popularity || []).length > 0 ? (
               popularity.map((row) => (
                 <div key={row.team_id}>
                   <div className="flex items-center justify-between text-sm">
                     <div className="flex items-center gap-2">
-                      <TeamMini id={row.team_id} />
+                      <TeamMini id={row.team_id} />{" "}
                       <span className="text-gray-500">({row.count})</span>
                     </div>
-                    <span className="text-gray-700 text-base font-semibold">{row.pct}%</span>
+                    <span className="text-gray-700 text-base font-semibold">
+                      {row.pct}%
+                    </span>
                   </div>
-                  <div className="h-2 bg-gray-100 rounded mt-1">
-                    <div className="h-2 rounded bg-black" style={{ width: `${row.pct}%` }} />
+                  <div className="progressbar mt-1">
+                    <div style={{ width: `${row.pct}%` }} />
                   </div>
                 </div>
               ))
@@ -903,14 +1024,14 @@ function GamesTab() {
         </div>
       </section>
 
-      {/* Historial propio */}
+      {/* Historial usuario */}
       <section className="mt-6">
-        <div className="p-4 border rounded-2xl bg-white">
+        <div className="p-4 border rounded-2xl bg-white card">
           <h2 className="font-semibold">Historial de tus picks</h2>
           <div className="overflow-x-auto">
-            <table className="w-full text-sm mt-3">
+            <table className="w-full text-sm mt-3 table-minimal">
               <thead>
-                <tr className="text-left text-gray-500">
+                <tr>
                   <th>W</th>
                   <th>Equipo</th>
                   <th>Resultado</th>
@@ -920,29 +1041,30 @@ function GamesTab() {
                 {(picks || [])
                   .filter((p) => p.season === SEASON)
                   .sort((a, b) => a.week - b.week)
-                  .map((p) => (
-                    <tr key={p.id} className="border-t">
-                      <td className="py-1.5">{p.week}</td>
-                      <td>
-                        <TeamMini id={p.team_id} />
-                      </td>
-                      <td>
-                        <span
-                          className={
-                            p.result === "win"
-                              ? "text-emerald-700 font-semibold"
-                              : p.result === "loss"
-                              ? "text-red-600 font-semibold"
-                              : p.result === "push"
-                              ? "text-gray-600"
-                              : "text-gray-500"
-                          }
-                        >
-                          {p.result || "pending"}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
+                  .map((p) => {
+                    const shownRes = derivedResultForPick(p);
+                    return (
+                      <tr key={p.id}>
+                        <td>{p.week}</td>
+                        <td><TeamMini id={p.team_id} /></td>
+                        <td>
+                          <span
+                            className={
+                              shownRes === "win"
+                                ? "text-emerald-700 font-semibold"
+                                : shownRes === "loss"
+                                ? "text-red-600 font-semibold"
+                                : shownRes === "push"
+                                ? "text-gray-600"
+                                : "text-gray-500"
+                            }
+                          >
+                            {shownRes}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 {(!picks || picks.length === 0) && (
                   <tr>
                     <td className="py-2 text-gray-500" colSpan={3}>
@@ -956,19 +1078,25 @@ function GamesTab() {
         </div>
       </section>
 
-      {/* modal confirmación */}
+      {/* Modal confirmación */}
       {pendingPick && (
         <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50">
-          <div className="w-full max-w-sm bg-white rounded-2xl p-5 border">
+          <div className="w-full max-w-sm bg-white rounded-2xl p-5 border card">
             <h3 className="font-semibold text-lg">Confirmar pick</h3>
             <p className="mt-2 text-sm">
               ¿Confirmas tu pick de <b>{pendingPick.teamId}</b> en W{week}?
             </p>
             <div className="mt-4 flex gap-2">
-              <button className="px-4 py-2 rounded border" onClick={() => setPendingPick(null)}>
+              <button
+                className="px-4 py-2 rounded border"
+                onClick={() => setPendingPick(null)}
+              >
                 Cancelar
               </button>
-              <button className="px-4 py-2 rounded bg-black text-white" onClick={doPick}>
+              <button
+                className="px-4 py-2 rounded bg-black text-white"
+                onClick={doPick}
+              >
                 Confirmar
               </button>
             </div>
@@ -976,282 +1104,150 @@ function GamesTab() {
         </div>
       )}
 
-      {/* aviso rápido */}
-      {!myPickThisWeek && nextKickoffISO && (
+      {!myPickThisWeek && nextKick && (
         <div className="fixed bottom-4 right-4 px-4 py-2 rounded-xl bg-black text-white text-sm shadow-lg">
-          Recuerda elegir: kickoff en <Countdown iso={nextKickoffISO} />
+          Recuerda elegir: kickoff en <Countdown iso={nextKick} />
         </div>
       )}
     </div>
   );
 }
 
-/* ========================= Standings (NFL) ========================= */
-function StandingsTab() {
-  const [teams, setTeams] = useState([]); // {id,name,conference,division}
-  const [games, setGames] = useState([]); // season finals
-  const [loading, setLoading] = useState(true);
+/* -------- Autopick buttons (separado para legibilidad) -------- */
+function AutoPickButtons({ week }) {
+  const session = useSession();
 
-  // realtime para refrescar cuando entran finales
-  useEffect(() => {
-    const ch = supabase
-      .channel("realtime-standings")
-      .on("postgres_changes", { event: "*", schema: "public", table: "games" }, () => {
-        fetchData();
-      })
-      .subscribe();
-    return () => supabase.removeChannel(ch);
-  }, []);
-
-  const fetchData = async () => {
-    setLoading(true);
-    const { data: ts } = await supabase
-      .from("teams")
-      .select("id,name,conference,division,logo_url")
-      .order("id");
-    const { data: gs } = await supabase
-      .from("games")
-      .select("id,home_team,away_team,home_score,away_score,status,season")
-      .eq("season", SEASON)
-      .eq("status", "final");
-    setTeams(ts || []);
-    setGames(gs || []);
-    setLoading(false);
+  const autopickMe = async () => {
+    try {
+      const url = `${SITE}/api/control?action=autopickOne&week=${week}&user_id=${encodeURIComponent(
+        session.user.id
+      )}&token=${encodeURIComponent(CRON_TOKEN)}`;
+      const r = await fetch(url);
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || j.ok === false) throw new Error(j.error || "Error autopick");
+      alert("Autopick aplicado para ti.");
+    } catch (e) {
+      alert(e.message);
+    }
   };
 
-  useEffect(() => {
-    fetchData();
-  }, []);
-
-  // calcula W/L/T y diferencial por equipo
-  const records = useMemo(() => {
-    const rec = {};
-    teams.forEach((t) => {
-      rec[t.id] = { team: t.id, conf: t.conference, div: t.division, w: 0, l: 0, t: 0, diff: 0 };
-    });
-    (games || []).forEach((g) => {
-      const hs = Number(g.home_score ?? 0);
-      const as = Number(g.away_score ?? 0);
-      if (!rec[g.home_team] || !rec[g.away_team]) return;
-      if (hs === as) {
-        rec[g.home_team].t += 1;
-        rec[g.away_team].t += 1;
-      } else if (hs > as) {
-        rec[g.home_team].w += 1;
-        rec[g.away_team].l += 1;
-      } else {
-        rec[g.away_team].w += 1;
-        rec[g.home_team].l += 1;
-      }
-      rec[g.home_team].diff += hs - as;
-      rec[g.away_team].diff += as - hs;
-    });
-    return rec;
-  }, [games, teams]);
-
-  // helpers UI
-  const TeamMini = ({ id }) => {
-    const t = teams.find((x) => x.id === id) || {};
-    const logo = t.logo_url || `/teams/${id}.png`;
-    return (
-      <span className="inline-flex items-center gap-1">
-        <img
-          src={logo}
-          alt={id}
-          className="h-4 w-4 object-contain"
-          onError={(e) => (e.currentTarget.style.visibility = "hidden")}
-        />
-        <span className="font-mono text-xs font-semibold">{id}</span>
-      </span>
-    );
-  };
-
-  const divisions = ["EAST", "NORTH", "SOUTH", "WEST"];
-  const byConf = (conf) =>
-    teams.filter((t) => t.conference === conf).sort((a, b) => a.id.localeCompare(b.id));
-
-  const sortStand = (a, b) => {
-    const ra = records[a.id] || {};
-    const rb = records[b.id] || {};
-    if ((rb.w || 0) !== (ra.w || 0)) return (rb.w || 0) - (ra.w || 0);
-    if ((ra.l || 0) !== (rb.l || 0)) return (ra.l || 0) - (rb.l || 0);
-    return (rb.diff || 0) - (ra.diff || 0);
+  const autopickLeague = async () => {
+    try {
+      const url = `${SITE}/api/control?action=autopick&week=${week}&token=${encodeURIComponent(
+        CRON_TOKEN
+      )}`;
+      const r = await fetch(url);
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || j.ok === false)
+        throw new Error(j.error || "Error autopick liga");
+      alert("Autopick de liga listo.");
+    } catch (e) {
+      alert(e.message);
+    }
   };
 
   return (
+    <>
+      <button className="text-xs px-3 py-1 rounded border" onClick={autopickMe}>
+        Autopick para mí
+      </button>
+      <button className="text-xs px-3 py-1 rounded border" onClick={autopickLeague}>
+        Autopick (liga)
+      </button>
+    </>
+  );
+}
+
+/* ========================= Standings NFL ========================= */
+function StandingsTab() {
+  const [rows, setRows] = useState([]);
+
+  useEffect(() => {
+    (async () => {
+      // Espera una vista nfl_standings con: conference, division, team_id, w, l, t, diff
+      const { data } = await supabase
+        .from("nfl_standings")
+        .select("conference, division, team_id, w, l, t, diff")
+        .order("conference")
+        .order("division")
+        .order("team_id");
+      setRows(data || []);
+    })();
+  }, []);
+
+  // Agrupamos por conf y división
+  const groups = useMemo(() => {
+    const out = {};
+    (rows || []).forEach((r) => {
+      const key = `${r.conference}__${r.division}`;
+      if (!out[key]) out[key] = { conference: r.conference, division: r.division, list: [] };
+      out[key].list.push(r);
+    });
+    return Object.values(out);
+  }, [rows]);
+
+  return (
     <div className="max-w-6xl mx-auto p-4 md:p-6">
-      <header className="flex items-center justify-between">
-        <h1 className="text-2xl font-extrabold">Standings NFL ({SEASON})</h1>
-      </header>
+      <h1 className="text-2xl font-extrabold mb-3">Standings NFL</h1>
+      {(!rows || rows.length === 0) && (
+        <p className="text-sm text-gray-500">
+          Sin datos en <code>nfl_standings</code>. Verifica la vista o la sync.
+        </p>
+      )}
 
-      {loading && <p className="mt-3 text-sm text-gray-500">Cargando…</p>}
-
-      {/* por División */}
-      <section className="mt-4 grid md:grid-cols-2 gap-4">
-        <div className="p-4 border rounded-2xl bg-white">
-          <h2 className="font-semibold">Standings por División ({SEASON}) — AFC</h2>
-          <div className="mt-3 grid sm:grid-cols-2 gap-3">
-            {divisions.map((d) => {
-              const rows = byConf("AFC")
-                .filter((t) => t.division === d)
-                .sort(sortStand);
-              return (
-                <div key={`AFC-${d}`} className="border rounded-xl p-3">
-                  <div className="text-xs text-gray-500 mb-1">AFC — {d}</div>
-                  <table className="w-full text-xs">
-                    <thead>
-                      <tr className="text-left text-gray-500">
-                        <th>Equipo</th>
-                        <th>W</th>
-                        <th>L</th>
-                        <th>T</th>
-                        <th>Diff</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {rows.map((t) => {
-                        const r = records[t.id] || {};
-                        return (
-                          <tr key={t.id} className="border-t">
-                            <td className="py-1.5">
-                              <TeamMini id={t.id} />{" "}
-                            </td>
-                            <td>{r.w || 0}</td>
-                            <td>{r.l || 0}</td>
-                            <td>{r.t || 0}</td>
-                            <td>{r.diff || 0}</td>
-                          </tr>
-                        );
-                      })}
-                      {rows.length === 0 && (
-                        <tr>
-                          <td className="py-1.5 text-gray-500" colSpan={5}>
-                            Sin datos
-                          </td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-
-        <div className="p-4 border rounded-2xl bg-white">
-          <h2 className="font-semibold">Standings por División ({SEASON}) — NFC</h2>
-          <div className="mt-3 grid sm:grid-cols-2 gap-3">
-            {divisions.map((d) => {
-              const rows = byConf("NFC")
-                .filter((t) => t.division === d)
-                .sort(sortStand);
-              return (
-                <div key={`NFC-${d}`} className="border rounded-xl p-3">
-                  <div className="text-xs text-gray-500 mb-1">NFC — {d}</div>
-                  <table className="w-full text-xs">
-                    <thead>
-                      <tr className="text-left text-gray-500">
-                        <th>Equipo</th>
-                        <th>W</th>
-                        <th>L</th>
-                        <th>T</th>
-                        <th>Diff</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {rows.map((t) => {
-                        const r = records[t.id] || {};
-                        return (
-                          <tr key={t.id} className="border-t">
-                            <td className="py-1.5">
-                              <TeamMini id={t.id} />{" "}
-                            </td>
-                            <td>{r.w || 0}</td>
-                            <td>{r.l || 0}</td>
-                            <td>{r.t || 0}</td>
-                            <td>{r.diff || 0}</td>
-                          </tr>
-                        );
-                      })}
-                      {rows.length === 0 && (
-                        <tr>
-                          <td className="py-1.5 text-gray-500" colSpan={5}>
-                            Sin datos
-                          </td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      </section>
-
-      {/* por Conferencia */}
-      <section className="mt-6 grid md:grid-cols-2 gap-4">
-        {["AFC", "NFC"].map((conf) => {
-          const rows = byConf(conf).sort(sortStand);
-          return (
-            <div key={conf} className="p-4 border rounded-2xl bg-white">
-              <h2 className="font-semibold">Standings por Conferencia ({SEASON}) — {conf}</h2>
-              <div className="mt-3 overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="text-left text-gray-500">
-                      <th>Equipo</th>
-                      <th>W</th>
-                      <th>L</th>
-                      <th>T</th>
-                      <th>Diff</th>
+      <div className="grid md:grid-cols-2 gap-4">
+        {groups.map((g, idx) => (
+          <div key={idx} className="p-4 border rounded-2xl bg-white card">
+            <h3 className="font-semibold mb-2">
+              {g.conference} — {g.division}
+            </h3>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm table-minimal">
+                <thead>
+                  <tr>
+                    <th>Equipo</th>
+                    <th>W</th>
+                    <th>L</th>
+                    <th>T</th>
+                    <th>Diff</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {g.list.map((r) => (
+                    <tr key={r.team_id}>
+                      <td className="font-mono">{r.team_id}</td>
+                      <td className="text-emerald-700 font-medium">{r.w}</td>
+                      <td className="text-red-600 font-medium">{r.l}</td>
+                      <td className="text-gray-600">{r.t}</td>
+                      <td>{r.diff}</td>
                     </tr>
-                  </thead>
-                  <tbody>
-                    {rows.map((t) => {
-                      const r = records[t.id] || {};
-                      return (
-                        <tr key={t.id} className="border-t">
-                          <td className="py-1.5">
-                            <TeamMini id={t.id} /> <span className="text-xs text-gray-500">({t.division})</span>
-                          </td>
-                          <td className="text-emerald-700 font-medium">{r.w || 0}</td>
-                          <td className="text-red-600 font-medium">{r.l || 0}</td>
-                          <td className="text-gray-600">{r.t || 0}</td>
-                          <td>{r.diff || 0}</td>
-                        </tr>
-                      );
-                    })}
-                    {rows.length === 0 && (
-                      <tr>
-                        <td className="py-2 text-gray-500" colSpan={5}>
-                          Sin datos
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
+                  ))}
+                </tbody>
+              </table>
             </div>
-          );
-        })}
-      </section>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
 
-/* ========================= Asistente ========================= */
+/* ========================= Asistente de Picks ========================= */
 function AssistantTab() {
   const session = useSession();
   const [teams, setTeams] = useState({});
   const [games, setGames] = useState([]);
   const [odds, setOdds] = useState({});
   const [picks, setPicks] = useState([]);
-  const [week, setWeek] = useState(() => Number(localStorage.getItem("week")) || 1);
+  const [week, setWeek] = useState(
+    () => Number(localStorage.getItem("week")) || 1
+  );
   const [pop, setPop] = useState([]);
   const [busy, setBusy] = useState(false);
 
-  useEffect(() => localStorage.setItem("week", String(week)), [week]);
+  useEffect(() => {
+    localStorage.setItem("week", String(week));
+  }, [week]);
 
   useEffect(() => {
     (async () => {
@@ -1263,8 +1259,8 @@ function AssistantTab() {
       const { data: gs } = await supabase
         .from("games")
         .select("*")
-        .eq("season", SEASON)
         .eq("week", week)
+        .eq("season", SEASON)
         .order("start_time");
       setGames(gs || []);
 
@@ -1290,13 +1286,15 @@ function AssistantTab() {
       const { data: lp } = await supabase
         .from("picks")
         .select("team_id")
-        .eq("season", SEASON)
-        .eq("week", week);
+        .eq("week", week)
+        .eq("season", SEASON);
       const counts = {};
       (lp || []).forEach((p) => (counts[p.team_id] = (counts[p.team_id] || 0) + 1));
       let total = 0;
       try {
-        const { count } = await supabase.from("profiles").select("*", { count: "exact", head: true });
+        const { count } = await supabase
+          .from("profiles")
+          .select("*", { count: "exact", head: true });
         total = count || 0;
       } catch {
         const { data: st } = await supabase.from("standings").select("user_id");
@@ -1308,7 +1306,7 @@ function AssistantTab() {
       }));
       setPop(list);
     })();
-  }, [week, session.user.id]);
+  }, [week, session?.user?.id]);
 
   const used = new Set((picks || []).map((p) => p.team_id));
   const getPop = (team) => pop.find((x) => x.team === team)?.pct ?? 0;
@@ -1318,24 +1316,39 @@ function AssistantTab() {
       const o = odds[g.id] || {};
       const sHome = o.spread_home;
       const wpHome = winProbFromSpread(sHome) ?? 50;
-      const wpAway = 100 - wpHome;
+      const wpAway = winProbFromSpread(-sHome) ?? 50;
       return [
-        { game: g, team: g.home_team, vs: g.away_team, wp: wpHome, pop: getPop(g.home_team), used: used.has(g.home_team) },
-        { game: g, team: g.away_team, vs: g.home_team, wp: wpAway, pop: getPop(g.away_team), used: used.has(g.away_team) },
+        {
+          game: g,
+          team: g.home_team,
+          vs: g.away_team,
+          wp: wpHome,
+          pop: getPop(g.home_team),
+          used: used.has(g.home_team),
+        },
+        {
+          game: g,
+          team: g.away_team,
+          vs: g.home_team,
+          wp: wpAway,
+          pop: getPop(g.away_team),
+          used: used.has(g.away_team),
+        },
       ];
     })
     .flat();
 
   const ranked = rows
-    .map((r) => ({ ...r, score: (r.wp || 50) + (100 - (r.pop || 0)) + (r.used ? -30 : 10) }))
+    .map((r) => ({
+      ...r,
+      score: (r.wp || 50) + (100 - (r.pop || 0)) + (r.used ? -30 : 10),
+    }))
     .sort((a, b) => b.score - a.score)
     .slice(0, 8);
 
   const confirm = async (r) => {
     setBusy(true);
     try {
-      const locked = DateTime.fromISO(r.game.start_time) <= DateTime.now() || (r.game.status || "") === "final";
-      if (locked) throw new Error("Juego bloqueado por kickoff.");
       const { error } = await supabase.from("picks").insert({
         user_id: session.user.id,
         game_id: r.game.id,
@@ -1352,25 +1365,10 @@ function AssistantTab() {
     }
   };
 
-  const TeamMiniSimple = ({ id }) => {
-    const logo = teams[id]?.logo_url || `/teams/${id}.png`;
-    return (
-      <span className="inline-flex items-center gap-1">
-        <img
-          src={logo}
-          alt={id}
-          className="h-5 w-5 object-contain"
-          onError={(e) => (e.currentTarget.style.visibility = "hidden")}
-        />
-        <span className="font-mono font-semibold">{id}</span>
-      </span>
-    );
-  };
-
   return (
     <div className="max-w-6xl mx-auto p-4 md:p-6">
       <header className="flex items-center justify-between gap-4">
-        <h1 className="text-2xl font-extrabold">Asistente de picks</h1>
+        <h1 className="text-2xl font-extrabold">Asistente</h1>
         <div className="flex items-center gap-2">
           <label className="text-xs text-gray-500">Semana</label>
           <select
@@ -1393,10 +1391,10 @@ function AssistantTab() {
 
       <div className="mt-4 grid md:grid-cols-2 gap-3">
         {ranked.map((r, i) => (
-          <div key={i} className="border rounded-xl p-3 bg-white">
+          <div key={i} className="border rounded-xl p-3 bg-white card">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <TeamMiniSimple id={r.team} />
+                <TeamMiniSimple teams={teams} id={r.team} />
                 <span className="text-xs text-gray-500">vs {r.vs}</span>
               </div>
               <span className="text-xs text-gray-500">W{r.game.week}</span>
@@ -1423,12 +1421,29 @@ function AssistantTab() {
               >
                 Elegir
               </button>
-              <span className="ml-auto text-xs text-gray-500">Score {Math.round(r.score)}</span>
+              <span className="ml-auto text-xs text-gray-500">
+                Score {Math.round(r.score)}
+              </span>
             </div>
           </div>
         ))}
       </div>
     </div>
+  );
+}
+
+function TeamMiniSimple({ teams, id }) {
+  const logo = teams[id]?.logo_url || `/teams/${id}.png`;
+  return (
+    <span className="inline-flex items-center gap-1">
+      <img
+        src={logo}
+        alt={id}
+        className="h-5 w-5 object-contain"
+        onError={(e) => (e.currentTarget.style.visibility = "hidden")}
+      />
+      <span className="font-mono font-semibold">{id}</span>
+    </span>
   );
 }
 
@@ -1441,7 +1456,11 @@ function NewsTab() {
 
   const load = async (t) => {
     setLoading(true);
-    let q = supabase.from("news").select("*").order("published_at", { ascending: false }).limit(30);
+    let q = supabase
+      .from("news")
+      .select("*")
+      .order("published_at", { ascending: false })
+      .limit(30);
     if (t) q = q.eq("team_id", t);
     const { data } = await q;
     setItems(data || []);
@@ -1462,8 +1481,12 @@ function NewsTab() {
 
   const syncNow = async (scopeTeam) => {
     const url = scopeTeam
-      ? `${SITE}/api/control?action=syncNews&team=${encodeURIComponent(scopeTeam)}&token=${encodeURIComponent(CRON_TOKEN)}`
-      : `${SITE}/api/control?action=syncNews&token=${encodeURIComponent(CRON_TOKEN)}`;
+      ? `${SITE}/api/control?action=syncNews&team=${encodeURIComponent(
+          scopeTeam
+        )}&token=${encodeURIComponent(CRON_TOKEN)}`
+      : `${SITE}/api/control?action=syncNews&token=${encodeURIComponent(
+          CRON_TOKEN
+        )}`;
     const r = await fetch(url);
     const j = await r.json().catch(() => ({}));
     if (!r.ok || j.ok === false) return alert(j.error || "Error sincronizando");
@@ -1476,7 +1499,11 @@ function NewsTab() {
       <header className="flex items-center justify-between gap-4">
         <h1 className="text-2xl font-extrabold">Noticias</h1>
         <div className="flex items-center gap-2">
-          <select className="border p-1 rounded-lg" value={team} onChange={(e) => setTeam(e.target.value)}>
+          <select
+            className="border p-1 rounded-lg"
+            value={team}
+            onChange={(e) => setTeam(e.target.value)}
+          >
             <option value="">Generales</option>
             {teams.map((t) => (
               <option key={t.id} value={t.id}>
@@ -1499,9 +1526,13 @@ function NewsTab() {
 
       <ul className="mt-4 space-y-3">
         {(items || []).map((n) => (
-          <li key={n.id} className="p-3 border rounded-xl bg-white">
+          <li key={n.id} className="p-3 border rounded-xl bg-white card">
             <div className="text-xs text-gray-500 flex items-center gap-2">
-              <span className="px-1.5 py-0.5 rounded bg-gray-100">{n.team_id || "NFL"}</span>
+              {n.team_id ? (
+                <span className="badge">{n.team_id}</span>
+              ) : (
+                <span className="badge">NFL</span>
+              )}
               <span>{n.source || "ESPN"}</span>
               <span>
                 ·{" "}
