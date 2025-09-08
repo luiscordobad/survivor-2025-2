@@ -1,8 +1,8 @@
-// src/App.jsx
 import { useEffect, useMemo, useRef, useState } from "react";
 import { DateTime } from "luxon";
 import { supabase } from "./lib/supabaseClient";
 import Rules from "./Rules";
+import "./styles.css";
 
 /* ========================= Config ========================= */
 const TZ = import.meta.env.VITE_TZ || "America/Mexico_City";
@@ -52,7 +52,6 @@ function winProbFromSpread(spreadForTeam) {
   return Math.round(p * 100);
 }
 
-// Decide WIN/LOSS/PUSH para un teamId dado el boxscore final del juego
 function computePickResultFromGame(game, teamId) {
   if (!game || (game.status || "") !== "final") return "pending";
   const hs = Number(game.home_score ?? 0);
@@ -76,7 +75,7 @@ function useSession() {
 }
 
 function Login() {
-  const [tab, setTab] = useState("password"); // 'password' | 'magic'
+  const [tab, setTab] = useState("password");
   const [email, setEmail] = useState("");
   const [pwd, setPwd] = useState("");
   const [signup, setSignup] = useState(false);
@@ -121,23 +120,18 @@ function Login() {
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-white p-6">
-      <div className="w-full max-w-md border rounded-2xl p-6 bg-white card">
+      <div className="w-full max-w-md card p-6">
         <h1 className="text-2xl font-extrabold text-center">{LEAGUE}</h1>
+
         <div className="mt-4 flex gap-2 justify-center">
           <button
-            className={clsx(
-              "px-3 py-1 rounded border",
-              tab === "password" && "bg-black text-white"
-            )}
+            className={clsx("seg", tab === "password" && "seg-active")}
             onClick={() => setTab("password")}
           >
             Email + Password
           </button>
           <button
-            className={clsx(
-              "px-3 py-1 rounded border",
-              tab === "magic" && "bg-black text-white"
-            )}
+            className={clsx("seg", tab === "magic" && "seg-active")}
             onClick={() => setTab("magic")}
           >
             Magic link
@@ -147,35 +141,34 @@ function Login() {
         {tab === "password" && (
           <form onSubmit={doPassword} className="mt-4 space-y-3">
             <div className="text-sm flex justify-between">
-              <span>{signup ? "Crear cuenta" : "Iniciar sesión"}</span>
+              <span className="text-slate-700">
+                {signup ? "Crear cuenta" : "Iniciar sesión"}
+              </span>
               <button
                 type="button"
-                className="underline"
+                className="underline text-slate-700"
                 onClick={() => setSignup(!signup)}
               >
                 {signup ? "¿Ya tienes cuenta? Inicia" : "¿No tienes cuenta? Regístrate"}
               </button>
             </div>
             <input
-              className="border p-2 w-full rounded-lg"
-              placeholder="email"
+              className="input w-full"
+              placeholder="tu@email.com"
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
             />
             <input
-              className="border p-2 w-full rounded-lg"
+              className="input w-full"
               placeholder="contraseña"
               type="password"
               value={pwd}
               onChange={(e) => setPwd(e.target.value)}
               required
             />
-            <button
-              className="bg-black text-white w-full py-2 rounded-lg disabled:opacity-60"
-              disabled={busy}
-            >
+            <button className="btn-primary w-full py-2 rounded-lg disabled:opacity-60" disabled={busy}>
               {signup ? "Crear cuenta" : "Entrar"}
             </button>
           </form>
@@ -184,17 +177,15 @@ function Login() {
         {tab === "magic" && (
           <form onSubmit={doMagic} className="mt-4 space-y-3">
             <input
-              className="border p-2 w-full rounded-lg"
+              className="input w-full"
               placeholder="tu@email.com"
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
             />
-            <button className="bg-black text-white w-full py-2 rounded-lg">
-              Enviar magic link
-            </button>
-            {sent && <p className="text-xs text-gray-500">Revisa tu correo.</p>}
+            <button className="btn-primary w-full py-2 rounded-lg">Enviar magic link</button>
+            {sent && <p className="kicker">Revisa tu correo.</p>}
           </form>
         )}
       </div>
@@ -215,7 +206,7 @@ export default function AppRoot() {
 
   return (
     <div className="min-h-screen bg-white text-slate-900">
-      <div className="w-full border-b bg-white sticky top-0 z-50">
+      <div className="sticky-nav">
         <div className="max-w-6xl mx-auto px-4 py-2 flex items-center gap-2">
           {[
             ["game", "Partidos"],
@@ -226,10 +217,7 @@ export default function AppRoot() {
           ].map(([key, label]) => (
             <button
               key={key}
-              className={clsx(
-                "text-sm px-3 py-1 rounded",
-                view === key ? "bg-black text-white" : "border"
-              )}
+              className={clsx("seg", view === key && "seg-active")}
               onClick={() => setView(key)}
             >
               {label}
@@ -280,7 +268,7 @@ function GamesTab() {
   );
   const searchRef = useRef(null);
 
-  // realtime: picks, games, odds
+  // realtime
   useEffect(() => {
     const ch = supabase
       .channel("realtime-app")
@@ -309,14 +297,10 @@ function GamesTab() {
           }
         }
       )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "odds" },
-        () => {
-          loadGames(week);
-          setLastUpdated(new Date().toISOString());
-        }
-      )
+      .on("postgres_changes", { event: "*", schema: "public", table: "odds" }, () => {
+        loadGames(week);
+        setLastUpdated(new Date().toISOString());
+      })
       .subscribe();
     return () => {
       supabase.removeChannel(ch);
@@ -532,7 +516,6 @@ function GamesTab() {
     setLastUpdated(new Date().toISOString());
   };
 
-  // Deriva resultado para mostrar (si DB aún no lo guardó)
   const gamesMap = useMemo(() => {
     const m = {};
     (games || []).forEach((g) => (m[g.id] = g));
@@ -546,7 +529,6 @@ function GamesTab() {
     return computePickResultFromGame(g, pick.team_id);
   }
 
-  // Asentar automáticamente mis picks cuando queden "final"
   async function settleMyPicksIfNeeded(currentWeek, gamesArr, myPicksArr) {
     const finals = {};
     (gamesArr || []).forEach((g) => {
@@ -576,7 +558,6 @@ function GamesTab() {
     if (!games?.length || !picks?.length) return;
     settleMyPicksIfNeeded(week, games, picks);
     (async () => {
-      // best-effort endpoint de liga (si existe)
       try {
         const url = `${SITE}/api/control?action=settleWeek&week=${week}&token=${encodeURIComponent(
           CRON_TOKEN
@@ -643,7 +624,7 @@ function GamesTab() {
       return (
         <div className="flex items-center justify-between">
           {score}
-          <div className="text-xs flex items-center gap-2">
+          <div className="kicker flex items-center gap-2">
             {g.period != null && (
               <span className="badge badge-warn">Q{g.period} {g.clock || ""}</span>
             )}
@@ -686,7 +667,9 @@ function GamesTab() {
         disabled={disabled}
         className={clsx(
           "w-full text-left rounded-xl border transition px-4 py-3",
-          selected ? "border-emerald-500 bg-emerald-50 card" : "border-gray-200 hover:bg-gray-50 card",
+          selected
+            ? "border-emerald-500 bg-emerald-50 card"
+            : "border-slate-200 hover:bg-slate-50 card",
           disabled && "opacity-50 cursor-not-allowed"
         )}
       >
@@ -732,27 +715,27 @@ function GamesTab() {
         <div>
           <h1 className="text-3xl font-extrabold tracking-tight">{LEAGUE}</h1>
           {lastUpdated && (
-            <p className="text-xs text-gray-500">
-              Actualizado:{" "}
+            <p className="kicker">
+              Actualizado:&nbsp;
               {DateTime.fromISO(lastUpdated).setZone(TZ).toFormat("dd LLL HH:mm:ss")}
             </p>
           )}
         </div>
         <div className="flex items-center gap-3">
-          <p className="text-sm text-gray-700">
+          <p className="text-sm text-slate-700">
             Hola, <b>{me?.display_name}</b> · Vidas:{" "}
             <span className="inline-block px-2 py-0.5 rounded bg-emerald-100 text-emerald-800">
               {me?.lives}
             </span>
           </p>
-          <button className="text-sm underline" onClick={() => supabase.auth.signOut()}>
+          <button className="btn-ghost text-sm" onClick={() => supabase.auth.signOut()}>
             Salir
           </button>
         </div>
       </header>
 
       {showPickAlert && (
-        <div className="mt-3 p-3 border-2 border-red-300 rounded-xl bg-red-50 text-red-900 text-sm">
+        <div className="mt-3 border-2 border-amber-300 rounded-xl bg-amber-50 text-amber-900 text-sm px-3 py-2">
           🔔 Aún no tienes pick en W{week}. El primer kickoff es en{" "}
           <b>
             <Countdown iso={nextKick} />
@@ -763,12 +746,12 @@ function GamesTab() {
 
       {/* Toolbar */}
       <section className="mt-4 grid md:grid-cols-3 gap-4">
-        <div className="p-4 border rounded-2xl bg-white card">
+        <div className="card p-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <label className="text-xs text-gray-500">Semana</label>
+              <label className="kicker">Semana</label>
               <select
-                className="border p-1 rounded-lg"
+                className="select"
                 value={week}
                 onChange={(e) => setWeek(Number(e.target.value))}
               >
@@ -783,10 +766,7 @@ function GamesTab() {
               {["ALL", "THU", "FRI", "SAT", "SUN", "MON"].map((d) => (
                 <button
                   key={d}
-                  className={clsx(
-                    "px-2 py-1 rounded border",
-                    dayFilter === d && "bg-black text-white"
-                  )}
+                  className={clsx("seg", dayFilter === d && "seg-active")}
                   onClick={() => setDayFilter(d)}
                 >
                   {d}
@@ -797,15 +777,15 @@ function GamesTab() {
 
           <input
             ref={searchRef}
-            className="mt-3 border w-full p-2 rounded-lg"
-            placeholder="Buscar equipo..."
+            className="input w-full mt-3"
+            placeholder="Buscar equipo…"
             value={teamQuery}
             onChange={(e) => setTeamQuery(e.target.value)}
           />
 
           <div className="mt-3 grid grid-cols-2 gap-2">
             <button
-              className="text-xs px-3 py-1 rounded border"
+              className="btn text-xs"
               onClick={() =>
                 downloadCSV("mis_picks.csv", [
                   ["week", "team_id", "result", "auto_pick", "updated_at"],
@@ -822,7 +802,7 @@ function GamesTab() {
               Exportar mis picks (CSV)
             </button>
             <button
-              className="text-xs px-3 py-1 rounded border"
+              className="btn text-xs"
               onClick={() =>
                 downloadCSV("standings.csv", [
                   ["player", "lives", "wins", "losses", "pushes", "margin_sum"],
@@ -843,9 +823,9 @@ function GamesTab() {
           </div>
         </div>
 
-        <div className="md:col-span-2 p-4 border rounded-2xl bg-white card">
+        <div className="md:col-span-2 card p-4">
           <h3 className="font-semibold">Resumen</h3>
-          <p className="text-sm text-gray-600">
+          <p className="text-sm text-slate-600">
             Elige tu pick en los partidos de abajo. Lock “rolling” por partido. Win/Loss
             se marca automáticamente cuando el juego es FINAL.
           </p>
@@ -853,7 +833,7 @@ function GamesTab() {
       </section>
 
       {/* Partidos */}
-      <section className="mt-4 p-4 border rounded-2xl bg-white card">
+      <section className="mt-4 card p-4">
         <h2 className="font-semibold mb-3">Partidos W{week}</h2>
         <div className="space-y-3">
           {gamesFiltered.map((g) => {
@@ -866,25 +846,24 @@ function GamesTab() {
             const spreadAway = last?.spread_away ?? null;
             const mlHome = last?.ml_home ?? null;
             const mlAway = last?.ml_away ?? null;
-            const wpHome =
-              winProbFromSpread(spreadHome) ?? null;
+            const wpHome = winProbFromSpread(spreadHome) ?? null;
             const wpAway =
               winProbFromSpread(-spreadHome) ?? (wpHome != null ? 100 - wpHome : null);
 
             return (
-              <div key={g.id} className={clsx("p-4 border rounded-xl card", locked && "opacity-60")}>
+              <div key={g.id} className={clsx("p-4 card", locked && "opacity-60")}>
                 <div className="flex items-center justify-between">
                   <div className="text-sm flex items-center gap-2 flex-wrap">
                     <TeamChip id={g.away_team} />
                     <span className="mx-1 text-gray-400">@</span>
                     <TeamChip id={g.home_team} />
                   </div>
-                  <div className="text-xs text-gray-600 flex items-center gap-2">
+                  <div className="kicker flex items-center gap-2">
                     <a
                       href={`https://www.espn.com/nfl/game/_/gameId/${g.id}`}
                       target="_blank"
                       rel="noreferrer"
-                      className="underline text-gray-500"
+                      className="underline"
                     >
                       Stats
                     </a>
@@ -896,7 +875,7 @@ function GamesTab() {
                   <ScoreStrip g={g} />
                 </div>
 
-                <div className="mt-2 text-xs text-gray-700 flex gap-3 flex-wrap">
+                <div className="mt-2 kicker flex gap-3 flex-wrap">
                   {spreadHome != null && (
                     <span className="badge">
                       Spread: {g.home_team} {spreadHome > 0 ? `+${spreadHome}` : spreadHome},
@@ -923,17 +902,17 @@ function GamesTab() {
             );
           })}
           {(!gamesFiltered || gamesFiltered.length === 0) && (
-            <div className="text-sm text-gray-500">No hay partidos con este filtro/búsqueda.</div>
+            <div className="text-sm text-slate-500">No hay partidos con este filtro/búsqueda.</div>
           )}
         </div>
       </section>
 
       {/* Liga: picks + popularidad */}
       <section className="mt-6 grid md:grid-cols-2 gap-4">
-        <div className="p-4 border rounded-2xl bg-white card">
+        <div className="card p-4">
           <h2 className="font-semibold">Picks de la liga (W{week})</h2>
           <div className="overflow-x-auto">
-            <table className="w-full text-sm mt-3 table-minimal">
+            <table className="w-full mt-3 table-minimal">
               <thead>
                 <tr>
                   <th>Jugador</th>
@@ -964,17 +943,17 @@ function GamesTab() {
                                 shownRes === "win"
                                   ? "text-emerald-700 font-semibold"
                                   : shownRes === "loss"
-                                  ? "text-red-600 font-semibold"
+                                  ? "text-rose-600 font-semibold"
                                   : shownRes === "push"
-                                  ? "text-gray-600"
-                                  : "text-gray-500"
+                                  ? "text-slate-600"
+                                  : "text-slate-500"
                               }
                             >
                               {shownRes}
                             </span>
                           </td>
                           <td>{p.auto_pick ? "Sí" : "No"}</td>
-                          <td className="text-xs text-gray-500">
+                          <td className="kicker">
                             {p.updated_at
                               ? DateTime.fromISO(p.updated_at).setZone(TZ).toFormat("dd LLL HH:mm")
                               : "-"}
@@ -984,7 +963,7 @@ function GamesTab() {
                     })
                 ) : (
                   <tr>
-                    <td className="py-2 text-gray-500" colSpan={5}>
+                    <td className="py-2 text-slate-500" colSpan={5}>
                       Aún no hay picks esta semana.
                     </td>
                   </tr>
@@ -994,11 +973,9 @@ function GamesTab() {
           </div>
         </div>
 
-        <div className="p-4 border rounded-2xl bg-white card">
+        <div className="card p-4">
           <h2 className="font-semibold">Popularidad de equipos</h2>
-          <p className="text-xs text-gray-600">
-            Porcentaje de jugadores que pickearon ese equipo.
-          </p>
+          <p className="kicker">Porcentaje de jugadores que pickearon ese equipo.</p>
           <div className="mt-3 space-y-2">
             {(popularity || []).length > 0 ? (
               popularity.map((row) => (
@@ -1006,9 +983,9 @@ function GamesTab() {
                   <div className="flex items-center justify-between text-sm">
                     <div className="flex items-center gap-2">
                       <TeamMini id={row.team_id} />{" "}
-                      <span className="text-gray-500">({row.count})</span>
+                      <span className="text-slate-500">({row.count})</span>
                     </div>
-                    <span className="text-gray-700 text-base font-semibold">
+                    <span className="text-slate-700 text-base font-semibold">
                       {row.pct}%
                     </span>
                   </div>
@@ -1018,7 +995,7 @@ function GamesTab() {
                 </div>
               ))
             ) : (
-              <div className="text-sm text-gray-500">Sin picks registrados.</div>
+              <div className="text-sm text-slate-500">Sin picks registrados.</div>
             )}
           </div>
         </div>
@@ -1026,10 +1003,10 @@ function GamesTab() {
 
       {/* Historial usuario */}
       <section className="mt-6">
-        <div className="p-4 border rounded-2xl bg-white card">
+        <div className="card p-4">
           <h2 className="font-semibold">Historial de tus picks</h2>
           <div className="overflow-x-auto">
-            <table className="w-full text-sm mt-3 table-minimal">
+            <table className="w-full mt-3 table-minimal">
               <thead>
                 <tr>
                   <th>W</th>
@@ -1053,10 +1030,10 @@ function GamesTab() {
                               shownRes === "win"
                                 ? "text-emerald-700 font-semibold"
                                 : shownRes === "loss"
-                                ? "text-red-600 font-semibold"
+                                ? "text-rose-600 font-semibold"
                                 : shownRes === "push"
-                                ? "text-gray-600"
-                                : "text-gray-500"
+                                ? "text-slate-600"
+                                : "text-slate-500"
                             }
                           >
                             {shownRes}
@@ -1067,7 +1044,7 @@ function GamesTab() {
                   })}
                 {(!picks || picks.length === 0) && (
                   <tr>
-                    <td className="py-2 text-gray-500" colSpan={3}>
+                    <td className="py-2 text-slate-500" colSpan={3}>
                       Sin picks aún.
                     </td>
                   </tr>
@@ -1081,22 +1058,16 @@ function GamesTab() {
       {/* Modal confirmación */}
       {pendingPick && (
         <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50">
-          <div className="w-full max-w-sm bg-white rounded-2xl p-5 border card">
+          <div className="w-full max-w-sm card p-5">
             <h3 className="font-semibold text-lg">Confirmar pick</h3>
             <p className="mt-2 text-sm">
               ¿Confirmas tu pick de <b>{pendingPick.teamId}</b> en W{week}?
             </p>
             <div className="mt-4 flex gap-2">
-              <button
-                className="px-4 py-2 rounded border"
-                onClick={() => setPendingPick(null)}
-              >
+              <button className="btn" onClick={() => setPendingPick(null)}>
                 Cancelar
               </button>
-              <button
-                className="px-4 py-2 rounded bg-black text-white"
-                onClick={doPick}
-              >
+              <button className="btn-primary" onClick={doPick}>
                 Confirmar
               </button>
             </div>
@@ -1105,7 +1076,7 @@ function GamesTab() {
       )}
 
       {!myPickThisWeek && nextKick && (
-        <div className="fixed bottom-4 right-4 px-4 py-2 rounded-xl bg-black text-white text-sm shadow-lg">
+        <div className="fixed bottom-4 right-4 px-4 py-2 rounded-xl bg-slate-900 text-white text-sm shadow-lg">
           Recuerda elegir: kickoff en <Countdown iso={nextKick} />
         </div>
       )}
@@ -1113,7 +1084,7 @@ function GamesTab() {
   );
 }
 
-/* -------- Autopick buttons (separado para legibilidad) -------- */
+/* -------- Autopick buttons -------- */
 function AutoPickButtons({ week }) {
   const session = useSession();
 
@@ -1148,10 +1119,10 @@ function AutoPickButtons({ week }) {
 
   return (
     <>
-      <button className="text-xs px-3 py-1 rounded border" onClick={autopickMe}>
+      <button className="btn text-xs" onClick={autopickMe}>
         Autopick para mí
       </button>
-      <button className="text-xs px-3 py-1 rounded border" onClick={autopickLeague}>
+      <button className="btn text-xs" onClick={autopickLeague}>
         Autopick (liga)
       </button>
     </>
@@ -1164,7 +1135,6 @@ function StandingsTab() {
 
   useEffect(() => {
     (async () => {
-      // Espera una vista nfl_standings con: conference, division, team_id, w, l, t, diff
       const { data } = await supabase
         .from("nfl_standings")
         .select("conference, division, team_id, w, l, t, diff")
@@ -1175,7 +1145,6 @@ function StandingsTab() {
     })();
   }, []);
 
-  // Agrupamos por conf y división
   const groups = useMemo(() => {
     const out = {};
     (rows || []).forEach((r) => {
@@ -1190,19 +1159,19 @@ function StandingsTab() {
     <div className="max-w-6xl mx-auto p-4 md:p-6">
       <h1 className="text-2xl font-extrabold mb-3">Standings NFL</h1>
       {(!rows || rows.length === 0) && (
-        <p className="text-sm text-gray-500">
+        <p className="text-sm text-slate-500">
           Sin datos en <code>nfl_standings</code>. Verifica la vista o la sync.
         </p>
       )}
 
       <div className="grid md:grid-cols-2 gap-4">
         {groups.map((g, idx) => (
-          <div key={idx} className="p-4 border rounded-2xl bg-white card">
+          <div key={idx} className="card p-4">
             <h3 className="font-semibold mb-2">
               {g.conference} — {g.division}
             </h3>
             <div className="overflow-x-auto">
-              <table className="w-full text-sm table-minimal">
+              <table className="w-full table-minimal">
                 <thead>
                   <tr>
                     <th>Equipo</th>
@@ -1217,8 +1186,8 @@ function StandingsTab() {
                     <tr key={r.team_id}>
                       <td className="font-mono">{r.team_id}</td>
                       <td className="text-emerald-700 font-medium">{r.w}</td>
-                      <td className="text-red-600 font-medium">{r.l}</td>
-                      <td className="text-gray-600">{r.t}</td>
+                      <td className="text-rose-600 font-medium">{r.l}</td>
+                      <td className="text-slate-600">{r.t}</td>
                       <td>{r.diff}</td>
                     </tr>
                   ))}
@@ -1312,37 +1281,19 @@ function AssistantTab() {
   const getPop = (team) => pop.find((x) => x.team === team)?.pct ?? 0;
 
   const rows = (games || [])
-    .map((g) => {
+    .flatMap((g) => {
       const o = odds[g.id] || {};
       const sHome = o.spread_home;
       const wpHome = winProbFromSpread(sHome) ?? 50;
       const wpAway = winProbFromSpread(-sHome) ?? 50;
       return [
-        {
-          game: g,
-          team: g.home_team,
-          vs: g.away_team,
-          wp: wpHome,
-          pop: getPop(g.home_team),
-          used: used.has(g.home_team),
-        },
-        {
-          game: g,
-          team: g.away_team,
-          vs: g.home_team,
-          wp: wpAway,
-          pop: getPop(g.away_team),
-          used: used.has(g.away_team),
-        },
+        { game: g, team: g.home_team, vs: g.away_team, wp: wpHome, pop: getPop(g.home_team), used: used.has(g.home_team) },
+        { game: g, team: g.away_team, vs: g.home_team, wp: wpAway, pop: getPop(g.away_team), used: used.has(g.away_team) },
       ];
-    })
-    .flat();
+    });
 
   const ranked = rows
-    .map((r) => ({
-      ...r,
-      score: (r.wp || 50) + (100 - (r.pop || 0)) + (r.used ? -30 : 10),
-    }))
+    .map((r) => ({ ...r, score: (r.wp || 50) + (100 - (r.pop || 0)) + (r.used ? -30 : 10) }))
     .sort((a, b) => b.score - a.score)
     .slice(0, 8);
 
@@ -1370,9 +1321,9 @@ function AssistantTab() {
       <header className="flex items-center justify-between gap-4">
         <h1 className="text-2xl font-extrabold">Asistente</h1>
         <div className="flex items-center gap-2">
-          <label className="text-xs text-gray-500">Semana</label>
+          <label className="kicker">Semana</label>
           <select
-            className="border p-1 rounded-lg"
+            className="select"
             value={week}
             onChange={(e) => setWeek(Number(e.target.value))}
           >
@@ -1385,45 +1336,43 @@ function AssistantTab() {
         </div>
       </header>
 
-      <p className="text-sm text-gray-600 mt-1">
+      <p className="text-sm text-slate-600 mt-1">
         Ranking por Win% (spread), diferencial de popularidad y si te queda disponible.
       </p>
 
       <div className="mt-4 grid md:grid-cols-2 gap-3">
         {ranked.map((r, i) => (
-          <div key={i} className="border rounded-xl p-3 bg-white card">
+          <div key={i} className="card p-3">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <TeamMiniSimple teams={teams} id={r.team} />
-                <span className="text-xs text-gray-500">vs {r.vs}</span>
+                <span className="kicker">vs {r.vs}</span>
               </div>
-              <span className="text-xs text-gray-500">W{r.game.week}</span>
+              <span className="kicker">W{r.game.week}</span>
             </div>
             <div className="mt-2 grid grid-cols-3 text-sm">
               <div>
-                <div className="text-xs text-gray-500">Win%</div>
+                <div className="kicker">Win%</div>
                 <div className="text-base font-bold">{r.wp ?? "—"}%</div>
               </div>
               <div>
-                <div className="text-xs text-gray-500">Popularidad</div>
+                <div className="kicker">Popularidad</div>
                 <div className="text-base">{r.pop}%</div>
               </div>
               <div>
-                <div className="text-xs text-gray-500">Disponible</div>
+                <div className="kicker">Disponible</div>
                 <div className="text-base">{r.used ? "No" : "Sí"}</div>
               </div>
             </div>
             <div className="mt-2 flex gap-2">
               <button
                 disabled={busy || r.used}
-                className="px-3 py-1 rounded border disabled:opacity-50"
+                className="btn disabled:opacity-50"
                 onClick={() => confirm(r)}
               >
                 Elegir
               </button>
-              <span className="ml-auto text-xs text-gray-500">
-                Score {Math.round(r.score)}
-              </span>
+              <span className="ml-auto kicker">Score {Math.round(r.score)}</span>
             </div>
           </div>
         ))}
@@ -1449,7 +1398,7 @@ function TeamMiniSimple({ teams, id }) {
 
 /* ========================= Noticias ========================= */
 function NewsTab() {
-  const [team, setTeam] = useState(""); // "" = general
+  const [team, setTeam] = useState("");
   const [teams, setTeams] = useState([]);
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -1484,9 +1433,7 @@ function NewsTab() {
       ? `${SITE}/api/control?action=syncNews&team=${encodeURIComponent(
           scopeTeam
         )}&token=${encodeURIComponent(CRON_TOKEN)}`
-      : `${SITE}/api/control?action=syncNews&token=${encodeURIComponent(
-          CRON_TOKEN
-        )}`;
+      : `${SITE}/api/control?action=syncNews&token=${encodeURIComponent(CRON_TOKEN)}`;
     const r = await fetch(url);
     const j = await r.json().catch(() => ({}));
     if (!r.ok || j.ok === false) return alert(j.error || "Error sincronizando");
@@ -1500,7 +1447,7 @@ function NewsTab() {
         <h1 className="text-2xl font-extrabold">Noticias</h1>
         <div className="flex items-center gap-2">
           <select
-            className="border p-1 rounded-lg"
+            className="select"
             value={team}
             onChange={(e) => setTeam(e.target.value)}
           >
@@ -1511,28 +1458,24 @@ function NewsTab() {
               </option>
             ))}
           </select>
-          <button className="text-xs px-2 py-1 rounded border" onClick={() => syncNow("")}>
+          <button className="btn text-xs" onClick={() => syncNow("")}>
             Sync general
           </button>
           {team && (
-            <button className="text-xs px-2 py-1 rounded border" onClick={() => syncNow(team)}>
+            <button className="btn text-xs" onClick={() => syncNow(team)}>
               Sync {team}
             </button>
           )}
         </div>
       </header>
 
-      {loading && <p className="mt-3 text-sm text-gray-500">Cargando…</p>}
+      {loading && <p className="mt-3 kicker">Cargando…</p>}
 
       <ul className="mt-4 space-y-3">
         {(items || []).map((n) => (
-          <li key={n.id} className="p-3 border rounded-xl bg-white card">
-            <div className="text-xs text-gray-500 flex items-center gap-2">
-              {n.team_id ? (
-                <span className="badge">{n.team_id}</span>
-              ) : (
-                <span className="badge">NFL</span>
-              )}
+          <li key={n.id} className="card p-3">
+            <div className="kicker flex items-center gap-2">
+              {n.team_id ? <span className="badge">{n.team_id}</span> : <span className="badge">NFL</span>}
               <span>{n.source || "ESPN"}</span>
               <span>
                 ·{" "}
@@ -1552,7 +1495,7 @@ function NewsTab() {
           </li>
         ))}
         {(items || []).length === 0 && !loading && (
-          <p className="text-sm text-gray-500">Sin noticias.</p>
+          <p className="text-sm text-slate-500">Sin noticias.</p>
         )}
       </ul>
     </div>
