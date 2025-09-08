@@ -46,7 +46,7 @@ function downloadCSV(filename, rows) {
   URL.revokeObjectURL(url);
 }
 
-// Win% estimado desde spread (ligera logística)
+/* ===== Win% y resultado ===== */
 function winProbFromSpread(spreadForTeam) {
   if (spreadForTeam == null) return null;
   const k = 0.23;
@@ -54,9 +54,30 @@ function winProbFromSpread(spreadForTeam) {
   return Math.round(p * 100);
 }
 
-// Decide WIN/LOSS/PUSH para un teamId dado el boxscore final del juego
+// --- NUEVO (1) y (2): helpers de estado normalizado ---
+function hasGameStarted(g) {
+  if (!g?.start_time) return false;
+  return DateTime.fromISO(g.start_time) <= DateTime.now();
+}
+
+function hasGameEnded(g) {
+  const s = String(g?.status || "").toLowerCase();
+  if (
+    ["final", "completed", "complete", "closed", "postgame", "ended", "finished"].includes(s)
+  ) return true;
+
+  // Heurística: si han pasado >6h desde kickoff y hay marcador, se asume finalizado
+  if (g?.start_time) {
+    const hrs = DateTime.now().diff(DateTime.fromISO(g.start_time), "hours").hours;
+    const haveScores = g.home_score != null && g.away_score != null;
+    if (hrs > 6 && haveScores) return true;
+  }
+  return false;
+}
+
+// --- NUEVO (3): usa estado normalizado
 function computePickResultFromGame(game, teamId) {
-  if (!game || (game.status || "") !== "final") return "pending";
+  if (!game || !hasGameEnded(game)) return "pending";
   const hs = Number(game.home_score ?? 0);
   const as = Number(game.away_score ?? 0);
   if (hs === as) return "push";
@@ -64,15 +85,13 @@ function computePickResultFromGame(game, teamId) {
   return winner === teamId ? "win" : "loss";
 }
 
-// Un pick queda "congelado" si su juego ya empezó/terminó, o ya tiene resultado
+// --- NUEVO (4): pick congelado si empezó/terminó o ya tiene result
 function isPickFrozen(pick, gamesMap) {
   if (!pick) return false;
   const g = gamesMap[pick.game_id];
   if (!g) return false;
   if (pick.result && pick.result !== "pending") return true;
-  const started = DateTime.fromISO(g.start_time) <= DateTime.now();
-  const notScheduled = (g.status || "scheduled") !== "scheduled";
-  return started || notScheduled;
+  return hasGameStarted(g) || hasGameEnded(g);
 }
 
 /* ========================= Sesión/Login ========================= */
@@ -494,19 +513,15 @@ function GamesTab() {
 
   // Reglas para poder pickear (incluye FROZEN)
   const canPick = (candidateGame, candidateTeam) => {
-    // Si mi pick actual está congelado, no puedo cambiarlo por otro
     if (pickFrozen) {
       const same =
         myPickThisWeek?.game_id === candidateGame.id &&
         myPickThisWeek?.team_id === candidateTeam;
       if (!same) return { ok: false, reason: "FROZEN" };
     }
-
-    // Lock por kickoff del partido candidato
     const lockedCandidate = DateTime.fromISO(candidateGame.start_time) <= DateTime.now();
     if (lockedCandidate) return { ok: false, reason: "LOCK" };
 
-    // No repetir equipos ya usados en la temporada
     const used = (picks || []).some(
       (p) => p.team_id === candidateTeam && p.user_id === session.user.id
     );
@@ -574,7 +589,7 @@ function GamesTab() {
   async function settleMyPicksIfNeeded(currentWeek, gamesArr, myPicksArr) {
     const finals = {};
     (gamesArr || []).forEach((g) => {
-      if ((g.status || "") === "final") finals[g.id] = g;
+      if (hasGameEnded(g)) finals[g.id] = g;
     });
     const updates = [];
     (myPicksArr || []).forEach((p) => {
@@ -600,7 +615,7 @@ function GamesTab() {
   async function settleLeaguePicksIfNeeded(currentWeek, gamesArr, leaguePicksArr) {
     const finals = {};
     (gamesArr || []).forEach((g) => {
-      if ((g.status || "") === "final") finals[g.id] = g;
+      if (hasGameEnded(g)) finals[g.id] = g;
     });
     const updates = [];
     (leaguePicksArr || []).forEach((p) => {
@@ -672,8 +687,11 @@ function GamesTab() {
     );
   };
 
+  // --- NUEVO: usa hasGameEnded para mostrar FINAL
   const ScoreStrip = ({ g }) => {
     const status = g.status || "scheduled";
+    const ended = hasGameEnded(g);
+
     const score = (
       <div className="flex items-center gap-4">
         <div className="text-lg font-bold">
@@ -685,14 +703,16 @@ function GamesTab() {
         </div>
       </div>
     );
-    if (status === "final")
+
+    if (ended) {
       return (
         <div className="flex items-center justify-between">
           {score}
           <span className="badge">FINAL</span>
         </div>
       );
-    if (status === "in_progress")
+    }
+    if ((status || "").toLowerCase() === "in_progress") {
       return (
         <div className="flex items-center justify-between">
           {score}
@@ -708,51 +728,12 @@ function GamesTab() {
           </div>
         </div>
       );
+    }
     return (
       <div className="flex items-center justify-between">
         {score}
-        <span className="badge">
-          Kickoff en&nbsp;<Countdown iso={g.start_time} />
-        </span>
+        <span className="badge">Kickoff en&nbsp;<Countdown iso={g.start_time} /></span>
       </div>
-    );
-  };
-
-  const TeamBox = ({ game, teamId }) => {
-    const disabled = !canPick(game, teamId).ok;
-    const selected =
-      myPickThisWeek?.game_id === game.id && myPickThisWeek?.team_id === teamId;
-    const { last } = oddsPairs[game.id] || {};
-    const fav =
-      last &&
-      ((teamId === game.home_team &&
-        ((last.spread_home ?? 0) < (last.spread_away ?? 0) ||
-          (last.ml_home ?? 9999) < (last.ml_away ?? 9999))) ||
-        (teamId === game.away_team &&
-          ((last.spread_away ?? 0) < (last.spread_home ?? 0) ||
-            (last.ml_away ?? 9999) < (last.ml_home ?? 9999))));
-    const pct = popPct(teamId);
-
-    return (
-      <button
-        onClick={() => confirmPick(game, teamId)}
-        disabled={disabled}
-        className={clsx(
-          "w-full text-left rounded-xl border transition px-4 py-3",
-          selected
-            ? "border-emerald-500 bg-emerald-50 card"
-            : "border-slate-200 hover:bg-slate-50 card",
-          disabled && "opacity-50 cursor-not-allowed"
-        )}
-      >
-        <div className="flex items-center justify-between">
-          <TeamMini id={teamId} />
-          <div className="flex items-center gap-2">
-            {fav && <span className="badge badge-warn">Fav</span>}
-            {pct < 15 && <span className="badge">DIF</span>}
-          </div>
-        </div>
-      </button>
     );
   };
 
