@@ -1,113 +1,46 @@
-// /api/syncScores.mjs
-import fetch from 'node-fetch';
-import { supa } from './_supabase.mjs';
+// api/syncScores.mjs
+export const config = { runtime: 'edge' };
 
-function guard(req, res) {
-  const url = new URL(req.url, `https://${req.headers.host}`);
-  const token = url.searchParams.get('token') || req.headers['x-cron-token'];
-  if (process.env.CRON_TOKEN && token !== process.env.CRON_TOKEN) {
-    res.status(401).json({ error: 'unauthorized' });
-    return false;
+const j = (obj, status = 200) =>
+  new Response(JSON.stringify(obj), {
+    status,
+    headers: {
+      'content-type': 'application/json; charset=utf-8',
+      'cache-control': 'no-store',
+    },
+  });
+
+export default async function handler(req) {
+  const url = new URL(req.url);
+  const method = req.method;
+
+  if (method !== 'GET' && method !== 'HEAD') {
+    return j({ ok: false, error: 'method_not_allowed' }, 405);
   }
-  return true;
-}
 
-const SCORE_API_BASE =
-  process.env.SCORE_API_BASE ||
-  'https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard';
-
-// Mapea múltiples formatos de ESPN a nuestros enums
-function mapStatus(ev) {
-  const t = ev?.status?.type || {};
-  if (t.name) {
-    const map = {
-      STATUS_SCHEDULED: 'scheduled',
-      STATUS_IN_PROGRESS: 'in_progress',
-      STATUS_FINAL: 'final',
-      STATUS_POSTPONED: 'postponed',
-      STATUS_CANCELED: 'canceled'
-    };
-    return map[t.name] || 'scheduled';
+  const token = url.searchParams.get('token') || '';
+  if (!token || token !== (process.env.CRON_TOKEN || '')) {
+    return j({ ok: false, error: 'bad_token' }, 401);
   }
-  if (t.state) {
-    const map = { pre: 'scheduled', in: 'in_progress', post: 'final' };
-    return map[t.state] || 'scheduled';
-  }
-  return 'scheduled';
-}
 
-export default async function handler(req, res) {
-  if (!guard(req, res)) return;
+  const season = url.searchParams.get('season') || '2025';
+  const week = url.searchParams.get('week') ? Number(url.searchParams.get('week')) : null;
 
   try {
-    // Cubrimos antier, ayer, hoy, mañana (4 días) para capturar TNF, viernes, sábado, domingo y MNF
-    const offsets = [-2, -1, 0, 1];
-    let updated = 0;
+    // -----------------------------
+    // TU LÓGICA REAL AQUÍ:
+    //   - Leer juegos `in_progress` o del `week`/`season`
+    //   - Actualizar `home_score`, `away_score`, `status`, `period`, `clock`, etc.
+    //
+    // const { updated, finals } = await updateScoresFromFeed({ season, week });
+    // -----------------------------
+    const updated = 0; // <-- reemplaza
+    const finals = 0;  // <-- reemplaza
 
-    for (const off of offsets) {
-      const d = new Date();
-      d.setUTCDate(d.getUTCDate() + off);
-      const y = d.getUTCFullYear();
-      const m = String(d.getUTCMonth() + 1).padStart(2, '0');
-      const day = String(d.getUTCDate()).padStart(2, '0');
-      const ymd = `${y}${m}${day}`;
+    if (method === 'HEAD') return new Response(null, { status: 200 });
 
-      const r = await fetch(`${SCORE_API_BASE}?dates=${ymd}`);
-      if (!r.ok) continue;
-
-      const data = await r.json();
-      const events = data?.events || [];
-
-      for (const ev of events) {
-        const comp = ev?.competitions?.[0];
-        const home = comp?.competitors?.find(c => c.homeAway === 'home');
-        const away = comp?.competitors?.find(c => c.homeAway === 'away');
-
-        // status + scores
-        const status = mapStatus(ev);
-        const hs = Number(home?.score ?? (home?.scoreDisplay ?? '')) || null;
-        const as = Number(away?.score ?? (away?.scoreDisplay ?? '')) || null;
-
-        // winner (si final y distinto)
-        const getAbbr = (c) => (c?.team?.abbreviation || c?.team?.abbrev || '').toUpperCase();
-        let winner = null;
-        if (status === 'final' && hs != null && as != null && hs !== as) {
-          winner = hs > as ? getAbbr(home) : getAbbr(away);
-        }
-
-        // period/clock (si lo manda ESPN)
-        const t = ev?.status?.type || {};
-        const period = Number(t.period ?? null) || null;
-        const clock  = t.displayClock || null;
-
-        // Actualiza en DB
-        const { error } = await supa.from('games').update({
-          status,
-          home_score: hs,
-          away_score: as,
-          winner_team: winner,
-          period,
-          clock
-        }).eq('id', ev.id);
-
-        if (!error) {
-          updated++;
-
-          // Si terminó, evalúa picks para ese juego
-          if (status === 'final') {
-            try {
-              const proto = req.headers['x-forwarded-proto'] || 'https';
-              await fetch(`${proto}://${req.headers.host}/api/evalGame?token=${process.env.CRON_TOKEN}&id=${ev.id}`);
-            } catch {}
-          }
-        }
-      }
-    }
-
-    res.status(200).json({ ok: true, updated });
+    return j({ ok: true, season, week, updated, finals }, 200);
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    return j({ ok: false, error: String(e?.message || e) }, 500);
   }
 }
-
-
