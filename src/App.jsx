@@ -55,29 +55,21 @@ function winProbFromSpread(spreadForTeam) {
 }
 
 /* ---------- Normalización y heurísticas de estado ---------- */
-// ¿Ya empezó?
 function hasGameStarted(g) {
   if (!g?.start_time) return false;
   return DateTime.fromISO(g.start_time) <= DateTime.now();
 }
-
-// ¿Está marcado "en vivo" por el feed?
 function isLiveStatus(s) {
   const x = String(s || "").toLowerCase();
   return ["in_progress", "inprogress", "live", "ongoing", "playing", "active"].includes(x);
 }
-
-// ¿Terminó? (status + heurísticas robustas)
 function hasGameEnded(g) {
   const s = String(g?.status || "").toLowerCase();
-  if (["final", "completed", "complete", "closed", "postgame", "ended", "finished"].includes(s)) {
-    return true;
-  }
+  if (["final", "completed", "complete", "closed", "postgame", "ended", "finished"].includes(s)) return true;
   const periodOk = (g?.period ?? 0) >= 4;
   const clockStr = String(g?.clock || "").trim();
   const clockDone = clockStr === "0:00" || clockStr === "00:00" || clockStr === "" || clockStr === "Final";
   if (periodOk && clockDone && !isLiveStatus(s)) return true;
-
   if (g?.start_time) {
     const hrs = DateTime.now().diff(DateTime.fromISO(g.start_time), "hours").hours;
     const haveScores = g.home_score != null && g.away_score != null;
@@ -85,8 +77,6 @@ function hasGameEnded(g) {
   }
   return false;
 }
-
-// Decide WIN/LOSS/PUSH para un teamId dado el juego
 function computePickResultFromGame(game, teamId) {
   if (!game || !hasGameEnded(game)) return "pending";
   const hs = Number(game.home_score ?? 0);
@@ -95,8 +85,6 @@ function computePickResultFromGame(game, teamId) {
   const winner = hs > as ? game.home_team : game.away_team;
   return winner === teamId ? "win" : "loss";
 }
-
-// Un pick queda "congelado" si su juego ya empezó/terminó, o ya tiene resultado
 function isPickFrozen(pick, gamesMap) {
   if (!pick) return false;
   const g = gamesMap[pick.game_id];
@@ -119,7 +107,7 @@ function useSession() {
 }
 
 function Login() {
-  const [tab, setTab] = useState("password"); // 'password' | 'magic'
+  const [tab, setTab] = useState("password");
   const [email, setEmail] = useState("");
   const [pwd, setPwd] = useState("");
   const [signup, setSignup] = useState(false);
@@ -139,10 +127,7 @@ function Login() {
         if (error) throw error;
         alert("Cuenta creada. Revisa tu correo para confirmar.");
       } else {
-        const { error } = await supabase.auth.signInWithPassword({
-          email,
-          password: pwd,
-        });
+        const { error } = await supabase.auth.signInWithPassword({ email, password: pwd });
         if (error) throw error;
       }
     } catch (e) {
@@ -206,7 +191,7 @@ function Login() {
 /* ========================= Root con tabs ========================= */
 export default function AppRoot() {
   const session = useSession();
-  const [view, setView] = useState("game"); // game | standings | assistant | news | rules
+  const [view, setView] = useState("game");
 
   useEffect(() => {
     if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js");
@@ -270,8 +255,7 @@ function GamesTab() {
   const [playerStandings, setPlayerStandings] = useState([]);
 
   // Banner resultado
-  const [resultBanner, setResultBanner] = useState(null); // {type:'win'|'loss'|'push', msg:string}
-  const bannerKey = (w, uid) => `resultShown-W${w}-${uid}`;
+  const [resultBanner, setResultBanner] = useState(null);
 
   const [dayFilter, setDayFilter] = useState(localStorage.getItem("dayFilter") || "ALL");
   const [teamQuery, setTeamQuery] = useState(localStorage.getItem("teamQuery") || "");
@@ -389,14 +373,10 @@ function GamesTab() {
     setPopularity(list);
   };
 
-  // Cargar temporada completa para standings de jugadores
+  // Temporada completa para standings de jugadores
   const loadSeasonData = async () => {
-    const { data: gs } = await supabase
-      .from("games")
-      .select("*")
-      .eq("season", SEASON);
+    const { data: gs } = await supabase.from("games").select("*").eq("season", SEASON);
     setAllGamesSeason(gs || []);
-
     const { data: pks } = await supabase
       .from("picks")
       .select("id,user_id,team_id,game_id,week,season,result,updated_at")
@@ -404,25 +384,21 @@ function GamesTab() {
     setAllPicksSeason(pks || []);
   };
 
-  // Recalcular standings de jugadores
   const recomputePlayerStandings = (allPicks, allGames) => {
     const gamesMap = {};
     (allGames || []).forEach((g) => (gamesMap[g.id] = g));
-
-    const agg = new Map(); // user_id -> {w,l,t}
+    const agg = new Map();
     (allPicks || []).forEach((p) => {
       const g = gamesMap[p.game_id];
       if (!g) return;
       const res = p.result && p.result !== "pending" ? p.result : computePickResultFromGame(g, p.team_id);
       if (res === "pending") return;
-
       const row = agg.get(p.user_id) || { w: 0, l: 0, t: 0 };
       if (res === "win") row.w++;
       else if (res === "loss") row.l++;
       else if (res === "push") row.t++;
       agg.set(p.user_id, row);
     });
-
     return [...agg.entries()]
       .map(([user_id, { w, l, t }]) => ({ user_id, w, l, t }))
       .sort((a, b) => (b.w - a.w) || (a.l - b.l) || (b.t - a.t));
@@ -433,7 +409,12 @@ function GamesTab() {
     const email = session.user.email;
     let { data: prof } = await supabase.from("profiles").select("*").eq("email", email).single();
     if (!prof) {
-      await supabase.from("profiles").insert({ id: session.user.id, email, display_name: email.split("@")[0], lives: 2 });
+      await supabase.from("profiles").insert({
+        id: session.user.id,
+        email,
+        display_name: email.split("@")[0],
+        lives: 2,
+      });
       const r = await supabase.from("profiles").select("*").eq("email", email).single();
       prof = r.data;
     }
@@ -464,7 +445,7 @@ function GamesTab() {
   useEffect(() => localStorage.setItem("dayFilter", dayFilter), [dayFilter]);
   useEffect(() => localStorage.setItem("teamQuery", teamQuery), [teamQuery]);
 
-  // Recalcula standings de jugadores cada vez que cambien juegos o picks de temporada
+  // Recalcula standings de jugadores cuando cambian juegos o picks de temporada
   useEffect(() => {
     if (!allGamesSeason?.length || !allPicksSeason?.length) return;
     setPlayerStandings(recomputePlayerStandings(allPicksSeason, allGamesSeason));
@@ -497,7 +478,7 @@ function GamesTab() {
 
   const popPct = (teamId) => popularity.find((p) => p.team_id === teamId)?.pct ?? 0;
 
-  // Reglas para poder pickear (incluye FROZEN y ELIMINADO)
+  // Reglas para poder pickear (incluye ELIMINADO / FROZEN / LOCK / USED)
   const canPick = (candidateGame, candidateTeam) => {
     if ((me?.lives ?? 0) <= 0) return { ok: false, reason: "ELIMINATED" };
 
@@ -576,34 +557,45 @@ function GamesTab() {
     return computePickResultFromGame(g, pick.team_id);
   }
 
-  // ---- NUEVO: banner + manejo de vidas cuando se resuelve mi pick
-  async function onMyPickResolved(res) {
-    let msg = "";
-    let type = res;
-    if (res === "win") {
-      msg = "¡Ganaste esta semana! 🕺 Te luciste. A ver si así te invita a cenar la suerte.";
-    } else if (res === "loss") {
-      msg = "Perdiste esta semana 😬… te falló la bola mágica. ¡A levantarse que aún hay NFL!";
-    } else {
-      msg = "Push… ni fu ni fa. Como pedir tacos y que te den ensalada. 🥗";
-    }
-    setResultBanner({ type, msg });
+  /* ====== Banner + Vidas: versión idempotente ====== */
+  const bannerKey = (w, uid) => `resultShown-W${w}-${uid}`;
+  const livesKey = (w, uid) => `livesApplied-W${w}-${uid}`;
 
-    if (res === "loss") {
-      try {
-        const { data: prof } = await supabase
-          .from("profiles")
-          .select("lives")
-          .eq("id", session.user.id)
-          .single();
-        const currentLives = prof?.lives ?? me?.lives ?? 0;
-        const newLives = Math.max(0, currentLives - 1);
+  async function applyLivesIfNeeded(outcome) {
+    if (outcome !== "loss") return;
+    const lk = livesKey(week, session.user.id);
+    if (localStorage.getItem(lk)) return;
+
+    try {
+      const { data: profNow } = await supabase
+        .from("profiles")
+        .select("lives")
+        .eq("id", session.user.id)
+        .single();
+
+      const currentLives = profNow?.lives ?? me?.lives ?? 0;
+      const newLives = Math.max(0, currentLives - 1);
+
+      if (newLives !== currentLives) {
         await supabase.from("profiles").update({ lives: newLives }).eq("id", session.user.id);
         setMe((m) => ({ ...m, lives: newLives }));
-      } catch (e) {
-        console.warn("Error restando vida:", e.message);
       }
+    } catch (e) {
+      console.warn("applyLivesIfNeeded error:", e.message);
+    } finally {
+      localStorage.setItem(lk, "1");
     }
+  }
+
+  function buildFunnyMessage(res) {
+    if (res === "win") return "¡Ganaste esta semana! 🕺 Te luciste. A ver si así te invita a cenar la suerte.";
+    if (res === "loss") return "Perdiste esta semana 😬… te falló la bola mágica. ¡A levantarse que aún hay NFL!";
+    return "Push… ni fu ni fa. Como pedir tacos y que te den ensalada. 🥗";
+  }
+
+  async function onMyPickResolved(res) {
+    setResultBanner({ type: res, msg: buildFunnyMessage(res) });
+    if (res === "loss") await applyLivesIfNeeded(res);
   }
 
   // Asentar automáticamente MIS picks cuando queden "final"
@@ -668,7 +660,7 @@ function GamesTab() {
     }
   }
 
-  // Al cambiar juegos/picks, reflejar resultados y best-effort al backend
+  // Ejecuta settle + ping backend best-effort
   useEffect(() => {
     if (!games?.length) return;
 
@@ -682,6 +674,22 @@ function GamesTab() {
       } catch {}
     })();
   }, [games, picks, leaguePicks, week]);
+
+  // Si el resultado ya está en BD, muestra banner y aplica vidas (idempotente)
+  useEffect(() => {
+    if (!myPickThisWeek) return;
+    const res = derivedResultForPick(myPickThisWeek);
+    if (res === "pending") return;
+
+    const bk = bannerKey(week, session.user.id);
+    if (!localStorage.getItem(bk)) {
+      setResultBanner({ type: res, msg: buildFunnyMessage(res) });
+      localStorage.setItem(bk, "1");
+    }
+    if (res === "loss") {
+      applyLivesIfNeeded(res);
+    }
+  }, [myPickThisWeek, gamesMap, week, session.user.id]);
 
   /* ---------- UI helpers ---------- */
   const TeamMini = ({ id }) => {
@@ -706,9 +714,8 @@ function GamesTab() {
   };
 
   const ScoreStrip = ({ g }) => {
-    const status = String(g.status || "scheduled").toLowerCase();
     const ended = hasGameEnded(g);
-    const live = isLiveStatus(status);
+    const status = String(g.status || "scheduled").toLowerCase();
 
     const score = (
       <div className="flex items-center gap-4">
@@ -722,15 +729,14 @@ function GamesTab() {
       </div>
     );
 
-    if (ended) {
+    if (ended)
       return (
         <div className="flex items-center justify-between">
           {score}
           <span className="badge">FINAL</span>
         </div>
       );
-    }
-    if (live) {
+    if (isLiveStatus(status))
       return (
         <div className="flex items-center justify-between">
           {score}
@@ -742,7 +748,6 @@ function GamesTab() {
           </div>
         </div>
       );
-    }
     return (
       <div className="flex items-center justify-between">
         {score}
@@ -1139,7 +1144,7 @@ function GamesTab() {
         </div>
       )}
 
-      {/* NUEVO: Banner de resultado */}
+      {/* Banner de resultado */}
       {resultBanner && (
         <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-[60]">
           <div className="w-full max-w-sm card p-5 text-center">
@@ -1183,7 +1188,9 @@ function AutoPickButtons({ week }) {
 
   const autopickLeague = async () => {
     try {
-      const url = `${SITE}/api/control?action=autopick&week=${week}&token=${encodeURIComponent(CRON_TOKEN)}`;
+      const url = `${SITE}/api/control?action=autopick&week=${week}&token=${encodeURIComponent(
+        CRON_TOKEN
+      )}`;
       const r = await fetch(url);
       const j = await r.json().catch(() => ({}));
       if (!r.ok || j.ok === false) throw new Error(j.error || "Error autopick liga");
@@ -1206,7 +1213,6 @@ function StandingsTab() {
   const [rows, setRows] = useState([]);
   const [fallback, setFallback] = useState([]);
 
-  // Intentar vista materializada
   useEffect(() => {
     (async () => {
       const { data } = await supabase
@@ -1219,7 +1225,6 @@ function StandingsTab() {
     })();
   }, []);
 
-  // Fallback: calcular desde games final + teams
   useEffect(() => {
     if (rows && rows.length) return;
     (async () => {
@@ -1386,7 +1391,7 @@ function AssistantTab() {
 
   const pickFrozen = isPickFrozen(myPickThisWeek, gamesMap);
 
-  // Solo FUTUROS para recomendar
+  // Sólo juegos futuros para recomendar
   const rows = (games || [])
     .filter((g)=> DateTime.fromISO(g.start_time) > DateTime.now())
     .flatMap((g) => {
