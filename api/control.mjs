@@ -1,219 +1,237 @@
-// /api/control.mjs
-export const config = { runtime: "edge" };
+// api/control.mjs
+import { createClient } from '@supabase/supabase-js';
 
-const OK = (body) =>
-  new Response(JSON.stringify(body, null, 2), {
-    status: 200,
-    headers: { "content-type": "application/json; charset=utf-8" },
-  });
-const ERR = (status, msg) =>
-  new Response(JSON.stringify({ ok: false, error: msg }, null, 2), {
-    status,
-    headers: { "content-type": "application/json; charset=utf-8" },
-  });
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+const SUPABASE_SERVICE = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY;
+const CRON_TOKEN = process.env.CRON_TOKEN || process.env.VITE_CRON_TOKEN;
 
-const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
-const SERVICE_KEY =
-  process.env.VITE_SUPABASE_SERVICE_KEY || process.env.SUPABASE_SERVICE_KEY;
-const CRON_TOKEN =
-  process.env.VITE_CRON_TOKEN || process.env.CRON_TOKEN || "changeme";
-const SEASON = Number(process.env.SEASON || "2025");
-if (!SUPABASE_URL || !SERVICE_KEY) {
-  console.error("Missing Supabase envs");
+const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE);
+
+// --- helpers -------------------------------------------------
+async function fetchJson(url, opts = {}, tries = 3) {
+  const headers = {
+    'User-Agent': 'Mozilla/5.0 (Survivor-2025 sync bot)',
+    'Accept': 'application/json;charset=UTF-8',
+    ...opts.headers,
+  };
+  for (let i = 0; i < tries; i++) {
+    const r = await fetch(url, { ...opts, headers });
+    if (r.ok) return r.json();
+    // reintentos ante 403/404/500 intermitentes
+    await new Promise(res => setTimeout(res, 600 * (i + 1)));
+  }
+  // último intento: devuelve error “legible”
+  const r = await fetch(url, { ...opts, headers });
+  const txt = await r.text();
+  throw new Error(`ESPN ${r.status} - ${url} - ${txt.slice(0, 200)}`);
 }
 
-const sfetch = async (path, opts = {}) =>
-  fetch(`${SUPABASE_URL}${path}`, {
-    ...opts,
-    headers: {
-      apikey: SERVICE_KEY,
-      Authorization: `Bearer ${SERVICE_KEY}`,
-      "content-type": "application/json",
-      ...(opts.headers || {}),
-    },
-  });
-
-const espnScoreboard = async (week) => {
-  // ESPN weekly scoreboard (regular season = seasontype=2)
-  const url = `https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?seasontype=2&week=${week}`;
-  const r = await fetch(url, { headers: { "cache-control": "no-cache" } });
-  if (!r.ok) throw new Error(`ESPN HTTP ${r.status} - ${url}`);
-  return r.json();
-};
-
-function parseState(evt) {
-  // evt.status.type.state in|pre|post
-  const state = evt?.status?.type?.state || "pre";
-  if (state === "pre") return "scheduled";
-  if (state === "in") return "in_progress";
-  return "final";
+function pickStatus(obj) {
+  // intenta mapear bloque status en formatos distintos
+  const st = obj?.status || obj?.competitions?.[0]?.status || obj?.header?.competitions?.[0]?.status;
+  const type = st?.type || st;
+  const state = type?.state || type?.name || st?.name;
+  const completed = Boolean(type?.completed || type?.state === 'post' || type?.name?.toUpperCase?.().includes('FINAL'));
+  return { raw: st || type || null, state: (state || '').toLowerCase(), completed };
 }
 
-function parseTeams(evt) {
-  const comp = evt?.competitions?.[0];
-  const comps = comp?.competitors || [];
-  const home = comps.find((c) => c.homeAway === "home");
-  const away = comps.find((c) => c.homeAway === "away");
-  const norm = (c) => c?.team?.abbreviation?.toUpperCase()?.trim();
+function pickScores(obj) {
+  // busca competidores con score en varios posibles layouts
+  const comps =
+    obj?.competitions?.[0]?.competitors ||
+    obj?.header?.competitions?.[0]?.competitors ||
+    obj?.competitors ||
+    [];
+  const mapByHome = {};
+  comps.forEach(c => {
+    const homeAway = c?.homeAway || c?.homeaway;
+    const team = c?.team?.abbreviation || c?.team?.shortDisplayName || c?.team?.name;
+    const score = c?.score != null ? Number(c.score) : (c?.linescores?.reduce?.((a, s) => a + Number(s.value || 0), 0) ?? null);
+    if (homeAway && team != null) mapByHome[homeAway.toLowerCase()] = { team, score };
+  });
   return {
-    home: norm(home),
-    away: norm(away),
-    homeScore:
-      home?.score != null && home?.score !== "" ? Number(home.score) : null,
-    awayScore:
-      away?.score != null && away?.score !== "" ? Number(away.score) : null,
-    period: comp?.status?.period ?? null,
-    clock: comp?.status?.displayClock ?? null,
-    possession:
-      comp?.situation?.possession?.toUpperCase?.() ||
-      comp?.status?.type?.detail?.includes("ball")
-        ? comp?.status?.type?.detail
-        : null,
-    redZone: comp?.situation?.isRedZone ?? null,
-    startISO: evt?.date || null,
+    homeTeam: mapByHome.home?.team,
+    awayTeam: mapByHome.away?.team,
+    homeScore: mapByHome.home?.score ?? null,
+    awayScore: mapByHome.away?.score ?? null,
   };
 }
 
-async function syncScoresForWeek(week) {
-  const data = await espnScoreboard(week);
-  const events = data?.events || [];
-  let updates = 0;
-
-  for (const e of events) {
-    const id = Number(e?.id); // coincide con games.id en tu DB (4017...)
-    const state = parseState(e);
-    const { home, away, homeScore, awayScore, period, clock, possession, redZone, startISO } =
-      parseTeams(e);
-
-    // PATCH por id
-    const body = {
-      status: state,
-      season: SEASON,
-      home_team: home,
-      away_team: away,
-      start_time: startISO,
-      home_score: homeScore,
-      away_score: awayScore,
-      period,
-      clock,
-      possession,
-      red_zone: redZone,
-      updated_at: new Date().toISOString(),
-    };
-
-    const r = await sfetch(`/rest/v1/games?id=eq.${id}`, {
-      method: "PATCH",
-      body: JSON.stringify(body),
-    });
-    if (!r.ok) {
-      const t = await r.text();
-      console.error("PATCH games error", r.status, t);
-      continue;
-    }
-    updates++;
-  }
-  return { updated: updates, weeks: [week] };
-}
-
-async function weeksToSync() {
-  // Buscar semanas con partidos no-finales para no pedir semanas cerradas
-  const r = await sfetch(
-    `/rest/v1/games?season=eq.${SEASON}&status=in.(scheduled,in_progress)&select=week`
-  );
-  if (!r.ok) return [1]; // fallback
-  const rows = await r.json();
-  const set = new Set(rows.map((x) => x.week));
-  if (set.size === 0) {
-    // fallback a próxima semana o la 1
-    return [1];
-  }
-  return Array.from(set).sort((a, b) => a - b);
-}
-
-async function syncScoresAuto() {
-  const weeks = await weeksToSync();
-  let total = 0;
-  for (const w of weeks) {
-    const { updated } = await syncScoresForWeek(w);
-    total += updated;
-  }
-  return { updated: total, weeks };
-}
-
-// Simple: refresca calendario básico (en caso de que agreguen/cambien fecha)
-async function syncGamesBasic() {
-  // Usamos las mismas llamadas de scoreboard para asegurar fecha/teams
-  const weeks = await weeksToSync();
-  let up = 0;
-  for (const w of weeks) {
-    const data = await espnScoreboard(w);
-    const events = data?.events || [];
-    for (const e of events) {
-      const id = Number(e?.id);
-      const { home, away, startISO } = parseTeams(e);
-      const r = await sfetch(`/rest/v1/games?id=eq.${id}`, {
-        method: "PATCH",
-        body: JSON.stringify({
-          season: SEASON,
-          week: w,
-          home_team: home,
-          away_team: away,
-          start_time: startISO,
-          updated_at: new Date().toISOString(),
-        }),
-      });
-      if (!r.ok) {
-        const t = await r.text();
-        console.error("PATCH schedule error", r.status, t);
-      } else up++;
-    }
-  }
-  return { updated: up, weeks };
-}
-
-// Odds (si ya tienes otro endpoint, puedes omitirlo o dejarlo mínimo)
-async function syncOddsBasic() {
-  // Aquí solo devolvemos OK para no romper crons si aún no usas odds
-  return { updated: 0 };
-}
-
-export default async function handler(req) {
+function yyyymmddFromISO(iso) {
   try {
-    const { searchParams } = new URL(req.url);
-    const token = searchParams.get("token") || "";
-    if (token !== CRON_TOKEN) return ERR(401, "bad token");
+    const d = new Date(iso);
+    const y = d.getUTCFullYear();
+    const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+    const day = String(d.getUTCDate()).padStart(2, '0');
+    return `${y}${m}${day}`;
+  } catch {
+    return null;
+  }
+}
 
-    const action = searchParams.get("action") || searchParams.get("a") || "";
-    if (!action) {
-      return OK({
-        ok: true,
-        message: "control ok",
-        actions: ["syncGames", "syncScores", "syncOdds", "syncAll"],
-      });
-    }
+// --- ESPN fallbacks -----------------------------------------
+async function espnSummaryById(id) {
+  const url = `https://site.api.espn.com/apis/site/v2/sports/football/nfl/summary?event=${id}`;
+  return fetchJson(url);
+}
+async function espnCoreEvent(id) {
+  const url = `https://site.api.espn.com/apis/core/v2/events/${id}`;
+  return fetchJson(url);
+}
+async function espnScoreboardByDate(yyyymmdd) {
+  const url = `https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=${yyyymmdd}`;
+  return fetchJson(url);
+}
 
-    if (action === "syncGames") {
-      const r = await syncGamesBasic();
-      return OK({ ok: true, action, ...r });
-    }
-    if (action === "syncScores") {
-      const r = await syncScoresAuto();
-      return OK({ ok: true, action, ...r });
-    }
-    if (action === "syncOdds") {
-      const r = await syncOddsBasic();
-      return OK({ ok: true, action, ...r });
-    }
-    if (action === "syncAll") {
-      const g = await syncGamesBasic();
-      const s = await syncScoresAuto();
-      const o = await syncOddsBasic();
-      return OK({ ok: true, action, games: g, scores: s, odds: o });
-    }
+// --- DB helpers ----------------------------------------------
+async function getGameRowById(game_id) {
+  const { data, error } = await sb
+    .from('games')
+    .select('id, season, week, status, start_time, home_team, away_team')
+    .eq('id', game_id)
+    .single();
+  if (error) throw error;
+  return data;
+}
 
-    return ERR(400, "unknown action");
+async function updateGameScore(game_id, fields) {
+  const { error } = await sb.from('games').update(fields).eq('id', game_id);
+  if (error) throw error;
+}
+
+// --- actions --------------------------------------------------
+async function syncScoresOne(game_id, force = false) {
+  const g = await getGameRowById(game_id);
+  // 1) summary?event=
+  try {
+    const j = await espnSummaryById(game_id);
+    const st = pickStatus(j);
+    const sc = pickScores(j);
+    if (st.state || st.completed || (sc.homeScore != null && sc.awayScore != null)) {
+      const fields = {};
+      if (st.completed) fields.status = 'final';
+      else if (st.state) fields.status = st.state.includes('in') ? 'in_progress' : (st.state.includes('post') ? 'final' : 'scheduled');
+      if (sc.homeScore != null) fields.home_score = sc.homeScore;
+      if (sc.awayScore != null) fields.away_score = sc.awayScore;
+      if (Object.keys(fields).length) await updateGameScore(game_id, fields);
+      return { updated: 1, source: 'summary' };
+    }
   } catch (e) {
-    console.error(e);
-    return ERR(500, String(e?.message || e));
+    // sigue al fallback
+  }
+
+  // 2) core/v2/events/{id}
+  try {
+    const j = await espnCoreEvent(game_id);
+    const st = pickStatus(j);
+    const sc = pickScores(j);
+    if (st.state || st.completed || (sc.homeScore != null && sc.awayScore != null)) {
+      const fields = {};
+      if (st.completed) fields.status = 'final';
+      else if (st.state) fields.status = st.state.includes('in') ? 'in_progress' : (st.state.includes('post') ? 'final' : 'scheduled');
+      if (sc.homeScore != null) fields.home_score = sc.homeScore;
+      if (sc.awayScore != null) fields.away_score = sc.awayScore;
+      if (Object.keys(fields).length) await updateGameScore(game_id, fields);
+      return { updated: 1, source: 'core' };
+    }
+  } catch (e) {
+    // sigue al fallback
+  }
+
+  // 3) scoreboard?dates=YYYYMMDD  (usando fecha de start_time)
+  const ymd = yyyymmddFromISO(g.start_time);
+  if (ymd) {
+    try {
+      const j = await espnScoreboardByDate(ymd);
+      const evt = (j?.events || []).find(x => String(x?.id) === String(game_id));
+      if (evt) {
+        const st = pickStatus(evt);
+        const sc = pickScores(evt);
+        const fields = {};
+        if (st.completed) fields.status = 'final';
+        else if (st.state) fields.status = st.state.includes('in') ? 'in_progress' : (st.state.includes('post') ? 'final' : 'scheduled');
+        if (sc.homeScore != null) fields.home_score = sc.homeScore;
+        if (sc.awayScore != null) fields.away_score = sc.awayScore;
+
+        if (Object.keys(fields).length) {
+          await updateGameScore(game_id, fields);
+          return { updated: 1, source: 'scoreboard' };
+        }
+      }
+    } catch (e) {
+      // nada
+    }
+  }
+
+  // 4) último recurso: si pasó mucho y sigue scheduled, marcar in_progress/final
+  if (force) {
+    const now = Date.now();
+    const start = new Date(g.start_time).getTime();
+    if (now > start + 1000 * 60 * 240) {
+      await updateGameScore(game_id, { status: 'final' });
+      return { updated: 1, source: 'forced-final' };
+    } else if (now > start) {
+      await updateGameScore(game_id, { status: 'in_progress' });
+      return { updated: 1, source: 'forced-live' };
+    }
+  }
+
+  return { updated: 0, source: 'none' };
+}
+
+async function syncScoresBatch(week) {
+  const { data: games, error } = await sb
+    .from('games')
+    .select('id')
+    .eq('season', 2025)
+    .eq('week', week);
+  if (error) throw error;
+  let n = 0;
+  for (const g of games || []) {
+    const r = await syncScoresOne(g.id, false);
+    n += r.updated ? 1 : 0;
+  }
+  return { updated: n, weeks: [week] };
+}
+
+async function syncAll() {
+  // normalmente llamas games + scores + odds;
+  // aquí nos importa sobre todo scores robusto
+  const w = 1; // o detecta semanas activas dinámicamente si quieres
+  const scores = await syncScoresBatch(w);
+  return { ok: true, action: 'syncAll', scores };
+}
+
+// --- handler --------------------------------------------------
+export default async function handler(req, res) {
+  try {
+    const { action, token, week, game_id, force } = req.query;
+    if (!token || token !== CRON_TOKEN) {
+      return res.status(401).json({ ok: false, error: 'bad token' });
+    }
+
+    if (action === 'syncScores') {
+      if (game_id) {
+        const r = await syncScoresOne(game_id, force === '1' || force === 'true');
+        return res.json({ ok: true, action, ...r });
+      } else if (week) {
+        const r = await syncScoresBatch(Number(week));
+        return res.json({ ok: true, action, ...r });
+      } else {
+        // si no pasas nada, intenta W1 por defecto
+        const r = await syncScoresBatch(1);
+        return res.json({ ok: true, action, ...r });
+      }
+    }
+
+    if (action === 'syncAll') {
+      const r = await syncAll();
+      return res.json(r);
+    }
+
+    // deja el resto de acciones que ya tienes (syncGames, syncOdds, autopick, etc.)
+    return res.json({ ok: true, action: action || 'noop' });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e.message });
   }
 }
