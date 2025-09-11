@@ -1587,85 +1587,24 @@ function AutoPickButtons({ week, session }) {
 /* ========================= Standings NFL ========================= */
 function StandingsTab() {
   const [rows, setRows] = useState([]);
-  const [fallback, setFallback] = useState([]);
 
   useEffect(() => {
     (async () => {
+      // Espera una vista nfl_standings con: conference, division, team_id, w, l, t, diff
       const { data } = await supabase
         .from("nfl_standings")
         .select("conference, division, team_id, w, l, t, diff")
         .order("conference")
         .order("division")
-        // el orden de team_id aquí da igual; abajo volvemos a ordenar por performance
         .order("team_id");
       setRows(data || []);
     })();
   }, []);
 
-  // Fallback local si no existe la vista nfl_standings
-  useEffect(() => {
-    if (rows && rows.length) return;
-    (async () => {
-      const { data: teams } = await supabase
-        .from("teams")
-        .select("id,conference,division");
-      const { data: games } = await supabase
-        .from("games")
-        .select(
-          "home_team,away_team,home_score,away_score,status,season,start_time,period,clock"
-        )
-        .eq("season", SEASON);
-
-      const by = {};
-      teams?.forEach((t) => {
-        by[t.id] = {
-          team_id: t.id,
-          conference: t.conference,
-          division: t.division,
-          w: 0,
-          l: 0,
-          t_: 0,
-          diff: 0,
-        };
-      });
-
-      (games || []).forEach((g) => {
-        if (!hasGameEnded(g)) return;
-        const hs = Number(g.home_score ?? 0);
-        const as = Number(g.away_score ?? 0);
-        if (hs === as) {
-          by[g.home_team].t_++;
-          by[g.away_team].t_++;
-        } else if (hs > as) {
-          by[g.home_team].w++;
-          by[g.away_team].l++;
-        } else {
-          by[g.away_team].w++;
-          by[g.home_team].l++;
-        }
-        by[g.home_team].diff += hs - as;
-        by[g.away_team].diff += as - hs;
-      });
-
-      const list = Object.values(by).map((r) => ({
-        conference: r.conference,
-        division: r.division,
-        team_id: r.team_id,
-        w: r.w,
-        l: r.l,
-        t: r.t_,
-        diff: r.diff,
-      }));
-      setFallback(list);
-    })();
-  }, [rows]);
-
-  const dataToUse = rows?.length ? rows : fallback;
-
-  // === ORDEN CORRECTO: mejor -> peor dentro de cada grupo ===
+  // Agrupamos y ordenamos: primero por conf/div, luego equipos mejor→peor
   const groups = useMemo(() => {
     const out = {};
-    (dataToUse || []).forEach((r) => {
+    (rows || []).forEach((r) => {
       const key = `${r.conference}__${r.division}`;
       if (!out[key]) {
         out[key] = { conference: r.conference, division: r.division, list: [] };
@@ -1681,21 +1620,24 @@ function StandingsTab() {
       (b.diff - a.diff) ||
       a.team_id.localeCompare(b.team_id);
 
-    // (Opcional) Orden de grupos por conf/div
-    const sortGroupMeta = (a, b) =>
+    // Orden de grupos (opcional): conf y div alfabéticamente
+    const sortGroup = (a, b) =>
       a.conference.localeCompare(b.conference) ||
       a.division.localeCompare(b.division);
 
     return Object.values(out)
       .map((g) => ({ ...g, list: g.list.slice().sort(sortTeam) }))
-      .sort(sortGroupMeta);
-  }, [dataToUse]);
+      .sort(sortGroup);
+  }, [rows]);
 
   return (
     <div className="max-w-6xl mx-auto p-4 md:p-6">
       <h1 className="text-2xl font-extrabold mb-3">Standings NFL</h1>
-      {(!dataToUse || dataToUse.length === 0) && (
-        <p className="text-sm text-gray-500">Sin datos todavía.</p>
+
+      {(!rows || rows.length === 0) && (
+        <p className="text-sm text-gray-500">
+          Sin datos en <code>nfl_standings</code>. Verifica la vista o la sync.
+        </p>
       )}
 
       <div className="grid md:grid-cols-2 gap-4">
@@ -1734,6 +1676,7 @@ function StandingsTab() {
     </div>
   );
 }
+
 
 
 /* ========================= Asistente de Picks ========================= */
