@@ -1441,10 +1441,10 @@ function GamesTab({ session }) {
         </div>
       </section>
 
-      {/* s jugadores */}
+      {/* Standings jugadores */}
       <section className="mt-6">
         <div className="p-4 border rounded-2xl bg-white card">
-          <h2 className="font-semibold">s de jugadores (2025)</h2>
+          <h2 className="font-semibold">Standings de jugadores (2025)</h2>
           <div className="overflow-x-auto">
             <table className="w-full text-sm mt-3 table-minimal">
               <thead>
@@ -1456,8 +1456,8 @@ function GamesTab({ session }) {
                 </tr>
               </thead>
               <tbody>
-                {(players || []).length ? (
-                  players.map((r) => (
+                {(playerStandings || []).length ? (
+                  playerStandings.map((r) => (
                     <tr key={r.user_id}>
                       <td>{userNames[r.user_id] || r.user_id.slice(0, 6)}</td>
                       <td className="text-emerald-700 font-medium">{r.w}</td>
