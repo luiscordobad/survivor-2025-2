@@ -130,6 +130,33 @@ function Login() {
   const [sent, setSent] = useState(false);
   const [busy, setBusy] = useState(false);
 
+  // --- Recuperación de contraseña ---
+  const [resetSent, setResetSent] = useState(false);
+  const [recoveryMode, setRecoveryMode] = useState(false);
+  const [newPwd1, setNewPwd1] = useState("");
+  const [newPwd2, setNewPwd2] = useState("");
+  const [updatingPwd, setUpdatingPwd] = useState(false);
+
+  // Si el usuario llega desde el email de recuperación (?type=recovery en el hash)
+  useEffect(() => {
+    const hash = window.location.hash || "";
+    if (hash.includes("type=recovery")) {
+      setRecoveryMode(true);
+      setTab("password");
+    }
+  }, []);
+
+  // También escuchamos eventos de Supabase por si marca PASSWORD_RECOVERY
+  useEffect(() => {
+    const { data: sub } = supabase.auth.onAuthStateChange((event) => {
+      if (event === "PASSWORD_RECOVERY") {
+        setRecoveryMode(true);
+        setTab("password");
+      }
+    });
+    return () => sub.subscription.unsubscribe();
+  }, []);
+
   const doPassword = async (e) => {
     e.preventDefault();
     setBusy(true);
@@ -138,18 +165,12 @@ function Login() {
         const { error } = await supabase.auth.signUp({
           email,
           password: pwd,
-          options: {
-            emailRedirectTo:
-              import.meta.env.VITE_SITE_URL || window.location.origin,
-          },
+          options: { emailRedirectTo: import.meta.env.VITE_SITE_URL || window.location.origin },
         });
         if (error) throw error;
         alert("Cuenta creada. Revisa tu correo para confirmar.");
       } else {
-        const { error } = await supabase.auth.signInWithPassword({
-          email,
-          password: pwd,
-        });
+        const { error } = await supabase.auth.signInWithPassword({ email, password: pwd });
         if (error) throw error;
       }
     } catch (e) {
@@ -163,97 +184,155 @@ function Login() {
     e.preventDefault();
     const { error } = await supabase.auth.signInWithOtp({
       email,
-      options: {
-        emailRedirectTo:
-          import.meta.env.VITE_SITE_URL || window.location.origin,
-      },
+      options: { emailRedirectTo: import.meta.env.VITE_SITE_URL || window.location.origin },
     });
     if (!error) setSent(true);
     else alert(error.message);
+  };
+
+  // Enviar correo de recuperación
+  const sendReset = async () => {
+    if (!email) return alert("Escribe tu email primero.");
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(email, {
+        redirectTo: import.meta.env.VITE_SITE_URL || window.location.origin,
+      });
+      if (error) throw error;
+      setResetSent(true);
+    } catch (e) {
+      alert(e.message);
+    }
+  };
+
+  // Guardar nueva contraseña tras volver del link
+  const setNewPassword = async (e) => {
+    e?.preventDefault?.();
+    if (!newPwd1 || newPwd1.length < 6) return alert("La nueva contraseña debe tener al menos 6 caracteres.");
+    if (newPwd1 !== newPwd2) return alert("Las contraseñas no coinciden.");
+    setUpdatingPwd(true);
+    try {
+      const { error } = await supabase.auth.updateUser({ password: newPwd1 });
+      if (error) throw error;
+      alert("Contraseña actualizada ✅");
+      setRecoveryMode(false);
+      setNewPwd1(""); setNewPwd2("");
+    } catch (e) {
+      alert(e.message);
+    } finally {
+      setUpdatingPwd(false);
+    }
   };
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-white p-6">
       <div className="w-full max-w-md border rounded-2xl p-6 bg-white card">
         <h1 className="text-2xl font-extrabold text-center">{LEAGUE}</h1>
-        <div className="mt-4 flex gap-2 justify-center">
-          <button
-            className={clsx(
-              "px-3 py-1 rounded border",
-              tab === "password" && "bg-black text-white"
-            )}
-            onClick={() => setTab("password")}
-          >
-            Email + Password
-          </button>
-          <button
-            className={clsx(
-              "px-3 py-1 rounded border",
-              tab === "magic" && "bg-black text-white"
-            )}
-            onClick={() => setTab("magic")}
-          >
-            Magic link
-          </button>
-        </div>
 
-        {tab === "password" && (
-          <form onSubmit={doPassword} className="mt-4 space-y-3">
-            <div className="text-sm flex justify-between">
-              <span>{signup ? "Crear cuenta" : "Iniciar sesión"}</span>
+        {/* Si estamos en modo recuperación, mostrar directamente el formulario para nueva contraseña */}
+        {recoveryMode ? (
+          <form onSubmit={setNewPassword} className="mt-4 space-y-3">
+            <p className="text-sm text-gray-700">
+              Ingresa tu nueva contraseña para tu cuenta.
+            </p>
+            <input
+              className="border p-2 w-full rounded-lg"
+              type="password"
+              placeholder="Nueva contraseña"
+              value={newPwd1}
+              onChange={(e) => setNewPwd1(e.target.value)}
+              required
+            />
+            <input
+              className="border p-2 w-full rounded-lg"
+              type="password"
+              placeholder="Confirmar nueva contraseña"
+              value={newPwd2}
+              onChange={(e) => setNewPwd2(e.target.value)}
+              required
+            />
+            <button className="bg-black text-white w-full py-2 rounded-lg disabled:opacity-60" disabled={updatingPwd}>
+              Guardar contraseña
+            </button>
+            <button type="button" className="w-full py-2 rounded-lg border" onClick={() => setRecoveryMode(false)}>
+              Volver
+            </button>
+          </form>
+        ) : (
+          <>
+            <div className="mt-4 flex gap-2 justify-center">
               <button
-                type="button"
-                className="underline"
-                onClick={() => setSignup(!signup)}
+                className={clsx("px-3 py-1 rounded border", tab === "password" && "bg-black text-white")}
+                onClick={() => setTab("password")}
               >
-                {signup ? "¿Ya tienes cuenta? Inicia" : "¿No tienes cuenta? Regístrate"}
+                Email + Password
+              </button>
+              <button
+                className={clsx("px-3 py-1 rounded border", tab === "magic" && "bg-black text-white")}
+                onClick={() => setTab("magic")}
+              >
+                Magic link
               </button>
             </div>
-            <input
-              className="border p-2 w-full rounded-lg"
-              placeholder="email"
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              required
-            />
-            <input
-              className="border p-2 w-full rounded-lg"
-              placeholder="contraseña"
-              type="password"
-              value={pwd}
-              onChange={(e) => setPwd(e.target.value)}
-              required
-            />
-            <button
-              className="bg-black text-white w-full py-2 rounded-lg disabled:opacity-60"
-              disabled={busy}
-            >
-              {signup ? "Crear cuenta" : "Entrar"}
-            </button>
-          </form>
-        )}
 
-        {tab === "magic" && (
-          <form onSubmit={doMagic} className="mt-4 space-y-3">
-            <input
-              className="border p-2 w-full rounded-lg"
-              placeholder="tu@email.com"
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              required
-            />
-            <button className="bg-black text-white w-full py-2 rounded-lg">
-              Enviar magic link
-            </button>
-            {sent && <p className="text-xs text-gray-500">Revisa tu correo.</p>}
-          </form>
+            {tab === "password" && (
+              <form onSubmit={doPassword} className="mt-4 space-y-3">
+                <div className="text-sm flex justify-between">
+                  <span>{signup ? "Crear cuenta" : "Iniciar sesión"}</span>
+                  <button type="button" className="underline" onClick={() => setSignup(!signup)}>
+                    {signup ? "¿Ya tienes cuenta? Inicia" : "¿No tienes cuenta? Regístrate"}
+                  </button>
+                </div>
+                <input
+                  className="border p-2 w-full rounded-lg"
+                  placeholder="email"
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  required
+                />
+                <input
+                  className="border p-2 w-full rounded-lg"
+                  placeholder="contraseña"
+                  type="password"
+                  value={pwd}
+                  onChange={(e) => setPwd(e.target.value)}
+                  required
+                />
+                <button className="bg-black text-white w-full py-2 rounded-lg disabled:opacity-60" disabled={busy}>
+                  {signup ? "Crear cuenta" : "Entrar"}
+                </button>
+
+                <div className="text-xs text-gray-600 flex items-center justify-between">
+                  <span>¿Olvidaste tu contraseña?</span>
+                  <button type="button" className="underline" onClick={sendReset}>
+                    Recuperarla
+                  </button>
+                </div>
+                {resetSent && <p className="text-xs text-emerald-700">Te envié un correo con el enlace para cambiarla.</p>}
+              </form>
+            )}
+
+            {tab === "magic" && (
+              <form onSubmit={doMagic} className="mt-4 space-y-3">
+                <input
+                  className="border p-2 w-full rounded-lg"
+                  placeholder="tu@email.com"
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  required
+                />
+                <button className="bg-black text-white w-full py-2 rounded-lg">Enviar magic link</button>
+                {sent && <p className="text-xs text-gray-500">Revisa tu correo.</p>}
+              </form>
+            )}
+          </>
         )}
       </div>
     </div>
   );
 }
+
 
 /* ========================= Root con tabs ========================= */
 export default function AppRoot() {
