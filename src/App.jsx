@@ -194,8 +194,13 @@ export default function AppRoot() {
   const [view, setView] = useState("game");
 
   useEffect(() => {
-    if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js");
-  }, []);
+  // Kill-switch: desregistrar cualquier SW previo para evitar pantallas en blanco por caché vieja
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.getRegistrations?.().then(regs => {
+      regs.forEach(r => r.unregister());
+    }).catch(() => {});
+  }
+}, []);
 
   if (!session) return <Login />;
 
