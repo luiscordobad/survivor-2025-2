@@ -1596,11 +1596,13 @@ function StandingsTab() {
         .select("conference, division, team_id, w, l, t, diff")
         .order("conference")
         .order("division")
+        // el orden de team_id aquí da igual; abajo volvemos a ordenar por performance
         .order("team_id");
       setRows(data || []);
     })();
   }, []);
 
+  // Fallback local si no existe la vista nfl_standings
   useEffect(() => {
     if (rows && rows.length) return;
     (async () => {
@@ -1629,8 +1631,8 @@ function StandingsTab() {
 
       (games || []).forEach((g) => {
         if (!hasGameEnded(g)) return;
-        const hs = Number(g.home_score ?? 0),
-          as = Number(g.away_score ?? 0);
+        const hs = Number(g.home_score ?? 0);
+        const as = Number(g.away_score ?? 0);
         if (hs === as) {
           by[g.home_team].t_++;
           by[g.away_team].t_++;
@@ -1660,31 +1662,34 @@ function StandingsTab() {
 
   const dataToUse = rows?.length ? rows : fallback;
 
-// Reemplaza este useMemo en StandingsTab
-const groups = useMemo(() => {
-  const out = {};
-  (dataToUse || []).forEach((r) => {
-    const key = `${r.conference}__${r.division}`;
-    if (!out[key]) out[key] = { conference: r.conference, division: r.division, list: [] };
-    out[key].list.push(r);
-  });
+  // === ORDEN CORRECTO: mejor -> peor dentro de cada grupo ===
+  const groups = useMemo(() => {
+    const out = {};
+    (dataToUse || []).forEach((r) => {
+      const key = `${r.conference}__${r.division}`;
+      if (!out[key]) {
+        out[key] = { conference: r.conference, division: r.division, list: [] };
+      }
+      out[key].list.push(r);
+    });
 
-  // Orden por equipo: W desc, L asc, T desc, Diff desc, Team ID asc
-  const sortTeam = (a, b) =>
-    (b.w - a.w) ||
-    (a.l - b.l) ||
-    (b.t - a.t) ||
-    (b.diff - a.diff) ||
-    a.team_id.localeCompare(b.team_id);
+    // Orden por equipo: W desc, L asc, T desc, Diff desc, Team ID asc
+    const sortTeam = (a, b) =>
+      (b.w - a.w) ||
+      (a.l - b.l) ||
+      (b.t - a.t) ||
+      (b.diff - a.diff) ||
+      a.team_id.localeCompare(b.team_id);
 
-  // Orden de grupos por conf/div (opcional)
-  const sortGroupMeta = (a, b) =>
-    a.conference.localeCompare(b.conference) || a.division.localeCompare(b.division);
+    // (Opcional) Orden de grupos por conf/div
+    const sortGroupMeta = (a, b) =>
+      a.conference.localeCompare(b.conference) ||
+      a.division.localeCompare(b.division);
 
-  return Object.values(out)
-    .map((g) => ({ ...g, list: g.list.slice().sort(sortTeam) }))
-    .sort(sortGroupMeta);
-}, [dataToUse]);
+    return Object.values(out)
+      .map((g) => ({ ...g, list: g.list.slice().sort(sortTeam) }))
+      .sort(sortGroupMeta);
+  }, [dataToUse]);
 
   return (
     <div className="max-w-6xl mx-auto p-4 md:p-6">
@@ -1729,6 +1734,7 @@ const groups = useMemo(() => {
     </div>
   );
 }
+
 
 /* ========================= Asistente de Picks ========================= */
 function AssistantTab({ session }) {
