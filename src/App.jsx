@@ -1441,10 +1441,10 @@ function GamesTab({ session }) {
         </div>
       </section>
 
-      {/* Standings jugadores */}
+      {/* s jugadores */}
       <section className="mt-6">
         <div className="p-4 border rounded-2xl bg-white card">
-          <h2 className="font-semibold">Standings de jugadores (2025)</h2>
+          <h2 className="font-semibold">s de jugadores (2025)</h2>
           <div className="overflow-x-auto">
             <table className="w-full text-sm mt-3 table-minimal">
               <thead>
@@ -1456,8 +1456,8 @@ function GamesTab({ session }) {
                 </tr>
               </thead>
               <tbody>
-                {(playerStandings || []).length ? (
-                  playerStandings.map((r) => (
+                {(players || []).length ? (
+                  players.map((r) => (
                     <tr key={r.user_id}>
                       <td>{userNames[r.user_id] || r.user_id.slice(0, 6)}</td>
                       <td className="text-emerald-700 font-medium">{r.w}</td>
@@ -1660,16 +1660,31 @@ function StandingsTab() {
 
   const dataToUse = rows?.length ? rows : fallback;
 
-  const groups = useMemo(() => {
-    const out = {};
-    (dataToUse || []).forEach((r) => {
-      const key = `${r.conference}__${r.division}`;
-      if (!out[key])
-        out[key] = { conference: r.conference, division: r.division, list: [] };
-      out[key].list.push(r);
-    });
-    return Object.values(out);
-  }, [dataToUse]);
+// Reemplaza este useMemo en StandingsTab
+const groups = useMemo(() => {
+  const out = {};
+  (dataToUse || []).forEach((r) => {
+    const key = `${r.conference}__${r.division}`;
+    if (!out[key]) out[key] = { conference: r.conference, division: r.division, list: [] };
+    out[key].list.push(r);
+  });
+
+  // Orden por equipo: W desc, L asc, T desc, Diff desc, Team ID asc
+  const sortTeam = (a, b) =>
+    (b.w - a.w) ||
+    (a.l - b.l) ||
+    (b.t - a.t) ||
+    (b.diff - a.diff) ||
+    a.team_id.localeCompare(b.team_id);
+
+  // Orden de grupos por conf/div (opcional)
+  const sortGroupMeta = (a, b) =>
+    a.conference.localeCompare(b.conference) || a.division.localeCompare(b.division);
+
+  return Object.values(out)
+    .map((g) => ({ ...g, list: g.list.slice().sort(sortTeam) }))
+    .sort(sortGroupMeta);
+}, [dataToUse]);
 
   return (
     <div className="max-w-6xl mx-auto p-4 md:p-6">
