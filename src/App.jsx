@@ -1,4 +1,3 @@
-
 // src/App.jsx
 import { useEffect, useMemo, useRef, useState } from "react";
 import { DateTime } from "luxon";
@@ -393,6 +392,7 @@ export default function AppRoot() {
 }
 
 /* ========================= PARTIDOS ========================= */
+/* ========================= PARTIDOS ========================= */
 function GamesTab({ session }) {
   const uid = session?.user?.id || null;
 
@@ -566,9 +566,7 @@ function GamesTab({ session }) {
     setAllGamesSeason(gs || []);
     const { data: pks } = await supabase
       .from("picks")
-      .select(
-        "id,user_id,team_id,game_id,week,season,result,updated_at"
-      )
+      .select("id,user_id,team_id,game_id,week,season,result,updated_at")
       .eq("season", SEASON);
     setAllPicksSeason(pks || []);
   };
@@ -647,9 +645,7 @@ function GamesTab({ session }) {
 
   useEffect(() => {
     if (!allGamesSeason?.length || !allPicksSeason?.length) return;
-    setPlayerStandings(
-      recomputePlayerStandings(allPicksSeason, allGamesSeason)
-    );
+    setPlayerStandings(recomputePlayerStandings(allPicksSeason, allGamesSeason));
   }, [allGamesSeason, allPicksSeason]);
 
   /* ---------- helpers picks ---------- */
@@ -873,13 +869,14 @@ function GamesTab({ session }) {
     if (!games?.length) return;
     if (picks?.length) settleMyPicksIfNeeded(week, games, picks);
     if (leaguePicks?.length) settleLeaguePicksIfNeeded(week, games, leaguePicks);
-    ((async () => {
-		try {
-    // si tu /api/syncScores acepta GET, basta así:
-	     const url = `${SITE}/api/syncScores?week=${week}&token=${encodeURIComponent(CRON_TOKEN)}`;
-         await fetch(url);
-       } catch {}
-     })();
+
+    // ⬇️⬇️ CAMBIO AQUÍ: usar /api/syncScores en lugar de /api/control ⬇️⬇️
+    (async () => {
+      try {
+        const url = `${SITE}/api/syncScores?week=${week}&token=${encodeURIComponent(CRON_TOKEN)}`;
+        await fetch(url);
+      } catch {}
+    })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [games, picks, leaguePicks, week, uid]);
 
@@ -1534,7 +1531,6 @@ function GamesTab({ session }) {
     </div>
   );
 }
-
 /* -------- Autopick buttons -------- */
 function AutoPickButtons({ week, session }) {
   const uid = session?.user?.id || null;
