@@ -1,3 +1,4 @@
+
 // src/App.jsx
 import { useEffect, useMemo, useRef, useState } from "react";
 import { DateTime } from "luxon";
@@ -872,14 +873,13 @@ function GamesTab({ session }) {
     if (!games?.length) return;
     if (picks?.length) settleMyPicksIfNeeded(week, games, picks);
     if (leaguePicks?.length) settleLeaguePicksIfNeeded(week, games, leaguePicks);
-    (async () => {
-      try {
-        const url = `${SITE}/api/control?action=settleWeek&week=${week}&token=${encodeURIComponent(
-          CRON_TOKEN
-        )}`;
-        await fetch(url);
-      } catch {}
-    })();
+    ((async () => {
+		try {
+    // si tu /api/syncScores acepta GET, basta así:
+	     const url = `${SITE}/api/syncScores?week=${week}&token=${encodeURIComponent(CRON_TOKEN)}`;
+         await fetch(url);
+       } catch {}
+     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [games, picks, leaguePicks, week, uid]);
 
