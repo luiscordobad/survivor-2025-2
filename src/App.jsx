@@ -865,20 +865,27 @@ function GamesTab({ session }) {
     }
   }
 
-  useEffect(() => {
-    if (!games?.length) return;
-    if (picks?.length) settleMyPicksIfNeeded(week, games, picks);
-    if (leaguePicks?.length) settleLeaguePicksIfNeeded(week, games, leaguePicks);
+useEffect(() => {
+  (async () => {
+    try {
+      // 1) Sincroniza marcadores en el server
+      const url = `${SITE}/api/syncScores?week=${week}&token=${encodeURIComponent(CRON_TOKEN)}`;
+      await fetch(url);
 
-    // ⬇️⬇️ CAMBIO AQUÍ: usar /api/syncScores en lugar de /api/control ⬇️⬇️
-    (async () => {
-      try {
-        const url = `${SITE}/api/syncScores?week=${week}&token=${encodeURIComponent(CRON_TOKEN)}`;
-        await fetch(url);
-      } catch {}
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [games, picks, leaguePicks, week, uid]);
+      // 2) Tras sincronizar, recarga la semana actual desde la DB
+      await loadGames(week);
+
+      // 3) Recalcula resoluciones de picks si aplica
+      if (picks?.length) settleMyPicksIfNeeded(week, games, picks);
+      if (leaguePicks?.length) settleLeaguePicksIfNeeded(week, games, leaguePicks);
+
+      setLastUpdated(new Date().toISOString());
+    } catch (e) {
+      console.warn("syncScores failed:", e?.message);
+    }
+  })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [week]); // << solo depende de la semana seleccionada
 
   useEffect(() => {
     if (!myPickThisWeek || !uid) return;
