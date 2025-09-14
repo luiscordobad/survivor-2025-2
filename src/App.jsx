@@ -393,6 +393,7 @@ export default function AppRoot() {
 
 /* ========================= PARTIDOS ========================= */
 /* ========================= PARTIDOS ========================= */
+/* ========================= PARTIDOS ========================= */
 function GamesTab({ session }) {
   const uid = session?.user?.id || null;
 
@@ -566,7 +567,9 @@ function GamesTab({ session }) {
     setAllGamesSeason(gs || []);
     const { data: pks } = await supabase
       .from("picks")
-      .select("id,user_id,team_id,game_id,week,season,result,updated_at")
+      .select(
+        "id,user_id,team_id,game_id,week,season,result,updated_at"
+      )
       .eq("season", SEASON);
     setAllPicksSeason(pks || []);
   };
@@ -645,7 +648,9 @@ function GamesTab({ session }) {
 
   useEffect(() => {
     if (!allGamesSeason?.length || !allPicksSeason?.length) return;
-    setPlayerStandings(recomputePlayerStandings(allPicksSeason, allGamesSeason));
+    setPlayerStandings(
+      recomputePlayerStandings(allPicksSeason, allGamesSeason)
+    );
   }, [allGamesSeason, allPicksSeason]);
 
   /* ---------- helpers picks ---------- */
@@ -865,27 +870,28 @@ function GamesTab({ session }) {
     }
   }
 
-useEffect(() => {
-  (async () => {
-    try {
-      // 1) Sincroniza marcadores en el server
-      const url = `${SITE}/api/syncScores?week=${week}&token=${encodeURIComponent(CRON_TOKEN)}`;
-      await fetch(url);
+  // ⬇️⬇️⬇️ AQUÍ el efecto que llama /api/syncScores?week y luego recarga juegos
+  useEffect(() => {
+    if (!games?.length) return;
 
-      // 2) Tras sincronizar, recarga la semana actual desde la DB
-      await loadGames(week);
+    if (picks?.length) settleMyPicksIfNeeded(week, games, picks);
+    if (leaguePicks?.length) settleLeaguePicksIfNeeded(week, games, leaguePicks);
 
-      // 3) Recalcula resoluciones de picks si aplica
-      if (picks?.length) settleMyPicksIfNeeded(week, games, picks);
-      if (leaguePicks?.length) settleLeaguePicksIfNeeded(week, games, leaguePicks);
-
-      setLastUpdated(new Date().toISOString());
-    } catch (e) {
-      console.warn("syncScores failed:", e?.message);
-    }
-  })();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-}, [week]); // << solo depende de la semana seleccionada
+    (async () => {
+      try {
+        const url = `${SITE}/api/syncScores?token=${encodeURIComponent(
+          CRON_TOKEN
+        )}&week=${week}`;
+        await fetch(url);
+        // tras sincronizar, recarga los juegos para ver marcadores actualizados
+        await loadGames(week);
+      } catch (e) {
+        console.warn("syncScores error:", e);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [games, picks, leaguePicks, week, uid]);
+  // ⬆️⬆️⬆️
 
   useEffect(() => {
     if (!myPickThisWeek || !uid) return;
@@ -1393,7 +1399,7 @@ useEffect(() => {
       <section className="mt-6">
         <div className="p-4 border rounded-2xl bg-white card">
           <h2 className="font-semibold">Historial de tus picks</h2>
-          <div className="overflow-x-auto">
+        <div className="overflow-x-auto">
             <table className="w-full text-sm mt-3 table-minimal">
               <thead>
                 <tr>
