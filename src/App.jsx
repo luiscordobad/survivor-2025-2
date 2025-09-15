@@ -391,6 +391,53 @@ export default function AppRoot() {
   );
 }
 
+/* -------- Autopick buttons (restaurar) -------- */
+function AutoPickButtons({ week, session }) {
+  const uid = session?.user?.id || null;
+
+  const autopickMe = async () => {
+    if (!uid) return alert("Iniciando sesión… intenta en unos segundos.");
+    try {
+      const url = `${SITE}/api/control?action=autopickOne&week=${week}&user_id=${encodeURIComponent(
+        uid
+      )}&token=${encodeURIComponent(CRON_TOKEN)}`;
+      const r = await fetch(url);
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || j.ok === false) throw new Error(j.error || "Error autopick");
+      alert("Autopick aplicado para ti.");
+    } catch (e) {
+      alert(e.message);
+    }
+  };
+
+  const autopickLeague = async () => {
+    try {
+      const url = `${SITE}/api/control?action=autopick&week=${week}&token=${encodeURIComponent(
+        CRON_TOKEN
+      )}`;
+      const r = await fetch(url);
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || j.ok === false)
+        throw new Error(j.error || "Error autopick liga");
+      alert("Autopick de liga listo.");
+    } catch (e) {
+      alert(e.message);
+    }
+  };
+
+  return (
+    <>
+      <button className="text-xs px-3 py-1 rounded border" onClick={autopickMe}>
+        Autopick para mí
+      </button>
+      <button className="text-xs px-3 py-1 rounded border" onClick={autopickLeague}>
+        Autopick (liga)
+      </button>
+    </>
+  );
+}
+
+
 /* ========================= PARTIDOS ========================= */
 /* ========================= PARTIDOS ========================= */
 /* ========================= PARTIDOS ========================= */
