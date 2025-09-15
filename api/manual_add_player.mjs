@@ -6,30 +6,35 @@ const SERVICE_KEY  = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_S
 
 const SEASON = 2025;
 
-// ⚠️ SOLO SERVICE KEY (no la publiques en el cliente)
+// ⚠️ Service Role Key — SOLO en servidor
 const admin = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
 
 export default async function handler(req, res) {
+  const out = { steps: [] };
   try {
-    // Puedes pasar por query o hardcodear aquí:
+    // Params (puedes pasarlos por query si quieres)
     const displayName = req.query.name   || 'pablito';
     const email       = req.query.email  || 'pablito+manual@maiztros.local';
-    const pwd         = req.query.pwd    || 'Temp1234!'; // cualquiera, no se usará
-    // Picks solicitados:
-    const w1_game_id  = '401772829'; // CIN (Bengals), W1
-    const w2_game_id  = '401772833'; // NO (Saints), W2
+    const pwd         = req.query.pwd    || 'Temp1234!';
 
-    // 1) Crea (o consigue) el usuario en Auth
-    //    Si ya existe por email, no lo duplica.
-    let authUserId;
-    {
-      // Busca por email
-      const { data: list, error: listErr } = await admin.auth.admin.listUsers();
-      if (listErr) throw listErr;
-      const found = list.users.find(u => u.email?.toLowerCase() === email.toLowerCase());
+    // Picks del ejemplo de la conversación:
+    const w1_game_id  = '401772829'; // W1 Bengals (CIN) - ganó
+    const w2_game_id  = '401772833'; // W2 Saints (NO) - perdió
 
-      if (found) {
-        authUserId = found.id;
+    // ===== 0) Validación env =====
+    if (!SUPABASE_URL || !SERVICE_KEY) {
+      out.steps.push({ step: 'env', ok: false, error: 'Faltan SUPABASE_URL o SERVICE_KEY' });
+      return res.status(500).json({ ok:false, ...out });
+    }
+    out.steps.push({ step: 'env', ok: true });
+
+    // ===== 1) Buscar/crear usuario Auth =====
+    let authUserId = null;
+    try {
+      const { data: foundUser } = await admin.auth.admin.getUserByEmail(email);
+      if (foundUser?.user) {
+        authUserId = foundUser.user.id;
+        out.steps.push({ step: 'auth.getUserByEmail', ok: true, found: true, user_id: authUserId });
       } else {
         const { data, error } = await admin.auth.admin.createUser({
           email,
@@ -39,11 +44,15 @@ export default async function handler(req, res) {
         });
         if (error) throw error;
         authUserId = data.user.id;
+        out.steps.push({ step: 'auth.createUser', ok: true, user_id: authUserId });
       }
+    } catch (e) {
+      out.steps.push({ step: 'auth', ok: false, error: e.message });
+      return res.status(500).json({ ok:false, ...out });
     }
 
-    // 2) Upsert del perfil (id = authUserId por la FK)
-    {
+    // ===== 2) Upsert perfil =====
+    try {
       const { error } = await admin
         .from('profiles')
         .upsert(
@@ -51,31 +60,46 @@ export default async function handler(req, res) {
           { onConflict: 'id' }
         );
       if (error) throw error;
+      out.steps.push({ step: 'profiles.upsert', ok: true });
+    } catch (e) {
+      out.steps.push({ step: 'profiles.upsert', ok: false, error: e.message });
+      return res.status(500).json({ ok:false, ...out });
     }
 
-    // 3) Bypass del lock sólo durante los upserts de picks
-    await admin.rpc('set_config', { parameter: 'app.bypass_lock', value: '1', is_local: true })
-      .catch(() => {/* si no tienes esa RPC, ignorar; o crea: create function set_config(...) returns text language sql as $$ select set_config($1,$2,$3) $$ */});
+    // ===== 3) Intentar habilitar bypass del lock (si existe tu helper) =====
+    try {
+      // Opción A: si tienes esta RPC creada:
+      // create or replace function public.set_config(parameter text, value text, is_local boolean default true)
+      // returns text language sql security definer as $$ select set_config(parameter, value, is_local) $$;
+      await admin.rpc('set_config', { parameter: 'app.bypass_lock', value: '1', is_local: true });
+      out.steps.push({ step: 'bypass_lock', ok: true, via: 'rpc(set_config)' });
+    } catch {
+      // Si no existía la RPC, no fallamos, solo avisamos.
+      out.steps.push({ step: 'bypass_lock', ok: false, note: 'RPC set_config no existe (ignorado)' });
+    }
 
-    // 4) Upsert picks:
-    // W1: CIN (win)
-    {
+    // ===== 4) Upsert pick W1: CIN win =====
+    try {
       const { error } = await admin
         .from('picks')
         .upsert({
           user_id: authUserId,
           season: SEASON,
           week: 1,
-          game_id: w1_game_id,      // TEXT en tu schema
+          game_id: w1_game_id,   // TEXT en tu schema
           team_id: 'CIN',
-          result: 'win',            // tipo enum pick_result
+          result: 'win',         // enum pick_result
           updated_at: new Date().toISOString(),
         }, { onConflict: 'user_id,season,week' });
       if (error) throw error;
+      out.steps.push({ step: 'picks.upsert.W1', ok: true });
+    } catch (e) {
+      out.steps.push({ step: 'picks.upsert.W1', ok: false, error: e.message });
+      return res.status(500).json({ ok:false, ...out });
     }
 
-    // W2: NO (loss)
-    {
+    // ===== 5) Upsert pick W2: NO loss =====
+    try {
       const { error } = await admin
         .from('picks')
         .upsert({
@@ -88,22 +112,28 @@ export default async function handler(req, res) {
           updated_at: new Date().toISOString(),
         }, { onConflict: 'user_id,season,week' });
       if (error) throw error;
+      out.steps.push({ step: 'picks.upsert.W2', ok: true });
+    } catch (e) {
+      out.steps.push({ step: 'picks.upsert.W2', ok: false, error: e.message });
+      return res.status(500).json({ ok:false, ...out });
     }
 
-    // 5) Ajusta vidas por la derrota en W2 (vidas = 1)
-    {
+    // ===== 6) Ajustar vidas (2 iniciales - 1 por la derrota = 1) =====
+    try {
       const { error } = await admin
         .from('profiles')
         .update({ lives: 1 })
         .eq('id', authUserId);
       if (error) throw error;
+      out.steps.push({ step: 'profiles.update.lives', ok: true, lives: 1 });
+    } catch (e) {
+      out.steps.push({ step: 'profiles.update.lives', ok: false, error: e.message });
+      return res.status(500).json({ ok:false, ...out });
     }
 
-    // 6) (Opcional) refrescar standings si usas MATERIALIZED VIEW
-    // await admin.rpc('refresh_standings').catch(()=>{});
-
-    return res.json({ ok: true, user_id: authUserId, message: 'Usuario + picks creados/actualizados' });
+    return res.json({ ok: true, user_id: authUserId, ...out });
   } catch (e) {
-    return res.status(500).json({ ok:false, error: e.message });
+    out.steps.push({ step: 'catch-all', ok: false, error: e.message });
+    return res.status(500).json({ ok:false, ...out });
   }
 }
