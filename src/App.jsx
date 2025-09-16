@@ -444,10 +444,11 @@ function AutoPickButtons({ week, session }) {
 /* ========================= PARTIDOS ========================= */
 /* ========================= PARTIDOS ========================= */
 /* ========================= PARTIDOS ========================= */
+/* ========================= PARTIDOS (GamesTab) ========================= */
 function GamesTab({ session }) {
   const uid = session?.user?.id || null;
 
-  // Estado principal
+  // ---- Estado base ----
   const [me, setMe] = useState(null);
   const [week, setWeek] = useState(() => Number(localStorage.getItem("week")) || 1);
 
@@ -469,32 +470,38 @@ function GamesTab({ session }) {
   const [resultBanner, setResultBanner] = useState(null);
   const [details, setDetails] = useState(null); // { game, odds, popHome, popAway }
 
-  // Detalles modal
-  const [oddsHistory, setOddsHistory] = useState([]); // [{fetched_at, spread_home, spread_away, ml_home, ml_away}]
-  const [leaders, setLeaders] = useState([]);         // [{side, player, stat, value}]
-  const [notes, setNotes] = useState([]);             // game_notes
+  // ---- Datos del modal Detalles ----
+  const [oddsHistory, setOddsHistory] = useState([]); // historial odds
+  const [leaders, setLeaders] = useState([]);         // líderes
+  const [notes, setNotes] = useState([]);             // comentarios
   const [newNote, setNewNote] = useState("");
-  const [detailsTab, setDetailsTab] = useState("resumen"); // resumen|odds|leaders|notes
+  const [detailsTab, setDetailsTab] = useState("resumen"); // resumen | odds | leaders | notes
 
-  // Filtros/búsqueda
+  // ---- Filtros / búsqueda ----
   const [dayFilter, setDayFilter] = useState(localStorage.getItem("dayFilter") || "ALL");
   const [teamQuery, setTeamQuery] = useState(localStorage.getItem("teamQuery") || "");
   const [statusFilter, setStatusFilter] = useState(localStorage.getItem("statusFilter") || "ALL"); // ALL|LIVE|FINAL|UPCOMING
   const searchRef = useRef(null);
 
-  // NUEVO: favoritos y diferenciales
+  // ---- Favoritos + diferenciales ----
   const [onlyDiff, setOnlyDiff] = useState(() => localStorage.getItem("onlyDiff") === "1");
   const [diffCutoff, setDiffCutoff] = useState(() => Number(localStorage.getItem("diffCutoff") || 20));
   const [pinned, setPinned] = useState(() => {
     try { return JSON.parse(localStorage.getItem("pinnedGames") || "[]"); } catch { return []; }
   });
 
-  // NUEVO: clima/meta/tips
+  // ---- Clima / meta / tips (opcional) ----
   const [weatherMap, setWeatherMap] = useState({}); // game_id -> { temp_c, precip_mm, wind_kph, condition, updated_at }
   const [metaMap, setMetaMap] = useState({});       // game_id -> { stadium, city, tv }
   const [tipsMap, setTipsMap] = useState({});       // game_id -> [ { tip, kind } ]
 
-  // Realtime
+  // ---- Detalles avanzados tipo ESPN ----
+  const [betSplits, setBetSplits] = useState(null);       // tickets/money split
+  const [teamStats, setTeamStats] = useState(null);       // comparativa temporada
+  const [injuries, setInjuries] = useState([]);           // lesionados
+  const [recentForm, setRecentForm] = useState({ home: [], away: [] });
+
+  // ---- Realtime ----
   useEffect(() => {
     const ch = supabase
       .channel("realtime-app")
@@ -520,10 +527,10 @@ function GamesTab({ session }) {
         setLastUpdated(new Date().toISOString());
       })
       .subscribe();
-    return () => { supabase.removeChannel(ch); };
+    return () => { try { supabase.removeChannel(ch); } catch {} };
   }, [week]);
 
-  /* ---------- cargas ---------- */
+  /* ---------- Cargas ---------- */
   const loadTeams = async () => {
     const { data: ts } = await supabase.from("teams").select("*");
     const map = {};
@@ -539,7 +546,6 @@ function GamesTab({ session }) {
       .eq("season", SEASON)
       .order("start_time");
     setGames(gs || []);
-
     const ids = (gs || []).map((g) => g.id);
     if (ids.length) {
       const { data } = await supabase
@@ -547,43 +553,33 @@ function GamesTab({ session }) {
         .select("game_id, spread_home, spread_away, ml_home, ml_away, fetched_at")
         .in("game_id", ids)
         .order("fetched_at", { ascending: false });
-
       const by = {};
       for (const row of data || []) {
         if (!by[row.game_id]) by[row.game_id] = { last: row, prev: null };
         else if (!by[row.game_id].prev) by[row.game_id].prev = row;
       }
       setOddsPairs(by);
-
       // meta/clima/tips
       loadGameMetaWeather(ids);
       loadGameTips(ids);
     } else {
-      setOddsPairs({});
-      setWeatherMap({});
-      setMetaMap({});
-      setTipsMap({});
+      setOddsPairs({}); setWeatherMap({}); setMetaMap({}); setTipsMap({});
     }
   };
 
   async function loadGameMetaWeather(ids) {
     try {
       const { data: metas } = await supabase
-        .from("game_meta")
-        .select("game_id, stadium, city, tv")
-        .in("game_id", ids);
-      const mm = {};
-      (metas || []).forEach(m => { mm[m.game_id] = { stadium: m.stadium, city: m.city, tv: m.tv }; });
+        .from("game_meta").select("game_id, stadium, city, tv").in("game_id", ids);
+      const mm = {}; (metas || []).forEach(m => { mm[m.game_id] = { stadium: m.stadium, city: m.city, tv: m.tv }; });
       setMetaMap(mm);
     } catch {}
-
     try {
       const { data: ws } = await supabase
         .from("weather")
         .select("game_id, temp_c, precip_mm, wind_kph, condition, updated_at")
         .in("game_id", ids);
-      const wm = {};
-      (ws || []).forEach(w => { wm[w.game_id] = w; });
+      const wm = {}; (ws || []).forEach(w => { wm[w.game_id] = w; });
       setWeatherMap(wm);
     } catch {}
   }
@@ -603,13 +599,10 @@ function GamesTab({ session }) {
       setTipsMap(tm);
     } catch {}
   }
+
   const loadMyPicks = async () => {
     if (!uid) return;
-    const { data: pk } = await supabase
-      .from("picks")
-      .select("*")
-      .eq("user_id", uid)
-      .eq("season", SEASON);
+    const { data: pk } = await supabase.from("picks").select("*").eq("user_id", uid).eq("season", SEASON);
     setPicks(pk || []);
   };
 
@@ -620,13 +613,10 @@ function GamesTab({ session }) {
       .eq("week", w)
       .eq("season", SEASON);
     setLeaguePicks(pks || []);
-
     const ids = [...new Set((pks || []).map((x) => x.user_id))];
     if (ids.length) {
       const { data: profs } = await supabase.from("profiles").select("id,display_name").in("id", ids);
-      const m = {};
-      (profs || []).forEach((p) => (m[p.id] = p.display_name));
-      setUserNames(m);
+      const m = {}; (profs || []).forEach((p) => (m[p.id] = p.display_name)); setUserNames(m);
     } else setUserNames({});
 
     let totalPlayers = 0;
@@ -637,17 +627,10 @@ function GamesTab({ session }) {
       const { data: std } = await supabase.from("standings").select("user_id");
       totalPlayers = std?.length || 0;
     }
-
     const counts = {};
-    (pks || []).forEach((x) => {
-      if (x.team_id) counts[x.team_id] = (counts[x.team_id] || 0) + 1;
-    });
+    (pks || []).forEach((x) => { if (x.team_id) counts[x.team_id] = (counts[x.team_id] || 0) + 1; });
     const list = Object.entries(counts)
-      .map(([team_id, count]) => ({
-        team_id,
-        count,
-        pct: totalPlayers ? Math.round((count * 100) / totalPlayers) : 0,
-      }))
+      .map(([team_id, count]) => ({ team_id, count, pct: totalPlayers ? Math.round((count * 100) / totalPlayers) : 0 }))
       .sort((a, b) => b.count - a.count);
     setPopularity(list);
   };
@@ -663,18 +646,14 @@ function GamesTab({ session }) {
   };
 
   const recomputePlayerStandings = (allPicks, allGames) => {
-    const gm = {};
-    (allGames || []).forEach((g) => (gm[g.id] = g));
+    const gm = {}; (allGames || []).forEach((g) => (gm[g.id] = g));
     const agg = new Map();
     (allPicks || []).forEach((p) => {
-      const g = gm[p.game_id];
-      if (!g) return;
+      const g = gm[p.game_id]; if (!g) return;
       const res = p.result && p.result !== "pending" ? p.result : computePickResultFromGame(g, p.team_id);
       if (res === "pending") return;
       const row = agg.get(p.user_id) || { w: 0, l: 0, t: 0 };
-      if (res === "win") row.w++;
-      else if (res === "loss") row.l++;
-      else if (res === "push") row.t++;
+      if (res === "win") row.w++; else if (res === "loss") row.l++; else if (res === "push") row.t++;
       agg.set(p.user_id, row);
     });
     return [...agg.entries()]
@@ -682,17 +661,13 @@ function GamesTab({ session }) {
       .sort((a, b) => b.w - a.w || a.l - b.l || b.t - a.t);
   };
 
-  // Init completo del tab
   const initAll = async () => {
     if (!uid) return;
     const email = session.user.email;
     let { data: prof } = await supabase.from("profiles").select("*").eq("email", email).single();
     if (!prof) {
       await supabase.from("profiles").insert({
-        id: uid,
-        email,
-        display_name: email.split("@")[0],
-        lives: 2,
+        id: uid, email, display_name: email.split("@")[0], lives: 2,
       });
       const r = await supabase.from("profiles").select("*").eq("email", email).single();
       prof = r.data;
@@ -709,7 +684,6 @@ function GamesTab({ session }) {
     setLastUpdated(new Date().toISOString());
   };
 
-  // Efectos de ciclo de vida
   useEffect(() => { initAll(); /* eslint-disable-next-line */ }, [uid]);
 
   useEffect(() => {
@@ -719,7 +693,6 @@ function GamesTab({ session }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [week]);
 
-  // Persistencia de filtros
   useEffect(() => localStorage.setItem("dayFilter", dayFilter), [dayFilter]);
   useEffect(() => localStorage.setItem("teamQuery", teamQuery), [teamQuery]);
   useEffect(() => localStorage.setItem("statusFilter", statusFilter), [statusFilter]);
@@ -732,14 +705,6 @@ function GamesTab({ session }) {
     setPlayerStandings(recomputePlayerStandings(allPicksSeason, allGamesSeason));
   }, [allGamesSeason, allPicksSeason]);
 
-  // Auto-refresh mientras haya juegos en vivo
-  useEffect(() => {
-    if (!games?.length) return;
-    const anyLive = (games || []).some((g) => isLiveStatus(g.status));
-    if (!anyLive) return;
-    const id = setInterval(() => { loadGames(week); }, 25_000);
-    return () => clearInterval(id);
-  }, [games, week]);
   /* ---------- helpers picks ---------- */
   const myPickThisWeek = useMemo(
     () => (picks || []).find((p) => p.week === week && p.season === SEASON),
@@ -747,9 +712,7 @@ function GamesTab({ session }) {
   );
 
   const gamesMap = useMemo(() => {
-    const m = {};
-    (games || []).forEach((g) => (m[g.id] = g));
-    return m;
+    const m = {}; (games || []).forEach((g) => (m[g.id] = g)); return m;
   }, [games]);
 
   const pickFrozen = useMemo(() => isPickFrozen(myPickThisWeek, gamesMap), [myPickThisWeek, gamesMap]);
@@ -784,15 +747,11 @@ function GamesTab({ session }) {
     const c = canPick(game, teamId);
     if (!c.ok) {
       const msg =
-        c.reason === "ELIMINATED"
-          ? "Estás eliminado 😵‍💫. Puedes ver cómo van los demás, pero ya no puedes pickear."
-          : c.reason === "FROZEN"
-          ? "Tu pick ya quedó congelado porque su partido ya inició/terminó."
-          : c.reason === "LOCK"
-          ? "Este partido ya está cerrado por kickoff."
-          : c.reason === "NOSESSION"
-          ? "Iniciando sesión… intenta de nuevo en unos segundos."
-          : "Ya usaste este equipo antes.";
+        c.reason === "ELIMINATED" ? "Estás eliminado 😵‍💫. Puedes ver cómo van los demás, pero ya no puedes pickear."
+        : c.reason === "FROZEN" ? "Tu pick ya quedó congelado porque su partido ya inició/terminó."
+        : c.reason === "LOCK" ? "Este partido ya está cerrado por kickoff."
+        : c.reason === "NOSESSION" ? "Iniciando sesión… intenta de nuevo en unos segundos."
+        : "Ya usaste este equipo antes.";
       return alert(msg);
     }
     setPendingPick({ game, teamId });
@@ -809,28 +768,19 @@ function GamesTab({ session }) {
       if (error) return alert(error.message);
     } else {
       const { error } = await supabase.from("picks").insert({
-        user_id: uid,
-        game_id: game.id,
-        team_id: teamId,
-        week,
-        season: SEASON,
+        user_id: uid, game_id: game.id, team_id: teamId, week, season: SEASON,
       });
       if (error) return alert(error.message);
     }
-    await loadMyPicks();
-    await loadLeaguePicks(week);
-    await loadSeasonData();
-    const { data: st } = await supabase.from("standings").select("*");
-    setStandings(st || []);
-    setPendingPick(null);
-    setLastUpdated(new Date().toISOString());
+    await loadMyPicks(); await loadLeaguePicks(week); await loadSeasonData();
+    const { data: st } = await supabase.from("standings").select("*"); setStandings(st || []);
+    setPendingPick(null); setLastUpdated(new Date().toISOString());
   };
 
   function derivedResultForPick(pick) {
     if (!pick) return "pending";
     if (pick?.result && pick.result !== "pending") return pick.result;
-    const g = gamesMap[pick?.game_id];
-    if (!g) return "pending";
+    const g = gamesMap[pick?.game_id]; if (!g) return "pending";
     return computePickResultFromGame(g, pick.team_id);
   }
 
@@ -849,36 +799,22 @@ function GamesTab({ session }) {
         await supabase.from("profiles").update({ lives: newLives }).eq("id", uid);
         setMe((m) => ({ ...m, lives: newLives }));
       }
-    } catch (e) {
-      console.warn("applyLivesIfNeeded error:", e.message);
-    } finally {
-      localStorage.setItem(lk, "1");
-    }
+    } catch (e) { console.warn("applyLivesIfNeeded error:", e.message); }
+    finally { localStorage.setItem(lk, "1"); }
   }
 
-  function funnyMsg(res) {
-    if (res === "win") return "¡Ganaste esta semana! 🕺";
-    if (res === "loss") return "Perdiste esta semana 😬…";
-    return "Push… ni fu ni fa.";
-  }
-  async function onMyPickResolved(res) {
-    setResultBanner({ type: res, msg: funnyMsg(res) });
-    if (res === "loss") await applyLivesIfNeeded(res);
-  }
+  function funnyMsg(res) { if (res === "win") return "¡Ganaste esta semana! 🕺"; if (res === "loss") return "Perdiste esta semana 😬…"; return "Push… ni fu ni fa."; }
+  async function onMyPickResolved(res) { setResultBanner({ type: res, msg: funnyMsg(res) }); if (res === "loss") await applyLivesIfNeeded(res); }
 
   async function settleMyPicksIfNeeded(currentWeek, gamesArr, myPicksArr) {
-    const finals = {};
-    (gamesArr || []).forEach((g) => { if (hasGameEnded(g)) finals[g.id] = g; });
-    const updates = [];
-    let myResolvedResult = null;
+    const finals = {}; (gamesArr || []).forEach((g) => { if (hasGameEnded(g)) finals[g.id] = g; });
+    const updates = []; let myResolvedResult = null;
     (myPicksArr || []).forEach((p) => {
       if (p.week !== currentWeek) return;
-      const g = finals[p.game_id];
-      if (!g) return;
+      const g = finals[p.game_id]; if (!g) return;
       const res = computePickResultFromGame(g, p.team_id);
       if ((!p.result || p.result === "pending") && res !== "pending") {
-        updates.push({ id: p.id, result: res });
-        if (p.user_id === uid) myResolvedResult = res;
+        updates.push({ id: p.id, result: res }); if (p.user_id === uid) myResolvedResult = res;
       }
     });
     if (updates.length) {
@@ -889,22 +825,17 @@ function GamesTab({ session }) {
     }
     if (myResolvedResult && uid) {
       const key = bannerKey(currentWeek, uid);
-      if (!localStorage.getItem(key)) {
-        await onMyPickResolved(myResolvedResult);
-        localStorage.setItem(key, "1");
-      }
+      if (!localStorage.getItem(key)) { await onMyPickResolved(myResolvedResult); localStorage.setItem(key, "1"); }
     }
   }
 
   async function settleLeaguePicksIfNeeded(currentWeek, gamesArr, leaguePicksArr) {
-    const finals = {};
-    (gamesArr || []).forEach((g) => { if (hasGameEnded(g)) finals[g.id] = g; });
+    const finals = {}; (gamesArr || []).forEach((g) => { if (hasGameEnded(g)) finals[g.id] = g; });
     const updates = [];
     (leaguePicksArr || []).forEach((p) => {
       if (p.week !== currentWeek) return;
       if (p.result && p.result !== "pending") return;
-      const g = finals[p.game_id];
-      if (!g) return;
+      const g = finals[p.game_id]; if (!g) return;
       const res = computePickResultFromGame(g, p.team_id);
       if (res !== "pending") updates.push({ id: p.id, result: res });
     });
@@ -916,7 +847,6 @@ function GamesTab({ session }) {
     }
   }
 
-  // Triggers de settlement y banner
   useEffect(() => {
     if (!games?.length) return;
     if (picks?.length) settleMyPicksIfNeeded(week, games, picks);
@@ -940,8 +870,17 @@ function GamesTab({ session }) {
       localStorage.setItem(bk, "1");
     }
     if (res === "loss") applyLivesIfNeeded(res);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [myPickThisWeek, gamesMap, week, uid]);
+
+  // Auto-refresh si hay juegos en vivo
+  useEffect(() => {
+    if (!games?.length) return;
+    const anyLive = (games || []).some((g) => isLiveStatus(g.status));
+    if (!anyLive) return;
+    const id = setInterval(() => { loadGames(week); }, 25_000);
+    return () => clearInterval(id);
+  }, [games, week]);
+
   /* ---------- UI helpers ---------- */
   const TeamMini = ({ id }) => {
     const logo = teamsMap[id]?.logo_url || `/teams/${id}.png`;
@@ -978,12 +917,7 @@ function GamesTab({ session }) {
       </div>
     );
     if (ended)
-      return (
-        <div className="flex items-center justify-between">
-          {score}
-          <span className="badge">FINAL</span>
-        </div>
-      );
+      return (<div className="flex items-center justify-between">{score}<span className="badge">FINAL</span></div>);
     if (isLiveStatus(g.status))
       return (
         <div className="flex items-center justify-between">
@@ -1004,11 +938,10 @@ function GamesTab({ session }) {
     );
   };
 
-  // Badges especiales
+  // Badges SNF/MNF/TNF/Playoffs
   function timeBadge(g) {
     const lt = DateTime.fromISO(g.start_time).setZone(TZ);
-    const wd = lt.weekday; // 1=Mon..7=Sun
-    const hour = lt.hour;
+    const wd = lt.weekday; const hour = lt.hour;
     if (g.is_playoffs) return "Playoffs";
     if (wd === 1 && hour >= 19) return "MNF";
     if (wd === 5 && hour >= 19) return "TNF";
@@ -1025,19 +958,14 @@ function GamesTab({ session }) {
     for (const g of gamesTeam) {
       if (!hasGameEnded(g)) continue;
       const res = computePickResultFromGame(g, teamId);
-      if (res === "win") {
-        if (type === "W" || type === null) { type = "W"; streak++; } else break;
-      } else if (res === "loss") {
-        if (type === "L" || type === null) { type = "L"; streak++; } else break;
-      } else {
-        if (type === null) continue; else break;
-      }
+      if (res === "win") { if (type === "W" || type === null) { type = "W"; streak++; } else break; }
+      else if (res === "loss") { if (type === "L" || type === null) { type = "L"; streak++; } else break; }
+      else { if (type === null) continue; else break; }
     }
-    if (!streak) return "—";
-    return `${type}${streak}`;
+    return streak ? `${type}${streak}` : "—";
   }
 
-  function lastMatchupsSummary(homeId, awayId, maxN = 3) {
+  function lastMatchupsSummary(homeId, awayId, maxN = 5) {
     const relevant = (allGamesSeason || [])
       .filter(x =>
         (x.home_team === homeId && x.away_team === awayId) ||
@@ -1045,7 +973,6 @@ function GamesTab({ session }) {
       )
       .sort((a,b) => DateTime.fromISO(b.start_time) - DateTime.fromISO(a.start_time))
       .slice(0, maxN);
-    if (!relevant.length) return [];
     return relevant.map(g => {
       const h = g.home_team, a = g.away_team;
       const hs = g.home_score ?? 0, as = g.away_score ?? 0;
@@ -1054,7 +981,7 @@ function GamesTab({ session }) {
     });
   }
 
-  // Deltas de spread
+  // Delta de spread
   function spreadDeltaFor(gameId, side /* 'home' | 'away' */) {
     const pair = oddsPairs[gameId];
     if (!pair?.last || !pair?.prev) return null;
@@ -1066,19 +993,15 @@ function GamesTab({ session }) {
     return Math.round(d * 10) / 10;
   }
 
-  // Favoritos
   function togglePin(gameId) {
     setPinned((xs) => (xs.includes(gameId) ? xs.filter((id) => id !== gameId) : [...xs, gameId]));
   }
 
-  // Copiar link directo al juego
   async function copyGameLink(g) {
     const url = `${SITE}?week=${week}#game-${g.id}`;
-    try { await navigator.clipboard.writeText(url); alert("Enlace copiado"); }
-    catch { alert(url); }
+    try { await navigator.clipboard.writeText(url); alert("Enlace copiado"); } catch { alert(url); }
   }
 
-  // Estado textual
   function statusOf(g) {
     if (hasGameEnded(g)) return "FINAL";
     if (isLiveStatus(g.status)) return "LIVE";
@@ -1104,9 +1027,7 @@ function GamesTab({ session }) {
       };
       base = base.filter((g) => match(g.away_team) || match(g.home_team));
     }
-    if (statusFilter !== "ALL") {
-      base = base.filter((g) => statusOf(g) === statusFilter);
-    }
+    if (statusFilter !== "ALL") base = base.filter((g) => statusOf(g) === statusFilter);
     if (onlyDiff) {
       base = base.filter((g) => {
         const homePct = popPct(g.home_team);
@@ -1123,7 +1044,7 @@ function GamesTab({ session }) {
     });
   }, [gamesByDay, teamQuery, teamsMap, statusFilter, onlyDiff, diffCutoff, pinned]);
 
-  /* ========== Detalles: sparkline + fetch de modal ========== */
+  /* ---- Mini sparkline ---- */
   const Sparkline = ({ series }) => {
     if (!series?.length) return <div className="text-xs text-gray-400">Sin historial</div>;
     const w = 220, h = 60, p = 4;
@@ -1133,13 +1054,18 @@ function GamesTab({ session }) {
     const xScale = (i) => (i / (xs.length - 1 || 1)) * (w - p * 2) + p;
     const yScale = (v) => (h - p) - ((v - minY) / (maxY - minY || 1)) * (h - p * 2);
     const d = xs.map((pt, i) => `${i === 0 ? "M" : "L"}${xScale(pt.x)},${yScale(pt.y)}`).join(" ");
-    return (
-      <svg width={w} height={h} className="block">
-        <path d={d} fill="none" stroke="currentColor" strokeWidth="2" />
-      </svg>
-    );
+    return (<svg width={w} height={h} className="block"><path d={d} fill="none" stroke="currentColor" strokeWidth="2" /></svg>);
   };
 
+  // Win% helper
+  function winPctForTeam(game, teamId) {
+    const pair = oddsPairs[game.id];
+    if (!pair?.last) return null;
+    const sp = teamId === game.home_team ? pair.last.spread_home : pair.last.spread_away;
+    return sp != null ? winProbFromSpread(sp) : null;
+  }
+
+  /* ---- Cargar Detalles (ampliado tipo ESPN) ---- */
   async function openDetails(g) {
     const { last, prev } = oddsPairs[g.id] || {};
     const popHome = popPct(g.home_team);
@@ -1147,6 +1073,7 @@ function GamesTab({ session }) {
     setDetails({ game: g, odds: { last, prev }, popHome, popAway });
     setDetailsTab("resumen");
 
+    // Historial odds
     const { data: oh } = await supabase
       .from("odds_history")
       .select("fetched_at, spread_home, spread_away, ml_home, ml_away")
@@ -1155,14 +1082,15 @@ function GamesTab({ session }) {
       .limit(200);
     setOddsHistory(oh || []);
 
+    // Líderes
     const { data: gl } = await supabase
       .from("game_leaders")
       .select("side, player, stat, value")
       .eq("game_id", g.id)
-      .order("side")
-      .order("stat");
+      .order("side").order("stat");
     setLeaders(gl || []);
 
+    // Notas
     const { data: ns } = await supabase
       .from("game_notes")
       .select("id, user_id, note, created_at")
@@ -1170,47 +1098,75 @@ function GamesTab({ session }) {
       .order("created_at", { ascending: false })
       .limit(100);
     setNotes(ns || []);
+
+    // Betting splits
+    try {
+      const { data: bs } = await supabase
+        .from("betting_splits")
+        .select("tickets_home, tickets_away, money_home, money_away, updated_at")
+        .eq("game_id", g.id)
+        .single();
+      setBetSplits(bs || null);
+    } catch { setBetSplits(null); }
+
+    // Team stats temporada
+    try {
+      const { data: stats } = await supabase
+        .from("season_team_stats")
+        .select("team_id, ppg, ypg, pass_ypg, rush_ypg, opp_ppg, opp_ypg, third_down, red_zone, to_diff, sacks")
+        .in("team_id", [g.home_team, g.away_team]);
+      const home = (stats || []).find(s => s.team_id === g.home_team) || {};
+      const away = (stats || []).find(s => s.team_id === g.away_team) || {};
+      setTeamStats({ home, away });
+    } catch { setTeamStats(null); }
+
+    // Lesiones
+    try {
+      const { data: inj } = await supabase
+        .from("injuries")
+        .select("team_id, player, status, note")
+        .in("team_id", [g.home_team, g.away_team])
+        .order("team_id");
+      setInjuries(inj || []);
+    } catch { setInjuries([]); }
+
+    // Últimos 5
+    try {
+      const { data: recs } = await supabase
+        .from("team_recent_games")
+        .select("team_id, date, opp, is_home, result, score")
+        .in("team_id", [g.home_team, g.away_team])
+        .order("date", { ascending: false });
+      const take5 = (t) => (recs || []).filter(r => r.team_id === t).slice(0, 5);
+      setRecentForm({ home: take5(g.home_team), away: take5(g.away_team) });
+    } catch { setRecentForm({ home: [], away: [] }); }
   }
 
   async function addNote() {
     if (!details || !newNote.trim() || !uid) return;
     const row = { game_id: details.game.id, user_id: uid, note: newNote.trim() };
     const { error, data } = await supabase.from("game_notes").insert(row).select("id,user_id,note,created_at").single();
-    if (!error && data) {
-      setNotes((xs) => [data, ...xs]);
-      setNewNote("");
-    } else {
-      alert(error?.message || "No se pudo guardar la nota.");
-    }
+    if (!error && data) { setNotes((xs) => [data, ...xs]); setNewNote(""); } else { alert(error?.message || "No se pudo guardar la nota."); }
   }
 
-  // Win% helper por equipo
-  function winPctForTeam(game, teamId) {
-    const pair = oddsPairs[game.id];
-    if (!pair?.last) return null;
-    const sp = teamId === game.home_team ? pair.last.spread_home : pair.last.spread_away;
-    return sp != null ? winProbFromSpread(sp) : null;
-  }
-
-  // === Botón de pick por equipo (TeamBox)
+  /* ---- Botón de pick por equipo ---- */
   const TeamBox = ({ game, teamId }) => {
     const disabled = !canPick(game, teamId).ok;
     const selected = myPickThisWeek?.game_id === game.id && myPickThisWeek?.team_id === teamId;
     const { last } = oddsPairs[game.id] || {};
-
     const fav =
       last &&
       ((teamId === game.home_team &&
-        (((last.spread_home ?? 0) < (last.spread_away ?? 0)) ||
-          (last.ml_home ?? 9999) < (last.ml_away ?? 9999))) ||
+        (((last.spread_home ?? 0) < (last.spread_away ?? 0)) || (last.ml_home ?? 9999) < (last.ml_away ?? 9999))) ||
         (teamId === game.away_team &&
-          (((last.spread_away ?? 0) < (last.spread_home ?? 0)) ||
-            (last.ml_away ?? 9999) < (last.ml_home ?? 9999))));
-
+          (((last.spread_away ?? 0) < (last.spread_home ?? 0)) || (last.ml_away ?? 9999) < (last.ml_home ?? 9999))));
     const pct = popPct(teamId);
+    const wp = winPctForTeam(game, teamId);
+    const titleTxt = `${teamId} · Win% ${wp ?? "—"} · Popularidad ${pct}%`;
 
     return (
       <button
+        title={titleTxt}
         onClick={() => confirmPick(game, teamId)}
         disabled={disabled}
         className={clsx(
@@ -1224,12 +1180,12 @@ function GamesTab({ session }) {
           <div className="flex items-center gap-2">
             {fav && <span className="badge badge-warn">Fav</span>}
             {pct < 15 && <span className="badge">DIF</span>}
-            <span className="badge">{pct}%</span>
           </div>
         </div>
       </button>
     );
   };
+
   /* ========================= Render ========================= */
   const nextKick = nextKickoffISO;
 
@@ -1305,7 +1261,7 @@ function GamesTab({ session }) {
             onChange={(e) => setTeamQuery(e.target.value)}
           />
 
-          {/* Estado: ALL/LIVE/FINAL/UPCOMING */}
+          {/* Estado */}
           <div className="mt-3 flex gap-1 text-xs">
             {["ALL","LIVE","FINAL","UPCOMING"].map(s => (
               <button
@@ -1318,7 +1274,7 @@ function GamesTab({ session }) {
             ))}
           </div>
 
-          {/* Diferenciales + umbral */}
+          {/* Diferenciales */}
           <div className="mt-3 flex items-center gap-3 text-xs">
             <label className="inline-flex items-center gap-2">
               <input type="checkbox" checked={onlyDiff} onChange={(e) => setOnlyDiff(e.target.checked)} />
@@ -1393,12 +1349,10 @@ function GamesTab({ session }) {
             const m = metaMap[g.id];
             const tps = tipsMap[g.id] || [];
 
-            // H2H y rachas
             const h2h = lastMatchupsSummary(g.home_team, g.away_team, 3);
             const stHome = teamStreak(g.home_team);
             const stAway = teamStreak(g.away_team);
 
-            // Picks del juego (liga)
             const lpForGame = (leaguePicks || []).filter(p => p.game_id === g.id);
             const whoPickedHome = lpForGame.filter(p => p.team_id === g.home_team).map(p => userNames[p.user_id] || p.user_id.slice(0,6));
             const whoPickedAway = lpForGame.filter(p => p.team_id === g.away_team).map(p => userNames[p.user_id] || p.user_id.slice(0,6));
@@ -1434,11 +1388,8 @@ function GamesTab({ session }) {
                   </div>
                 </div>
 
-                <div className="mt-3">
-                  <ScoreStrip g={g} />
-                </div>
+                <div className="mt-3"><ScoreStrip g={g} /></div>
 
-                {/* Meta + Clima */}
                 {(m || w) && (
                   <div className="mt-2 text-xs text-gray-700 flex items-center gap-2 flex-wrap">
                     {m && (
@@ -1457,7 +1408,6 @@ function GamesTab({ session }) {
                   </div>
                 )}
 
-                {/* Odds + Win% + deltas */}
                 <div className="mt-2 text-xs text-gray-700 flex items-center gap-3 flex-wrap">
                   {spreadHome != null && (
                     <span className="badge">
@@ -1465,14 +1415,10 @@ function GamesTab({ session }) {
                     </span>
                   )}
                   {mlHome != null && mlAway != null && (
-                    <span className="badge">
-                      ML: {g.home_team} {mlHome}, {g.away_team} {mlAway}
-                    </span>
+                    <span className="badge">ML: {g.home_team} {mlHome}, {g.away_team} {mlAway}</span>
                   )}
                   {(wpHome != null || wpAway != null) && (
-                    <span className="badge">
-                      Win%: {g.home_team} {wpHome ?? "—"}% · {g.away_team} {wpAway ?? "—"}%
-                    </span>
+                    <span className="badge">Win%: {g.home_team} {wpHome ?? "—"}% · {g.away_team} {wpAway ?? "—"}%</span>
                   )}
                   {(() => {
                     const dHome = spreadDeltaFor(g.id, "home");
@@ -1483,16 +1429,10 @@ function GamesTab({ session }) {
                         {label}: {d > 0 ? "↑" : d < 0 ? "↓" : "→"} {d ? Math.abs(d) : 0}
                       </span>
                     );
-                    return (
-                      <>
-                        {dHome != null && pill(`${g.home_team}`, dHome)}
-                        {dAway != null && pill(`${g.away_team}`, dAway)}
-                      </>
-                    );
+                    return (<>{dHome != null && pill(`${g.home_team}`, dHome)}{dAway != null && pill(`${g.away_team}`, dAway)}</>);
                   })()}
                 </div>
 
-                {/* Tip cards */}
                 {(tps.length || true) && (
                   <div className="mt-3 grid sm:grid-cols-2 lg:grid-cols-3 gap-2">
                     {(tps || []).slice(0,3).map((t,i) => (
@@ -1508,16 +1448,13 @@ function GamesTab({ session }) {
                       <div className="p-2 border rounded-lg text-xs text-gray-700 bg-white">
                         <span className="font-semibold">H2H: </span>
                         {h2h.map((r,ix) => (
-                          <span key={ix} className="mr-2">
-                            {r.when}: {r.a} {r.as}–{r.hs} {r.h} ({r.winner})
-                          </span>
+                          <span key={ix} className="mr-2">{r.when}: {r.a} {r.as}–{r.hs} {r.h} ({r.winner})</span>
                         ))}
                       </div>
                     )}
                   </div>
                 )}
 
-                {/* Picks rápidos por juego */}
                 {lpForGame.length > 0 && (
                   <div className="mt-3 text-xs text-gray-700 flex gap-3 flex-wrap">
                     <div className="inline-flex items-center gap-2">
@@ -1531,7 +1468,6 @@ function GamesTab({ session }) {
                   </div>
                 )}
 
-                {/* Botones pick */}
                 <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <TeamBox game={g} teamId={g.home_team} />
                   <TeamBox game={g} teamId={g.away_team} />
@@ -1546,7 +1482,7 @@ function GamesTab({ session }) {
       </section>
 
       {/* Picks + popularidad */}
-      <section className="mt-6 grid md-grid-cols-2 md:grid-cols-2 gap-4">
+      <section className="mt-6 grid md:grid-cols-2 gap-4">
         <div className="p-4 border rounded-2xl bg-white card">
           <h2 className="font-semibold">Picks de la liga (W{week})</h2>
           <div className="overflow-x-auto">
@@ -1572,13 +1508,11 @@ function GamesTab({ session }) {
                           <td>{userNames[p.user_id] || p.user_id.slice(0, 6)}</td>
                           <td><TeamMini id={p.team_id} /></td>
                           <td>
-                            <span
-                              className={
-                                shownRes === "win" ? "text-emerald-700 font-semibold"
-                                  : shownRes === "loss" ? "text-red-600 font-semibold"
-                                  : shownRes === "push" ? "text-gray-600" : "text-gray-500"
-                              }
-                            >
+                            <span className={
+                              shownRes === "win" ? "text-emerald-700 font-semibold"
+                              : shownRes === "loss" ? "text-red-600 font-semibold"
+                              : shownRes === "push" ? "text-gray-600" : "text-gray-500"
+                            }>
                               {shownRes}
                             </span>
                           </td>
@@ -1644,13 +1578,11 @@ function GamesTab({ session }) {
                         <td>{p.week}</td>
                         <td><TeamMini id={p.team_id} /></td>
                         <td>
-                          <span
-                            className={
-                              shownRes === "win" ? "text-emerald-700 font-semibold"
-                                : shownRes === "loss" ? "text-red-600 font-semibold"
-                                : shownRes === "push" ? "text-gray-600" : "text-gray-500"
-                            }
-                          >
+                          <span className={
+                            shownRes === "win" ? "text-emerald-700 font-semibold"
+                            : shownRes === "loss" ? "text-red-600 font-semibold"
+                            : shownRes === "push" ? "text-gray-600" : "text-gray-500"
+                          }>
                             {shownRes}
                           </span>
                         </td>
@@ -1665,16 +1597,22 @@ function GamesTab({ session }) {
           </div>
         </div>
       </section>
-
-      {/* Modal pick */}
+	  
+	        {/* Modal pick */}
       {pendingPick && (
         <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50">
           <div className="w-full max-w-sm bg-white rounded-2xl p-5 border card">
             <h3 className="font-semibold text-lg">Confirmar pick</h3>
-            <p className="mt-2 text-sm">¿Confirmas tu pick de <b>{pendingPick.teamId}</b> en W{week}?</p>
+            <p className="mt-2 text-sm">
+              ¿Confirmas tu pick de <b>{pendingPick.teamId}</b> en W{week}?
+            </p>
             <div className="mt-4 flex gap-2">
-              <button className="px-4 py-2 rounded border" onClick={() => setPendingPick(null)}>Cancelar</button>
-              <button className="px-4 py-2 rounded bg-black text-white" onClick={doPick}>Confirmar</button>
+              <button className="px-4 py-2 rounded border" onClick={() => setPendingPick(null)}>
+                Cancelar
+              </button>
+              <button className="px-4 py-2 rounded bg-black text-white" onClick={doPick}>
+                Confirmar
+              </button>
             </div>
           </div>
         </div>
@@ -1688,7 +1626,9 @@ function GamesTab({ session }) {
               {resultBanner.type === "win" ? "¡Victoria!" : resultBanner.type === "loss" ? "Derrota" : "Push"}
             </h3>
             <p className="mt-2 text-sm">{resultBanner.msg}</p>
-            <button className="mt-4 px-4 py-2 rounded bg-black text-white" onClick={() => setResultBanner(null)}>Cerrar</button>
+            <button className="mt-4 px-4 py-2 rounded bg-black text-white" onClick={() => setResultBanner(null)}>
+              Cerrar
+            </button>
           </div>
         </div>
       )}
@@ -1702,226 +1642,328 @@ function GamesTab({ session }) {
       {/* Modal Detalles de Juego */}
       {details && (
         <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-[70]">
-          <div className="w-full max-w-3xl bg-white rounded-2xl p-5 border card">
+          <div className="w-full max-w-6xl bg-white rounded-2xl p-5 border card overflow-y-auto max-h-[90vh]">
+            {/* Header */}
             <div className="flex items-start justify-between gap-3">
               <div>
-                <h3 className="font-semibold text-lg">
+                <h3 className="font-semibold text-xl">
                   {details.game.away_team} @ {details.game.home_team}
                 </h3>
                 <p className="text-sm text-gray-600">
                   {DateTime.fromISO(details.game.start_time).setZone(TZ).toFormat("EEE dd LLL HH:mm")}
                 </p>
               </div>
-              <button className="px-3 py-1 rounded border text-sm" onClick={() => setDetails(null)}>Cerrar</button>
-            </div>
-
-            {/* Tabs */}
-            <div className="mt-3 flex gap-2 text-sm">
-              {[
-                ["resumen","Resumen"],
-                ["odds","Odds"],
-                ["leaders","Líderes"],
-                ["notes","Comentarios"],
-              ].map(([k, label]) => (
-                <button
-                  key={k}
-                  className={clsx("px-3 py-1 rounded border", detailsTab === k && "bg-black text-white")}
-                  onClick={() => setDetailsTab(k)}
+              <div className="flex gap-2">
+                <a
+                  href={`https://www.espn.com/nfl/game/_/gameId/${details.game.id}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="px-3 py-1 rounded border text-sm"
                 >
-                  {label}
+                  Ver en ESPN
+                </a>
+                <button className="px-3 py-1 rounded border text-sm" onClick={() => setDetails(null)}>
+                  Cerrar
                 </button>
-              ))}
+              </div>
             </div>
 
-            {/* Contenido */}
-            {detailsTab === "resumen" && (
-              <div className="mt-4 grid md:grid-cols-3 gap-3">
-                <div className="p-3 border rounded-xl bg-white">
-                  <div className="text-sm font-semibold mb-2">Win % (aprox.)</div>
+            {/* GRID principal */}
+            <div className="mt-4 grid grid-cols-1 lg:grid-cols-3 gap-4">
+              {/* Columna izquierda */}
+              <div className="space-y-4">
+                {/* Probabilidades & Popularidad */}
+                <div className="p-4 border rounded-xl bg-white">
+                  <div className="text-sm font-semibold mb-3">Probabilidades & Popularidad</div>
                   {(() => {
                     const last = details.odds?.last;
                     const spreadHome = last?.spread_home ?? null;
                     const wpHome = winProbFromSpread(spreadHome);
                     const wpAway = winProbFromSpread(-spreadHome) ?? (wpHome != null ? 100 - wpHome : null);
-                    return (
-                      <div className="space-y-2 text-sm">
-                        <div className="flex items-center justify-between">
-                          <span className="font-mono">{details.game.home_team}</span>
-                          <b>{wpHome != null ? `${wpHome}%` : "—"}</b>
+                    const Row = ({ label, pct, pop }) => (
+                      <div className="mb-2">
+                        <div className="flex items-center justify-between text-sm">
+                          <span className="font-mono">{label}</span>
+                          <span className="text-gray-500">
+                            Pick pop: <b>{pop}%</b>
+                          </span>
                         </div>
-                        <div className="progressbar"><div style={{ width: `${wpHome ?? 0}%` }} /></div>
-                        <div className="flex items-center justify-between">
-                          <span className="font-mono">{details.game.away_team}</span>
-                          <b>{wpAway != null ? `${wpAway}%` : "—"}</b>
+                        <div className="progressbar mt-1">
+                          <div style={{ width: `${pct ?? 0}%` }} />
                         </div>
-                        <div className="progressbar"><div style={{ width: `${wpAway ?? 0}%` }} /></div>
-                      </div>
-                    );
-                  })()}
-                  <p className="mt-2 text-xs text-gray-500">Estimación a partir del spread. Ilustrativo.</p>
-                </div>
-
-                <div className="p-3 border rounded-xl bg-white">
-                  <div className="text-sm font-semibold mb-2">Odds</div>
-                  {(() => {
-                    const { last, prev } = details.odds || {};
-                    const Row = ({ label, h, a }) => (
-                      <div className="flex items-center justify-between text-sm">
-                        <span className="text-gray-600 w-20">{label}</span>
-                        <span className="font-mono">{details.game.home_team} {h ?? "—"}</span>
-                        <span className="font-mono">{details.game.away_team} {a ?? "—"}</span>
+                        <div className="text-right text-xs text-gray-600">{pct != null ? `${pct}%` : "—"}</div>
                       </div>
                     );
                     return (
                       <>
-                        <Row
-                          label="Spread"
-                          h={last?.spread_home != null ? (last.spread_home > 0 ? `+${last.spread_home}` : last.spread_home) : null}
-                          a={last?.spread_away != null ? (last.spread_away > 0 ? `+${last.spread_away}` : last.spread_away) : null}
-                        />
-                        <Row label="ML" h={last?.ml_home} a={last?.ml_away} />
-                        <div className="h-px bg-gray-200 my-2" />
-                        <div className="text-xs text-gray-500 mb-1">Previo</div>
-                        <Row
-                          label="Spread"
-                          h={prev?.spread_home != null ? (prev.spread_home > 0 ? `+${prev.spread_home}` : prev.spread_home) : null}
-                          a={prev?.spread_away != null ? (prev.spread_away > 0 ? `+${prev.spread_away}` : prev.spread_away) : null}
-                        />
-                        <Row label="ML" h={prev?.ml_home} a={prev?.ml_away} />
+                        <Row label={details.game.home_team} pct={wpHome} pop={details.popHome ?? 0} />
+                        <Row label={details.game.away_team} pct={wpAway} pop={details.popAway ?? 0} />
                       </>
                     );
                   })()}
                 </div>
 
-                <div className="p-3 border rounded-xl bg-white">
-                  <div className="text-sm font-semibold mb-2">Popularidad de picks</div>
-                  <div className="space-y-2 text-sm">
-                    <div className="flex items-center justify-between">
-                      <span className="font-mono">{details.game.home_team}</span>
-                      <b>{details.popHome}%</b>
+                {/* Mercado + histórico */}
+                <div className="p-4 border rounded-xl bg-white">
+                  <div className="text-sm font-semibold mb-3">Mercado</div>
+                  {(() => {
+                    const { last, prev } = details.odds || {};
+                    const Line = ({ tHome, tAway, lh, la, ph, pa }) => (
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="text-gray-500 text-xs">
+                            <th className="text-left w-24">Tipo</th>
+                            <th className="text-left">{tHome}</th>
+                            <th className="text-left">{tAway}</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr>
+                            <td className="py-1 text-gray-500">Actual</td>
+                            <td className="py-1 font-mono">{lh ?? "—"}</td>
+                            <td className="py-1 font-mono">{la ?? "—"}</td>
+                          </tr>
+                          <tr>
+                            <td className="py-1 text-gray-500">Previo</td>
+                            <td className="py-1 font-mono">{ph ?? "—"}</td>
+                            <td className="py-1 font-mono">{pa ?? "—"}</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    );
+                    const fmt = (v) => (v != null ? (v > 0 ? `+${v}` : v) : null);
+                    return (
+                      <Line
+                        tHome={details.game.home_team}
+                        tAway={details.game.away_team}
+                        lh={last?.spread_home != null ? `${fmt(last.spread_home)} | ML ${last?.ml_home ?? "—"}` : null}
+                        la={last?.spread_away != null ? `${fmt(last.spread_away)} | ML ${last?.ml_away ?? "—"}` : null}
+                        ph={prev?.spread_home != null ? `${fmt(prev.spread_home)} | ML ${prev?.ml_home ?? "—"}` : null}
+                        pa={prev?.spread_away != null ? `${fmt(prev.spread_away)} | ML ${prev?.ml_away ?? "—"}` : null}
+                      />
+                    );
+                  })()}
+                  <div className="mt-3 text-xs text-gray-500">Histórico:</div>
+                  <div className="grid grid-cols-2 gap-3 mt-2">
+                    <div>
+                      <div className="text-xs font-semibold mb-1">Spread Home</div>
+                      <Sparkline series={(oddsHistory || []).map((r) => r.spread_home).filter((v) => v != null)} />
                     </div>
-                    <div className="progressbar"><div style={{ width: `${details.popHome}%` }} /></div>
-                    <div className="flex items-center justify-between">
-                      <span className="font-mono">{details.game.away_team}</span>
-                      <b>{details.popAway}%</b>
+                    <div>
+                      <div className="text-xs font-semibold mb-1">Moneyline Home</div>
+                      <Sparkline series={(oddsHistory || []).map((r) => r.ml_home).filter((v) => v != null)} />
                     </div>
-                    <div className="progressbar"><div style={{ width: `${details.popAway}%` }} /></div>
+                  </div>
+                </div>
+
+                {/* Últimos 5 */}
+                <div className="p-4 border rounded-xl bg-white">
+                  <div className="text-sm font-semibold mb-3">Últimos 5</div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+                    {["home", "away"].map((side) => {
+                      const rows = recentForm?.[side] || [];
+                      const label = side === "home" ? details.game.home_team : details.game.away_team;
+                      return (
+                        <div key={side}>
+                          <div className="font-semibold mb-1">{label}</div>
+                          <div className="space-y-1">
+                            {rows.length ? (
+                              rows.map((r, i) => (
+                                <div key={i} className="flex items-center justify-between">
+                                  <span className="text-gray-600">
+                                    {DateTime.fromISO(r.date).setZone(TZ).toFormat("dd LLL")}
+                                  </span>
+                                  <span className="font-mono">{r.result}</span>
+                                  <span className="text-gray-700">{r.opp}</span>
+                                  <span className="font-mono">{r.score}</span>
+                                </div>
+                              ))
+                            ) : (
+                              <div className="text-xs text-gray-500">Sin datos.</div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               </div>
-            )}
 
-            {detailsTab === "odds" && (
-              <div className="mt-4 grid md:grid-cols-2 gap-4">
-                <div className="p-3 border rounded-xl bg-white">
-                  <div className="text-sm font-semibold mb-2">Histórico Spread (home)</div>
-                  <Sparkline series={(oddsHistory || []).map((r) => r.spread_home).filter((v) => v != null)} />
+              {/* Columna central */}
+              <div className="space-y-4">
+                {/* Líderes */}
+                <div className="p-4 border rounded-xl bg-white">
+                  <div className="text-sm font-semibold mb-3">Líderes</div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {["home", "away"].map((side) => {
+                      const rows = (leaders || []).filter((x) => x.side === side);
+                      const label = side === "home" ? details.game.home_team : details.game.away_team;
+                      return (
+                        <div key={side}>
+                          <div className="font-semibold mb-1">{label}</div>
+                          {rows.length ? (
+                            <ul className="text-sm space-y-1">
+                              {rows.map((r, i) => (
+                                <li key={i} className="flex justify-between">
+                                  <span className="text-gray-700">
+                                    {r.player} · {r.stat}
+                                  </span>
+                                  <span className="font-mono">{r.value}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          ) : (
+                            <p className="text-xs text-gray-500">Sin datos de líderes.</p>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
-                <div className="p-3 border rounded-xl bg-white">
-                  <div className="text-sm font-semibold mb-2">Histórico Moneyline (home)</div>
-                  <Sparkline series={(oddsHistory || []).map((r) => r.ml_home).filter((v) => v != null)} />
-                </div>
-                <div className="p-3 border rounded-xl bg-white">
-                  <div className="text-sm font-semibold mb-2">Histórico Spread (away)</div>
-                  <Sparkline series={(oddsHistory || []).map((r) => r.spread_away).filter((v) => v != null)} />
-                </div>
-                <div className="p-3 border rounded-xl bg-white">
-                  <div className="text-sm font-semibold mb-2">Histórico Moneyline (away)</div>
-                  <Sparkline series={(oddsHistory || []).map((r) => r.ml_away).filter((v) => v != null)} />
+
+                {/* Comparativa temporada */}
+                <div className="p-4 border rounded-xl bg-white">
+                  <div className="text-sm font-semibold mb-3">Comparativa de equipos (temporada)</div>
+                  <table className="w-full text-sm">
+                    <thead className="text-xs text-gray-500">
+                      <tr>
+                        <th className="text-left">Métrica</th>
+                        <th className="text-left">{details.game.home_team}</th>
+                        <th className="text-left">{details.game.away_team}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {[
+                        ["PPG", "ppg"],
+                        ["Yds/G", "ypg"],
+                        ["Pass Y/G", "pass_ypg"],
+                        ["Rush Y/G", "rush_ypg"],
+                        ["Opp PPG", "opp_ppg"],
+                        ["Opp Y/G", "opp_ypg"],
+                        ["3rd down %", "third_down"],
+                        ["Red zone %", "red_zone"],
+                        ["TO Diff", "to_diff"],
+                        ["Sacks", "sacks"],
+                      ].map(([label, key]) => (
+                        <tr key={key}>
+                          <td className="py-1 text-gray-600">{label}</td>
+                          <td className="py-1 font-mono">{teamStats?.home?.[key] ?? "—"}</td>
+                          <td className="py-1 font-mono">{teamStats?.away?.[key] ?? "—"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  <p className="mt-2 text-xs text-gray-500">
+                    Fuente: <code>season_team_stats</code>.
+                  </p>
                 </div>
               </div>
-            )}
 
-            {detailsTab === "leaders" && (
-              <div className="mt-4">
-                <div className="grid md:grid-cols-2 gap-4">
+              {/* Columna derecha */}
+              <div className="space-y-4">
+                {/* Sede & Clima */}
+                <div className="p-4 border rounded-xl bg-white">
+                  <div className="text-sm font-semibold mb-3">Sede & Clima</div>
+                  <div className="space-y-1 text-sm">
+                    <div>🏟️ {metaMap[details.game.id]?.stadium ?? "—"}</div>
+                    <div>📍 {metaMap[details.game.id]?.city ?? "—"}</div>
+                    <div>📺 {metaMap[details.game.id]?.tv ?? "—"}</div>
+                    <div className="h-px bg-gray-200 my-2" />
+                    <div>🌡️ Temp: {weatherMap[details.game.id]?.temp_c ?? "—"}°C</div>
+                    <div>🌧️ Lluvia: {weatherMap[details.game.id]?.precip_mm ?? "—"} mm</div>
+                    <div>💨 Viento: {weatherMap[details.game.id]?.wind_kph ?? "—"} kph</div>
+                    <div>{weatherMap[details.game.id]?.condition ?? ""}</div>
+                  </div>
+                </div>
+
+                {/* Betting splits */}
+                <div className="p-4 border rounded-xl bg-white">
+                  <div className="text-sm font-semibold mb-3">Betting Splits</div>
+                  <div className="text-xs text-gray-500 mb-1">Tickets</div>
+                  <div className="progressbar mb-2">
+                    {(() => {
+                      const th = betSplits?.tickets_home ?? 0;
+                      const ta = betSplits?.tickets_away ?? 0;
+                      const total = th + ta || 1;
+                      const pctH = Math.round((th * 100) / total);
+                      return <div style={{ width: `${pctH}%` }} title={`${details.game.home_team} ${pctH}%`} />;
+                    })()}
+                  </div>
+                  <div className="text-xs text-gray-500 mb-1">Dinero</div>
+                  <div className="progressbar">
+                    {(() => {
+                      const mh = betSplits?.money_home ?? 0;
+                      const ma = betSplits?.money_away ?? 0;
+                      const total = mh + ma || 1;
+                      const pctH = Math.round((mh * 100) / total);
+                      return <div style={{ width: `${pctH}%` }} title={`${details.game.home_team} ${pctH}%`} />;
+                    })()}
+                  </div>
+                  <p className="mt-2 text-xs text-gray-500">
+                    Fuente: <code>betting_splits</code>.
+                  </p>
+                </div>
+
+                {/* Lesiones */}
+                <div className="p-4 border rounded-xl bg-white">
+                  <div className="text-sm font-semibold mb-3">Lesionados</div>
                   {["home", "away"].map((side) => {
-                    const rows = (leaders || []).filter((x) => x.side === side);
+                    const team = side === "home" ? details.game.home_team : details.game.away_team;
+                    const rows = (injuries || []).filter((i) => i.team_id === team);
                     return (
-                      <div key={side} className="p-3 border rounded-xl bg-white">
-                        <h4 className="font-semibold text-sm mb-2">{side === "home" ? details.game.home_team : details.game.away_team}</h4>
+                      <div key={side} className="mb-3">
+                        <div className="font-semibold text-xs mb-1">{team}</div>
                         {rows.length ? (
-                          <ul className="text-sm space-y-1">
-                            {rows.map((r, i) => (
-                              <li key={i} className="flex justify-between">
-                                <span className="text-gray-700">{r.player} · {r.stat}</span>
-                                <span className="font-mono">{r.value}</span>
-                              </li>
-                            ))}
-                          </ul>
+                          rows.slice(0, 5).map((r, i) => (
+                            <div key={i} className="text-sm flex items-center justify-between">
+                              <span>{r.player}</span>
+                              <span className="text-gray-600">{r.status}</span>
+                            </div>
+                          ))
                         ) : (
-                          <p className="text-xs text-gray-500">Sin datos de líderes.</p>
+                          <p className="text-xs text-gray-500">Sin datos.</p>
                         )}
                       </div>
                     );
                   })}
                 </div>
-                <p className="mt-2 text-xs text-gray-500">Fuente: tabla <code>game_leaders</code> (vía tu cron).</p>
               </div>
-            )}
+            </div>
 
-            {detailsTab === "notes" && (
-              <div className="mt-4">
-                <div className="p-3 border rounded-xl bg-white">
-                  <div className="text-sm font-semibold mb-2">Comentarios del juego</div>
-                  <div className="flex gap-2">
-                    <input
-                      className="border rounded-lg p-2 w-full"
-                      placeholder="Escribe una nota (visible para la liga)…"
-                      value={newNote}
-                      onChange={(e) => setNewNote(e.target.value)}
-                    />
-                    <button className="px-3 py-2 rounded bg-black text-white text-sm" onClick={addNote}>Guardar</button>
-                  </div>
-                  <div className="mt-3 space-y-2 max-h-64 overflow-auto">
-                    {(notes || []).map((n) => (
-                      <div key={n.id} className="p-2 border rounded-lg">
-                        <div className="text-xs text-gray-500">
-                          {userNames[n.user_id] || n.user_id.slice(0, 6)} · {DateTime.fromISO(n.created_at).setZone(TZ).toFormat("dd LLL HH:mm")}
-                        </div>
-                        <div className="text-sm">{n.note}</div>
-                      </div>
-                    ))}
-                    {!notes?.length && <div className="text-xs text-gray-500">Aún no hay notas.</div>}
-                  </div>
-                </div>
-                <p className="mt-2 text-xs text-gray-500">Se guarda en <code>game_notes</code>.</p>
+            {/* Comentarios */}
+            <div className="mt-4 p-4 border rounded-xl bg-white">
+              <div className="text-sm font-semibold mb-2">Comentarios del juego</div>
+              <div className="flex gap-2">
+                <input
+                  className="border rounded-lg p-2 w-full"
+                  placeholder="Escribe una nota (visible para la liga)…"
+                  value={newNote}
+                  onChange={(e) => setNewNote(e.target.value)}
+                />
+                <button className="px-3 py-2 rounded bg-black text-white text-sm" onClick={addNote}>
+                  Guardar
+                </button>
               </div>
-            )}
-
-            {/* Footer acciones rápidas */}
-            <div className="mt-4 flex flex-wrap gap-2">
-              <a
-                href={`https://www.espn.com/nfl/game/_/gameId/${details.game.id}`}
-                target="_blank"
-                rel="noreferrer"
-                className="px-3 py-1 rounded border text-sm"
-              >
-                Ver ficha en ESPN
-              </a>
-              <a
-                href={`https://www.espn.com/nfl/team/_/name/${details.game.home_team.toLowerCase()}`}
-                target="_blank"
-                rel="noreferrer"
-                className="px-3 py-1 rounded border text-sm"
-              >
-                Página {details.game.home_team}
-              </a>
-              <a
-                href={`https://www.espn.com/nfl/team/_/name/${details.game.away_team.toLowerCase()}`}
-                target="_blank"
-                rel="noreferrer"
-                className="px-3 py-1 rounded border text-sm"
-              >
-                Página {details.game.away_team}
-              </a>
+              <div className="mt-3 space-y-2 max-h-64 overflow-auto">
+                {(notes || []).map((n) => (
+                  <div key={n.id} className="p-2 border rounded-lg">
+                    <div className="text-xs text-gray-500">
+                      {userNames[n.user_id] || n.user_id.slice(0, 6)} ·{" "}
+                      {DateTime.fromISO(n.created_at).setZone(TZ).toFormat("dd LLL HH:mm")}
+                    </div>
+                    <div className="text-sm mt-1">{n.note}</div>
+                  </div>
+                ))}
+                {(!notes || notes.length === 0) && <div className="text-xs text-gray-500">Sin comentarios.</div>}
+              </div>
             </div>
           </div>
         </div>
       )}
-    </div>
-  );
-}
+    </div> {/* /container */}
+  ); // end return
+} // end GamesTab
+  
 
 /* ========================= Standings NFL ========================= */
 /* ========================= Standings NFL ========================= */
