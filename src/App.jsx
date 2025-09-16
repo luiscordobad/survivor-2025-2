@@ -443,6 +443,7 @@ function AutoPickButtons({ week, session }) {
 /* ========================= PARTIDOS ========================= */
 /* ========================= PARTIDOS ========================= */
 /* ========================= PARTIDOS ========================= */
+/* ========================= PARTIDOS ========================= */
 function GamesTab({ session }) {
   const uid = session?.user?.id || null;
 
@@ -476,7 +477,20 @@ function GamesTab({ session }) {
 
   const [dayFilter, setDayFilter] = useState(localStorage.getItem("dayFilter") || "ALL");
   const [teamQuery, setTeamQuery] = useState(localStorage.getItem("teamQuery") || "");
+  const [statusFilter, setStatusFilter] = useState(localStorage.getItem("statusFilter") || "ALL"); // ALL|LIVE|FINAL|UPCOMING
   const searchRef = useRef(null);
+
+  // === NUEVO: favoritos/pin y filtro diferenciales
+  const [onlyDiff, setOnlyDiff] = useState(() => localStorage.getItem("onlyDiff") === "1");
+  const [diffCutoff, setDiffCutoff] = useState(() => Number(localStorage.getItem("diffCutoff") || 20));
+  const [pinned, setPinned] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("pinnedGames") || "[]"); } catch { return []; }
+  });
+
+  // === NUEVO: clima/meta/tips en memoria
+  const [weatherMap, setWeatherMap] = useState({}); // game_id -> { temp_c, precip_mm, wind_kph, condition, updated_at }
+  const [metaMap, setMetaMap] = useState({});       // game_id -> { stadium, city, tv }
+  const [tipsMap, setTipsMap] = useState({});       // game_id -> [ { tip, kind } ]
 
   // realtime
   useEffect(() => {
@@ -538,8 +552,55 @@ function GamesTab({ session }) {
         else if (!by[row.game_id].prev) by[row.game_id].prev = row;
       }
       setOddsPairs(by);
-    } else setOddsPairs({});
+
+      // NUEVO: meta/clima/tips (opcionales)
+      loadGameMetaWeather(ids);
+      loadGameTips(ids);
+    } else {
+      setOddsPairs({});
+      setWeatherMap({});
+      setMetaMap({});
+      setTipsMap({});
+    }
   };
+
+  async function loadGameMetaWeather(ids) {
+    try {
+      const { data: metas } = await supabase
+        .from("game_meta")
+        .select("game_id, stadium, city, tv")
+        .in("game_id", ids);
+      const mm = {};
+      (metas || []).forEach(m => { mm[m.game_id] = { stadium: m.stadium, city: m.city, tv: m.tv }; });
+      setMetaMap(mm);
+    } catch {}
+
+    try {
+      const { data: ws } = await supabase
+        .from("weather")
+        .select("game_id, temp_c, precip_mm, wind_kph, condition, updated_at")
+        .in("game_id", ids);
+      const wm = {};
+      (ws || []).forEach(w => { wm[w.game_id] = w; });
+      setWeatherMap(wm);
+    } catch {}
+  }
+
+  async function loadGameTips(ids) {
+    try {
+      const { data: tps } = await supabase
+        .from("game_tips")
+        .select("game_id, tip, kind")
+        .in("game_id", ids)
+        .limit(200);
+    const tm = {};
+      (tps || []).forEach(t => {
+        if (!tm[t.game_id]) tm[t.game_id] = [];
+        tm[t.game_id].push({ tip: t.tip, kind: t.kind });
+      });
+      setTipsMap(tm);
+    } catch {}
+  }
 
   const loadMyPicks = async () => {
     if (!uid) return;
@@ -641,10 +702,7 @@ function GamesTab({ session }) {
     setLastUpdated(new Date().toISOString());
   };
 
-  useEffect(() => {
-    initAll();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [uid]);
+  useEffect(() => { initAll(); /* eslint-disable-next-line */ }, [uid]);
 
   useEffect(() => {
     loadGames(week);
@@ -655,6 +713,10 @@ function GamesTab({ session }) {
 
   useEffect(() => localStorage.setItem("dayFilter", dayFilter), [dayFilter]);
   useEffect(() => localStorage.setItem("teamQuery", teamQuery), [teamQuery]);
+  useEffect(() => localStorage.setItem("statusFilter", statusFilter), [statusFilter]);
+  useEffect(() => localStorage.setItem("onlyDiff", onlyDiff ? "1" : "0"), [onlyDiff]);
+  useEffect(() => localStorage.setItem("diffCutoff", String(diffCutoff)), [diffCutoff]);
+  useEffect(() => localStorage.setItem("pinnedGames", JSON.stringify(pinned)), [pinned]);
 
   useEffect(() => {
     if (!allGamesSeason?.length || !allPicksSeason?.length) return;
@@ -867,6 +929,15 @@ function GamesTab({ session }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [myPickThisWeek, gamesMap, week, uid]);
 
+  // === Auto-refresh mientras haya juegos en vivo
+  useEffect(() => {
+    if (!games?.length) return;
+    const anyLive = (games || []).some((g) => isLiveStatus(g.status));
+    if (!anyLive) return;
+    const id = setInterval(() => { loadGames(week); }, 25_000);
+    return () => clearInterval(id);
+  }, [games, week]);
+
   /* ---------- UI helpers ---------- */
   const TeamMini = ({ id }) => {
     const logo = teamsMap[id]?.logo_url || `/teams/${id}.png`;
@@ -928,37 +999,95 @@ function GamesTab({ session }) {
     );
   };
 
-  const TeamBox = ({ game, teamId }) => {
-    const disabled = !canPick(game, teamId).ok;
-    const selected = myPickThisWeek?.game_id === game.id && myPickThisWeek?.team_id === teamId;
-    const { last } = oddsPairs[game.id] || {};
-    const fav =
-      last &&
-      ((teamId === game.home_team &&
-        (((last.spread_home ?? 0) < (last.spread_away ?? 0)) || (last.ml_home ?? 9999) < (last.ml_away ?? 9999))) ||
-        (teamId === game.away_team &&
-          (((last.spread_away ?? 0) < (last.spread_home ?? 0)) || (last.ml_away ?? 9999) < (last.ml_home ?? 9999))));
-    const pct = popPct(teamId);
-    return (
-      <button
-        onClick={() => confirmPick(game, teamId)}
-        disabled={disabled}
-        className={clsx(
-          "w-full text-left rounded-xl border transition px-4 py-3",
-          selected ? "border-emerald-500 bg-emerald-50 card" : "border-gray-200 hover:bg-gray-50 card",
-          disabled && "opacity-50 cursor-not-allowed"
-        )}
-      >
-        <div className="flex items-center justify-between">
-          <TeamMini id={teamId} />
-          <div className="flex items-center gap-2">
-            {fav && <span className="badge badge-warn">Fav</span>}
-            {pct < 15 && <span className="badge">DIF</span>}
-          </div>
-        </div>
-      </button>
-    );
-  };
+  // === Badges especiales por franja
+  function timeBadge(g) {
+    const lt = DateTime.fromISO(g.start_time).setZone(TZ);
+    const wd = lt.weekday; // 1=Mon .. 7=Sun
+    const hour = lt.hour;
+    if (g.is_playoffs) return "Playoffs";
+    if (wd === 1 && hour >= 19) return "MNF";
+    if (wd === 5 && hour >= 19) return "TNF";
+    if (wd === 7 && hour >= 19) return "SNF";
+    return null;
+  }
+
+  // === Rachas y H2H (calculadas del calendario de la temporada actual)
+  function teamStreak(teamId) {
+    const gamesTeam = (allGamesSeason || [])
+      .filter(x => x.home_team === teamId || x.away_team === teamId)
+      .sort((a,b) => DateTime.fromISO(b.start_time) - DateTime.fromISO(a.start_time));
+    let streak = 0, type = null;
+    for (const g of gamesTeam) {
+      if (!hasGameEnded(g)) continue;
+      const picked = teamId;
+      const res = computePickResultFromGame(g, picked);
+      if (res === "win") {
+        if (type === "W" || type === null) { type = "W"; streak++; } else break;
+      } else if (res === "loss") {
+        if (type === "L" || type === null) { type = "L"; streak++; } else break;
+      } else {
+        if (type === null) continue; else break;
+      }
+    }
+    if (!streak) return "—";
+    return `${type}${streak}`;
+  }
+
+  function lastMatchupsSummary(homeId, awayId, maxN = 5) {
+    const relevant = (allGamesSeason || [])
+      .filter(x =>
+        (x.home_team === homeId && x.away_team === awayId) ||
+        (x.home_team === awayId && x.away_team === homeId)
+      )
+      .sort((a,b) => DateTime.fromISO(b.start_time) - DateTime.fromISO(a.start_time))
+      .slice(0, maxN);
+    if (!relevant.length) return [];
+    return relevant.map(g => {
+      const h = g.home_team, a = g.away_team;
+      const hs = g.home_score ?? 0, as = g.away_score ?? 0;
+      const winner = hs === as ? "TIE" : (hs > as ? h : a);
+      return { when: DateTime.fromISO(g.start_time).setZone(TZ).toFormat("dd LLL yyyy"), h, a, hs, as, winner };
+    });
+  }
+
+  // === Spread delta y confianza
+  function spreadDeltaFor(gameId, side /* 'home' | 'away' */) {
+    const pair = oddsPairs[gameId];
+    if (!pair?.last || !pair?.prev) return null;
+    const last = side === "home" ? pair.last.spread_home : pair.last.spread_away;
+    const prev = side === "home" ? pair.prev.spread_home : pair.prev.spread_away;
+    if (last == null || prev == null) return null;
+    const d = Number(last) - Number(prev);
+    if (!isFinite(d) || d === 0) return 0;
+    return Math.round(d * 10) / 10;
+  }
+
+  function confidenceScore({ winPct, popularityPct }) {
+    const w = (winPct ?? 0) / 100;
+    const p = (popularityPct ?? 0) / 100;
+    const score = (0.7 * w + 0.3 * (1 - p)) * 100;
+    return Math.round(score);
+  }
+
+  // === Favoritos
+  function togglePin(gameId) {
+    setPinned((xs) => (xs.includes(gameId) ? xs.filter((id) => id !== gameId) : [...xs, gameId]));
+  }
+
+  // === Copiar link
+  async function copyGameLink(g) {
+    const url = `${SITE}?week=${week}#game-${g.id}`;
+    try { await navigator.clipboard.writeText(url); alert("Enlace copiado"); }
+    catch { alert(url); }
+  }
+
+  // === Filtro por estado
+  function statusOf(g) {
+    if (hasGameEnded(g)) return "FINAL";
+    if (isLiveStatus(g.status)) return "LIVE";
+    if (DateTime.fromISO(g.start_time) > DateTime.now()) return "UPCOMING";
+    return "UPCOMING";
+  }
 
   /* ---------- filtros ---------- */
   const gamesByDay = useMemo(() => {
@@ -970,17 +1099,35 @@ function GamesTab({ session }) {
 
   const gamesFiltered = useMemo(() => {
     const q = teamQuery.trim().toLowerCase();
-    if (!q) return gamesByDay;
-    const match = (id) => {
-      const t = teamsMap[id];
-      return id.toLowerCase().includes(q) || (t?.name || "").toLowerCase().includes(q);
-    };
-    return (gamesByDay || []).filter((g) => match(g.away_team) || match(g.home_team));
-  }, [gamesByDay, teamQuery, teamsMap]);
+    let base = gamesByDay || [];
+    if (q) {
+      const match = (id) => {
+        const t = teamsMap[id];
+        return id.toLowerCase().includes(q) || (t?.name || "").toLowerCase().includes(q);
+      };
+      base = base.filter((g) => match(g.away_team) || match(g.home_team));
+    }
+    if (statusFilter !== "ALL") {
+      base = base.filter((g) => statusOf(g) === statusFilter);
+    }
+    if (onlyDiff) {
+      base = base.filter((g) => {
+        const homePct = popPct(g.home_team);
+        const awayPct = popPct(g.away_team);
+        return homePct < diffCutoff || awayPct < diffCutoff;
+      });
+    }
+    const setPins = new Set(pinned);
+    return base.slice().sort((a, b) => {
+      const ap = setPins.has(a.id) ? 1 : 0;
+      const bp = setPins.has(b.id) ? 1 : 0;
+      if (ap !== bp) return bp - ap;
+      return DateTime.fromISO(a.start_time) - DateTime.fromISO(b.start_time);
+    });
+  }, [gamesByDay, teamQuery, teamsMap, statusFilter, onlyDiff, diffCutoff, pinned]);
 
   /* ========== helpers Detalles ========== */
   const Sparkline = ({ series }) => {
-    // serie: array de números (spread_home o ml_home, por ejemplo)
     if (!series?.length) return <div className="text-xs text-gray-400">Sin historial</div>;
     const w = 220, h = 60, p = 4;
     const xs = series.map((v, i) => ({ x: i, y: Number(v) }));
@@ -1003,7 +1150,6 @@ function GamesTab({ session }) {
     setDetails({ game: g, odds: { last, prev }, popHome, popAway });
     setDetailsTab("resumen");
 
-    // odds_history
     const { data: oh } = await supabase
       .from("odds_history")
       .select("fetched_at, spread_home, spread_away, ml_home, ml_away")
@@ -1012,7 +1158,6 @@ function GamesTab({ session }) {
       .limit(200);
     setOddsHistory(oh || []);
 
-    // leaders (si tienes tu cron llenando esta tabla)
     const { data: gl } = await supabase
       .from("game_leaders")
       .select("side, player, stat, value")
@@ -1021,7 +1166,6 @@ function GamesTab({ session }) {
       .order("stat");
     setLeaders(gl || []);
 
-    // notes
     const { data: ns } = await supabase
       .from("game_notes")
       .select("id, user_id, note, created_at")
@@ -1043,7 +1187,15 @@ function GamesTab({ session }) {
     }
   }
 
-  /* ========================= Render ========================= */
+  // === Win% helper
+  function winPctForTeam(game, teamId) {
+    const pair = oddsPairs[game.id];
+    if (!pair?.last) return null;
+    const sp = teamId === game.home_team ? pair.last.spread_home : pair.last.spread_away;
+    return sp != null ? winProbFromSpread(sp) : null;
+  }
+  
+    /* ========================= Render ========================= */
   const nextKick = nextKickoffISO;
 
   return (
@@ -1095,9 +1247,7 @@ function GamesTab({ session }) {
               <label className="text-xs text-gray-500">Semana</label>
               <select className="border p-1 rounded-lg" value={week} onChange={(e) => setWeek(Number(e.target.value))}>
                 {Array.from({ length: 18 }, (_, i) => i + 1).map((w) => (
-                  <option key={w} value={w}>
-                    W{w}
-                  </option>
+                  <option key={w} value={w}>W{w}</option>
                 ))}
               </select>
             </div>
@@ -1121,6 +1271,38 @@ function GamesTab({ session }) {
             value={teamQuery}
             onChange={(e) => setTeamQuery(e.target.value)}
           />
+
+          {/* Estado: ALL/LIVE/FINAL/UPCOMING */}
+          <div className="mt-3 flex gap-1 text-xs">
+            {["ALL","LIVE","FINAL","UPCOMING"].map(s => (
+              <button
+                key={s}
+                className={clsx("px-2 py-1 rounded border", statusFilter === s && "bg-black text-white")}
+                onClick={() => setStatusFilter(s)}
+              >
+                {s}
+              </button>
+            ))}
+          </div>
+
+          {/* Diferenciales + umbral */}
+          <div className="mt-3 flex items-center gap-3 text-xs">
+            <label className="inline-flex items-center gap-2">
+              <input type="checkbox" checked={onlyDiff} onChange={(e) => setOnlyDiff(e.target.checked)} />
+              Solo diferenciales
+            </label>
+            <div className="inline-flex items-center gap-1">
+              <span>umbral:</span>
+              <input
+                type="number"
+                className="border rounded px-2 py-1 w-16"
+                min={1} max={49}
+                value={diffCutoff}
+                onChange={(e) => setDiffCutoff(Math.max(1, Math.min(49, Number(e.target.value) || 20)))}
+              />
+              <span>%</span>
+            </div>
+          </div>
 
           <div className="mt-3 grid grid-cols-2 gap-2">
             <button
@@ -1153,7 +1335,7 @@ function GamesTab({ session }) {
           <h3 className="font-semibold">Resumen</h3>
           <p className="text-sm text-gray-600">
             Elige tu pick en los partidos de abajo. Lock “rolling” por partido. Win/Loss se marca automáticamente cuando
-            el juego es FINAL.
+            el juego es FINAL. Usa los filtros para LIVE/FINAL/UPCOMING y el switch de diferenciales.
           </p>
         </div>
       </section>
@@ -1173,13 +1355,29 @@ function GamesTab({ session }) {
             const wpHome = winProbFromSpread(spreadHome) ?? null;
             const wpAway = winProbFromSpread(-spreadHome) ?? (wpHome != null ? 100 - wpHome : null);
 
+            const badge = timeBadge(g);
+            const w = weatherMap[g.id];
+            const m = metaMap[g.id];
+            const tps = tipsMap[g.id] || [];
+
+            // Head-to-Head y rachas
+            const h2h = lastMatchupsSummary(g.home_team, g.away_team, 3);
+            const stHome = teamStreak(g.home_team);
+            const stAway = teamStreak(g.away_team);
+
+            // Picks del juego (liga)
+            const lpForGame = (leaguePicks || []).filter(p => p.game_id === g.id);
+            const whoPickedHome = lpForGame.filter(p => p.team_id === g.home_team).map(p => userNames[p.user_id] || p.user_id.slice(0,6));
+            const whoPickedAway = lpForGame.filter(p => p.team_id === g.away_team).map(p => userNames[p.user_id] || p.user_id.slice(0,6));
+
             return (
-              <div key={g.id} className={clsx("p-4 border rounded-xl card", locked && "opacity-60")}>
+              <div id={`game-${g.id}`} key={g.id} className={clsx("p-4 border rounded-xl card", locked && "opacity-60")}>
                 <div className="flex items-center justify-between">
                   <div className="text-sm flex items-center gap-2 flex-wrap">
                     <TeamChip id={g.away_team} />
                     <span className="mx-1 text-gray-400">@</span>
                     <TeamChip id={g.home_team} />
+                    {badge && <span className="badge">{badge}</span>}
                   </div>
                   <div className="text-xs text-gray-600 flex items-center gap-2">
                     <a
@@ -1190,8 +1388,14 @@ function GamesTab({ session }) {
                     >
                       Stats
                     </a>
-                    <button className="underline text-gray-700" onClick={() => openDetails(g)}>
-                      Detalles
+                    <button className="underline text-gray-700" onClick={() => openDetails(g)}>Detalles</button>
+                    <button className="px-2 py-0.5 rounded border" onClick={() => copyGameLink(g)}>Copiar link</button>
+                    <button
+                      className={clsx("px-2 py-0.5 rounded border", pinned.includes(g.id) && "bg-black text-white")}
+                      onClick={() => togglePin(g.id)}
+                      title={pinned.includes(g.id) ? "Desfijar" : "Fijar"}
+                    >
+                      {pinned.includes(g.id) ? "★ Pin" : "☆ Pin"}
                     </button>
                     <span className="badge">{local}</span>
                   </div>
@@ -1201,11 +1405,30 @@ function GamesTab({ session }) {
                   <ScoreStrip g={g} />
                 </div>
 
+                {/* Meta + Clima */}
+                {(m || w) && (
+                  <div className="mt-2 text-xs text-gray-700 flex items-center gap-2 flex-wrap">
+                    {m && (
+                      <span className="badge">
+                        {m.stadium ? `${m.stadium}` : "Estadio —"}{m.city ? ` · ${m.city}` : ""}{m.tv ? ` · TV: ${m.tv}` : ""}
+                      </span>
+                    )}
+                    {w && (
+                      <>
+                        <span className="badge">🌡️ {w.temp_c != null ? `${w.temp_c}°C` : "—"}</span>
+                        <span className="badge">🌧️ {w.precip_mm != null ? `${w.precip_mm} mm` : "—"}</span>
+                        <span className="badge">💨 {w.wind_kph != null ? `${w.wind_kph} kph` : "—"}</span>
+                        {w.condition && <span className="badge">{w.condition}</span>}
+                      </>
+                    )}
+                  </div>
+                )}
+
+                {/* Odds + Win% + deltas */}
                 <div className="mt-2 text-xs text-gray-700 flex items-center gap-3 flex-wrap">
                   {spreadHome != null && (
                     <span className="badge">
-                      Spread: {g.home_team} {spreadHome > 0 ? `+${spreadHome}` : spreadHome},&nbsp;{g.away_team}{" "}
-                      {spreadAway > 0 ? `+${spreadAway}` : spreadAway}
+                      Spread: {g.home_team} {spreadHome > 0 ? `+${spreadHome}` : spreadHome}, {g.away_team} {spreadAway > 0 ? `+${spreadAway}` : spreadAway}
                     </span>
                   )}
                   {mlHome != null && mlAway != null && (
@@ -1218,8 +1441,68 @@ function GamesTab({ session }) {
                       Win%: {g.home_team} {wpHome ?? "—"}% · {g.away_team} {wpAway ?? "—"}%
                     </span>
                   )}
+                  {(() => {
+                    const dHome = spreadDeltaFor(g.id, "home");
+                    const dAway = spreadDeltaFor(g.id, "away");
+                    if (dHome == null && dAway == null) return null;
+                    const pill = (label, d) => (
+                      <span className={clsx("badge", d > 0 ? "badge-warn" : d < 0 ? "badge" : "badge")}>
+                        {label}: {d > 0 ? "↑" : d < 0 ? "↓" : "→"} {d ? Math.abs(d) : 0}
+                      </span>
+                    );
+                    return (
+                      <>
+                        {dHome != null && pill(`${g.home_team}`, dHome)}
+                        {dAway != null && pill(`${g.away_team}`, dAway)}
+                      </>
+                    );
+                  })()}
                 </div>
 
+                {/* Tip cards */}
+                {(tps.length || true) && (
+                  <div className="mt-3 grid sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                    {(tps || []).slice(0,3).map((t,i) => (
+                      <div key={i} className="p-2 border rounded-lg text-xs text-gray-700 bg-white">
+                        <span className="font-semibold">{t.kind ? `${t.kind}: ` : ""}</span>{t.tip}
+                      </div>
+                    ))}
+                    <div className="p-2 border rounded-lg text-xs text-gray-700 bg-white">
+                      <span className="font-semibold">Racha: </span>
+                      {g.home_team} {stHome}, {g.away_team} {stAway}
+                    </div>
+                    {h2h.length > 0 && (
+                      <div className="p-2 border rounded-lg text-xs text-gray-700 bg-white">
+                        <span className="font-semibold">H2H: </span>
+                        {h2h.map((r,ix) => (
+                          <span key={ix} className="mr-2">
+                            {r.when}: {r.a} {r.as}–{r.hs} {r.h} ({r.winner})
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Picks rápidos por juego */}
+                {lpForGame.length > 0 && (
+                  <div className="mt-3 text-xs text-gray-700 flex gap-3 flex-wrap">
+                    <div className="inline-flex items-center gap-2">
+                      <span className="badge">{g.home_team}</span>
+                      <span className="text-gray-600">
+                        {whoPickedHome.slice(0,6).join(", ")}{whoPickedHome.length > 6 ? "…" : ""}
+                      </span>
+                    </div>
+                    <div className="inline-flex items-center gap-2">
+                      <span className="badge">{g.away_team}</span>
+                      <span className="text-gray-600">
+                        {whoPickedAway.slice(0,6).join(", ")}{whoPickedAway.length > 6 ? "…" : ""}
+                      </span>
+                    </div>
+                  </div>
+                )}
+
+                {/* Botones pick */}
                 <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <TeamBox game={g} teamId={g.home_team} />
                   <TeamBox game={g} teamId={g.away_team} />
@@ -1258,9 +1541,7 @@ function GamesTab({ session }) {
                       return (
                         <tr key={p.id}>
                           <td>{userNames[p.user_id] || p.user_id.slice(0, 6)}</td>
-                          <td>
-                            <TeamMini id={p.team_id} />
-                          </td>
+                          <td><TeamMini id={p.team_id} /></td>
                           <td>
                             <span
                               className={
@@ -1284,11 +1565,7 @@ function GamesTab({ session }) {
                       );
                     })
                 ) : (
-                  <tr>
-                    <td className="py-2 text-gray-500" colSpan={5}>
-                      Aún no hay picks esta semana.
-                    </td>
-                  </tr>
+                  <tr><td className="py-2 text-gray-500" colSpan={5}>Aún no hay picks esta semana.</td></tr>
                 )}
               </tbody>
             </table>
@@ -1308,9 +1585,7 @@ function GamesTab({ session }) {
                     </div>
                     <span className="text-gray-700 text-base font-semibold">{row.pct}%</span>
                   </div>
-                  <div className="progressbar mt-1">
-                    <div style={{ width: `${row.pct}%` }} />
-                  </div>
+                  <div className="progressbar mt-1"><div style={{ width: `${row.pct}%` }} /></div>
                 </div>
               ))
             ) : (
@@ -1342,9 +1617,7 @@ function GamesTab({ session }) {
                     return (
                       <tr key={p.id}>
                         <td>{p.week}</td>
-                        <td>
-                          <TeamMini id={p.team_id} />
-                        </td>
+                        <td><TeamMini id={p.team_id} /></td>
                         <td>
                           <span
                             className={
@@ -1364,11 +1637,7 @@ function GamesTab({ session }) {
                     );
                   })}
                 {(!picks || picks.length === 0) && (
-                  <tr>
-                    <td className="py-2 text-gray-500" colSpan={3}>
-                      Sin picks aún.
-                    </td>
-                  </tr>
+                  <tr><td className="py-2 text-gray-500" colSpan={3}>Sin picks aún.</td></tr>
                 )}
               </tbody>
             </table>
@@ -1438,10 +1707,10 @@ function GamesTab({ session }) {
             {/* Tabs */}
             <div className="mt-3 flex gap-2 text-sm">
               {[
-                ["resumen", "Resumen"],
-                ["odds", "Odds"],
-                ["leaders", "Líderes"],
-                ["notes", "Comentarios"],
+                ["resumen","Resumen"],
+                ["odds","Odds"],
+                ["leaders","Líderes"],
+                ["notes","Comentarios"],
               ].map(([k, label]) => (
                 <button
                   key={k}
@@ -1470,16 +1739,12 @@ function GamesTab({ session }) {
                           <span className="font-mono">{details.game.home_team}</span>
                           <b>{wpHome != null ? `${wpHome}%` : "—"}</b>
                         </div>
-                        <div className="progressbar">
-                          <div style={{ width: `${wpHome ?? 0}%` }} />
-                        </div>
+                        <div className="progressbar"><div style={{ width: `${wpHome ?? 0}%` }} /></div>
                         <div className="flex items-center justify-between">
                           <span className="font-mono">{details.game.away_team}</span>
                           <b>{wpAway != null ? `${wpAway}%` : "—"}</b>
                         </div>
-                        <div className="progressbar">
-                          <div style={{ width: `${wpAway ?? 0}%` }} />
-                        </div>
+                        <div className="progressbar"><div style={{ width: `${wpAway ?? 0}%` }} /></div>
                       </div>
                     );
                   })()}
@@ -1527,16 +1792,12 @@ function GamesTab({ session }) {
                       <span className="font-mono">{details.game.home_team}</span>
                       <b>{details.popHome}%</b>
                     </div>
-                    <div className="progressbar">
-                      <div style={{ width: `${details.popHome}%` }} />
-                    </div>
+                    <div className="progressbar"><div style={{ width: `${details.popHome}%` }} /></div>
                     <div className="flex items-center justify-between">
                       <span className="font-mono">{details.game.away_team}</span>
                       <b>{details.popAway}%</b>
                     </div>
-                    <div className="progressbar">
-                      <div style={{ width: `${details.popAway}%` }} />
-                    </div>
+                    <div className="progressbar"><div style={{ width: `${details.popAway}%` }} /></div>
                   </div>
                 </div>
               </div>
@@ -1570,7 +1831,9 @@ function GamesTab({ session }) {
                     const rows = (leaders || []).filter((x) => x.side === side);
                     return (
                       <div key={side} className="p-3 border rounded-xl bg-white">
-                        <h4 className="font-semibold text-sm mb-2">{side === "home" ? details.game.home_team : details.game.away_team}</h4>
+                        <h4 className="font-semibold text-sm mb-2">
+                          {side === "home" ? details.game.home_team : details.game.away_team}
+                        </h4>
                         {rows.length ? (
                           <ul className="text-sm space-y-1">
                             {rows.map((r, i) => (
@@ -1587,7 +1850,9 @@ function GamesTab({ session }) {
                     );
                   })}
                 </div>
-                <p className="mt-2 text-xs text-gray-500">Fuente: tabla <code>game_leaders</code> (vía tu cron).</p>
+                <p className="mt-2 text-xs text-gray-500">
+                  Fuente: tabla <code>game_leaders</code> (vía tu cron).
+                </p>
               </div>
             )}
 
@@ -1619,7 +1884,9 @@ function GamesTab({ session }) {
                     {!notes?.length && <div className="text-xs text-gray-500">Aún no hay notas.</div>}
                   </div>
                 </div>
-                <p className="mt-2 text-xs text-gray-500">Se guarda en <code>game_notes</code>.</p>
+                <p className="mt-2 text-xs text-gray-500">
+                  Se guarda en <code>game_notes</code>.
+                </p>
               </div>
             )}
 
@@ -1656,6 +1923,7 @@ function GamesTab({ session }) {
     </div>
   );
 }
+
 
 
 /* ========================= Standings NFL ========================= */
