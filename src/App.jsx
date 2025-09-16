@@ -2218,44 +2218,138 @@ function AssistantTab({ session }) {
 
 /* ========================= Noticias ========================= */
 function NewsTab() {
-  const [items, setItems] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [items, setItems] = React.useState([]);
+  const [loading, setLoading] = React.useState(true);
+  const [err, setErr] = React.useState(null);
+  const [q, setQ] = React.useState("");
 
-  useEffect(() => {
+  // Feeds de respaldo
+  const RSS_FEEDS = [
+    { source: "ESPN NFL", url: "https://api.rss2json.com/v1/api.json?rss_url=https://www.espn.com/espn/rss/nfl/news" },
+    { source: "NFL.com", url: "https://api.rss2json.com/v1/api.json?rss_url=https://www.nfl.com/rss/rsslanding?searchString=home" },
+    { source: "The Athletic (NFL)", url: "https://api.rss2json.com/v1/api.json?rss_url=https://theathletic.com/league/nfl/feed/" },
+  ];
+
+  function parseRssJson(json, fallbackSource) {
+    if (!json || !json.items) return [];
+    return (json.items || []).map((it) => ({
+      id: it.guid || it.link || it.pubDate || Math.random().toString(36).slice(2),
+      title: it.title || "",
+      url: it.link || it.url || "#",
+      source: (json.feed && json.feed.title) || fallbackSource || "News",
+      published_at: it.pubDate || it.pubdate || it.date || null,
+      summary: it.description || it.content || "",
+    }));
+  }
+
+  async function fetchFromSupabase() {
+    try {
+      const { data, error } = await supabase
+        .from("news")
+        .select("id,title,url,source,published_at,summary,team_id")
+        .order("published_at", { ascending: false })
+        .limit(30);
+
+      if (error) throw error;
+      return data || [];
+    } catch (e) {
+      // si la tabla no existe o falla, devolvemos vacío
+      return [];
+    }
+  }
+
+  async function fetchFromRSS() {
+    // Trae varios feeds en paralelo, ignora los que fallen
+    const results = await Promise.allSettled(
+      RSS_FEEDS.map(f =>
+        fetch(f.url, { headers: { "Accept": "application/json" } }).then(r => r.json()).then(j => parseRssJson(j, f.source))
+      )
+    );
+    const merged = results.flatMap(r => (r.status === "fulfilled" ? r.value : []));
+    // Ordenar por fecha y limitar
+    const withDates = merged.map(x => ({
+      ...x,
+      published_at: x.published_at ? x.published_at : null,
+      _ts: x.published_at ? Date.parse(x.published_at) : 0
+    }));
+    withDates.sort((a, b) => (b._ts - a._ts));
+    return withDates.slice(0, 30).map(({ _ts, ...rest }) => rest);
+  }
+
+  React.useEffect(() => {
     (async () => {
       setLoading(true);
-      // Intento 1: tabla `news` si existe
-      let rows = [];
-      try {
-        const { data } = await supabase
-          .from("news")
-          .select("id,title,url,source,published_at,summary,team_id")
-          .order("published_at", { ascending: false })
-          .limit(30);
-        rows = data || [];
-      } catch { /* tabla puede no existir */ }
-
+      setErr(null);
+      // 1) Supabase
+      let rows = await fetchFromSupabase();
+      // 2) Fallback RSS si vacío
+      if (!rows || rows.length === 0) {
+        try {
+          rows = await fetchFromRSS();
+        } catch (e) {
+          setErr("No se pudieron cargar noticias desde las fuentes públicas.");
+          rows = [];
+        }
+      }
       setItems(rows);
       setLoading(false);
     })();
   }, []);
 
+  const filtered = React.useMemo(() => {
+    if (!q) return items;
+    const needle = q.toLowerCase();
+    return items.filter(n =>
+      (n.title || "").toLowerCase().includes(needle) ||
+      (n.summary || "").toLowerCase().includes(needle) ||
+      (n.source || "").toLowerCase().includes(needle)
+    );
+  }, [items, q]);
+
   return (
     <div className="max-w-4xl mx-auto p-4 md:p-6">
-      <h1 className="text-2xl font-extrabold mb-3">Noticias NFL</h1>
+      <div className="flex items-center justify-between gap-3 mb-3">
+        <h1 className="text-2xl font-extrabold">Noticias NFL</h1>
+        <input
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="Filtrar (equipo, fuente, palabra)…"
+          className="border rounded-xl px-3 py-2 text-sm w-56"
+        />
+      </div>
+
       {loading && <p className="text-sm text-gray-500">Cargando…</p>}
-      {!loading && items.length === 0 && (
+
+      {!loading && err && (
+        <div className="p-4 border rounded-2xl bg-white card text-sm text-red-600">
+          {err}
+        </div>
+      )}
+
+      {!loading && filtered.length === 0 && !err && (
         <div className="p-4 border rounded-2xl bg-white card text-sm text-gray-600">
-          No hay noticias cargadas aún. (Si quieres, podemos conectar una tabla <code>news</code> en Supabase con <em>title,url,source,published_at,summary</em>).
+          No hay noticias cargadas aún. Conecta una tabla <code>news</code> en Supabase
+          (<em>title,url,source,published_at,summary</em>) o usa el fallback de RSS que ya viene incluido.
         </div>
       )}
 
       <div className="grid gap-3">
-        {items.map((n) => (
-          <a key={n.id} href={n.url} target="_blank" rel="noreferrer" className="p-4 border rounded-2xl bg-white card hover:bg-gray-50 transition">
-            <div className="text-sm text-gray-500">{n.source || "—"} · {n.published_at ? DateTime.fromISO(n.published_at).setZone(TZ).toFormat("dd LLL HH:mm") : ""}</div>
+        {filtered.map((n) => (
+          <a
+            key={n.id}
+            href={n.url}
+            target="_blank"
+            rel="noreferrer"
+            className="p-4 border rounded-2xl bg-white card hover:bg-gray-50 transition"
+          >
+            <div className="text-sm text-gray-500">
+              {n.source || "—"} · {n.published_at ? DateTime.fromISO(n.published_at).setZone(TZ).toFormat("dd LLL HH:mm") : ""}
+            </div>
             <div className="font-semibold">{n.title}</div>
-            {n.summary && <div className="text-sm text-gray-600 mt-1 line-clamp-2">{n.summary}</div>}
+            {n.summary && (
+              <div className="text-sm text-gray-600 mt-1 line-clamp-2"
+                   dangerouslySetInnerHTML={{ __html: n.summary }} />
+            )}
           </a>
         ))}
       </div>
