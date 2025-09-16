@@ -22,11 +22,8 @@ function mapStatus(es) {
   return 'scheduled';
 }
 
-/**
- * Carga/actualiza todos los juegos de una semana (Regular Season)
- */
 async function importWeek({ season, week }) {
-  // ESPN soporta year & week para NFL Regular Season
+  // Regular Season por year & week
   const url = `https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?year=${season}&week=${week}`;
   const json = await fetchJSON(url);
   const events = json?.events || [];
@@ -44,6 +41,7 @@ async function importWeek({ season, week }) {
 
     const startISO = comp?.date || ev?.date;
 
+    // Solo columnas mínimas seguras
     rows.push({
       id: gameId,
       season,
@@ -54,46 +52,29 @@ async function importWeek({ season, week }) {
       away_team: U(away?.team?.abbreviation),
       home_score: home?.score != null ? Number(home.score) : null,
       away_score: away?.score != null ? Number(away.score) : null,
-      period: comp?.status?.period ?? null,
-      clock: comp?.status?.displayClock ?? null,
-      possession: null,
-      down: null,
-      distance: null,
-      red_zone: null,
       updated_at: new Date().toISOString(),
     });
   }
 
-  if (!rows.length) return { inserted: 0, updated: 0 };
+  if (!rows.length) return { inserted: 0, updated: 0, count: 0 };
 
-  // Upsert a la tabla `games`
-  let inserted = 0, updated = 0;
+  // Upsert por id (ajusta onConflict si usas otra unique key)
+  let ok = 0;
   for (const r of rows) {
-    const { data, error } = await sb
-      .from('games')
-      .upsert(r, { onConflict: 'id' })
-      .select('id')
-      .single();
-
+    const { error } = await sb.from('games').upsert(r, { onConflict: 'id' });
     if (error) throw error;
-    if (data?.id === r.id) {
-      // No hay una manera directa de saber si fue insert vs update,
-      // pero podemos intentar una select previa si te interesa distinguir.
-      // Para simpleza lo contamos como updated.
-      updated++;
-    } else {
-      inserted++;
-    }
+    ok++;
   }
 
-  return { inserted, updated, count: rows.length };
+  return { inserted_or_updated: ok, count: rows.length };
 }
 
 export default async function handler(req, res) {
   try {
     const { token, season, week } = req.query;
-    if (!token || token !== CRON_TOKEN) return res.status(401).json({ ok: false, error: 'bad token' });
-
+    if (!token || token !== CRON_TOKEN) {
+      return res.status(401).json({ ok: false, error: 'bad token' });
+    }
     const seasonNum = Number(season || '2025');
     const weekNum   = Number(week || '1');
 
