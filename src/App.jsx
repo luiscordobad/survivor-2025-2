@@ -1658,158 +1658,214 @@ function GamesTab({ session }) {
 
 
 /* ========================= Standings NFL ========================= */
+/* ========================= Standings NFL ========================= */
 function StandingsTab() {
-  const [rows, setRows] = useState([]);
-  const [fallback, setFallback] = useState([]);
+  const [rows, setRows] = useState([]); // calculadas desde games
 
-  // Carga principal desde la tabla/materialized view `nfl_standings`
   useEffect(() => {
     (async () => {
-      const { data } = await supabase
-        .from("nfl_standings")
-        .select("conference, division, team_id, w, l, t, diff")
-        .order("conference")
-        .order("division")
-        .order("team_id");
-      setRows(data || []);
+      // Traemos teams (para conferencia/división) y todos los juegos de la temporada
+      const { data: teams } = await supabase
+        .from("teams")
+        .select("id, conference, division, name, logo_url");
+      const { data: games } = await supabase
+        .from("games")
+        .select("id, start_time, season, home_team, away_team, home_score, away_score, status, period, clock")
+        .eq("season", SEASON);
+
+      setRows(buildStandings(teams || [], games || []));
     })();
   }, []);
 
-  // Fallback si no existe `nfl_standings`: lo calculamos de `games`
-  useEffect(() => {
-    if (rows && rows.length) return;
-    (async () => {
-      const { data: teams } = await supabase
-        .from("teams")
-        .select("id,conference,division");
-      const { data: games } = await supabase
-        .from("games")
-        .select("home_team,away_team,home_score,away_score,status,season,start_time,period,clock")
-        .eq("season", SEASON);
+  // ---- Helpers de cálculo ----
+  function pctStr(w, l, t) {
+    const g = w + l + t;
+    if (!g) return ".000";
+    const pct = (w + 0.5 * t) / g;
+    if (pct === 1) return "1.000";
+    return "." + String(Math.round(pct * 1000)).padStart(3, "0");
+  }
 
-      const by = {};
-      teams?.forEach((t) => {
-        by[t.id] = {
-          team_id: t.id,
-          conference: t.conference,
-          division: t.division,
-          w: 0, l: 0, t: 0, diff: 0,
-        };
-      });
-
-      (games || []).forEach((g) => {
-        if (!hasGameEnded(g)) return;
-        const hs = Number(g.home_score ?? 0);
-        const as = Number(g.away_score ?? 0);
-        if (hs === as) {
-          by[g.home_team].t++; by[g.away_team].t++;
-        } else if (hs > as) {
-          by[g.home_team].w++; by[g.away_team].l++;
-        } else {
-          by[g.away_team].w++; by[g.home_team].l++;
-        }
-        by[g.home_team].diff += hs - as;
-        by[g.away_team].diff += as - hs;
-      });
-
-      setFallback(Object.values(by));
-    })();
-  }, [rows]);
-
-  const dataToUse = rows?.length ? rows : fallback;
-
-  // Helpers: PCT y ordenamiento
-  const pct = (w, l, t) => {
-    const g = Number(w) + Number(l) + Number(t);
-    if (!g) return 0;
-    return (Number(w) + 0.5 * Number(t)) / g;
-  };
-  const pctStr = (p) => `.${String(Math.round(p * 1000)).padStart(3, "0")}`;
-
-  const sortDivision = (list) =>
-    list.slice().sort((a, b) => {
-      const pa = pct(a.w, a.l, a.t);
-      const pb = pct(b.w, b.l, b.t);
-      return (
-        pb - pa || // PCT desc
-        (b.diff ?? 0) - (a.diff ?? 0) || // Diff desc
-        b.w - a.w || // Wins desc
-        a.l - b.l    // Losses asc
-      );
+  function buildStandings(teams, games) {
+    // mapa base por equipo
+    const base = {};
+    teams.forEach((t) => {
+      base[t.id] = {
+        team_id: t.id,
+        name: t.name,
+        conference: t.conference,
+        division: t.division,
+        w: 0, l: 0, t: 0,
+        pf: 0, pa: 0,
+        home_w: 0, home_l: 0, home_t: 0,
+        away_w: 0, away_l: 0, away_t: 0,
+        diff: 0,
+        results: [] // para racha en orden cronológico
+      };
     });
 
-  // Organizamos en columnas por conferencia y dentro por división
-  const divisionsOrder = ["East", "North", "South", "West"];
-  const byConfDiv = { AFC: {}, NFC: {} };
-  (dataToUse || []).forEach((r) => {
-    const C = r.conference?.toUpperCase() === "NFC" ? "NFC" : "AFC";
-    const D = r.division || "—";
-    if (!byConfDiv[C][D]) byConfDiv[C][D] = [];
-    byConfDiv[C][D].push(r);
-  });
+    // ordenar juegos por fecha para rachas consistentes
+    const sortedGames = (games || []).slice().sort((a,b)=> new Date(a.start_time)-new Date(b.start_time));
+
+    for (const g of sortedGames) {
+      // contamos solo juegos terminados (igual que hasGameEnded)
+      if (!hasGameEnded(g)) continue;
+
+      const hs = Number(g.home_score ?? 0);
+      const as = Number(g.away_score ?? 0);
+      const H = base[g.home_team], A = base[g.away_team];
+      if (!H || !A) continue;
+
+      // puntos
+      H.pf += hs; H.pa += as;
+      A.pf += as; A.pa += hs;
+
+      // diff
+      H.diff += hs - as;
+      A.diff += as - hs;
+
+      // resultado
+      if (hs === as) {
+        H.t++; A.t++;
+        H.home_t++; A.away_t++;
+        H.results.push("T"); A.results.push("T");
+      } else if (hs > as) {
+        H.w++; A.l++;
+        H.home_w++; A.away_l++;
+        H.results.push("W"); A.results.push("L");
+      } else {
+        H.l++; A.w++;
+        H.home_l++; A.away_w++;
+        H.results.push("L"); A.results.push("W");
+      }
+    }
+
+    // convertir a lista y ordenar dentro de cada división
+    const list = Object.values(base);
+    // agrupamos por conferencia/división
+    const groups = {};
+    for (const r of list) {
+      const key = `${r.conference}__${r.division}`;
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(r);
+    }
+    // orden: % desc, diff desc, PF desc, nombre asc
+    const sorter = (a,b) => {
+      const pa = (a.w + 0.5*a.t) / Math.max(1, a.w+a.l+a.t);
+      const pb = (b.w + 0.5*b.t) / Math.max(1, b.w+b.l+b.t);
+      return (pb - pa) || (b.diff - a.diff) || (b.pf - a.pf) || (a.team_id.localeCompare(b.team_id));
+    };
+    Object.values(groups).forEach(arr => arr.sort(sorter));
+
+    // devolvemos en estructura por conferencia para render
+    const AFC = ["East","North","South","West"].map(div => ({
+      conference: "AFC",
+      division: div,
+      list: groups[`AFC__${div}`] || []
+    }));
+    const NFC = ["East","North","South","West"].map(div => ({
+      conference: "NFC",
+      division: div,
+      list: groups[`NFC__${div}`] || []
+    }));
+    return { AFC, NFC };
+  }
+
+  function streakStr(r) {
+    // r.results es un array en orden cronológico; contamos desde el final
+    const arr = r.results || [];
+    if (!arr.length) return "-";
+    const last = arr[arr.length - 1];
+    let n = 1;
+    for (let i = arr.length - 2; i >= 0; i--) {
+      if (arr[i] !== last) break;
+      n++;
+    }
+    if (last === "W") return `W${n}`;
+    if (last === "L") return `L${n}`;
+    return `T${n}`;
+  }
+
+  const colHeader = (
+    <thead>
+      <tr>
+        <th>Equipo</th>
+        <th>W</th>
+        <th>L</th>
+        <th>T</th>
+        <th>%</th>
+        <th>PF</th>
+        <th>PC</th>
+        <th>Loc.</th>
+        <th>Vis.</th>
+        <th>Rach.</th>
+      </tr>
+    </thead>
+  );
+
+  const DivisionTable = ({ title, list }) => (
+    <div className="p-4 border rounded-2xl bg-white card">
+      <h3 className="font-semibold mb-2">{title}</h3>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm table-minimal">
+          {colHeader}
+          <tbody>
+            {list.map((r) => (
+              <tr key={r.team_id}>
+                <td className="font-mono">{r.team_id}</td>
+                <td className="text-emerald-700 font-medium">{r.w}</td>
+                <td className="text-red-600 font-medium">{r.l}</td>
+                <td className="text-gray-600">{r.t}</td>
+                <td className="font-mono">{pctStr(r.w, r.l, r.t)}</td>
+                <td>{r.pf}</td>
+                <td>{r.pa}</td>
+                <td>{`${r.home_w}-${r.home_l}${r.home_t ? `-${r.home_t}` : ""}`}</td>
+                <td>{`${r.away_w}-${r.away_l}${r.away_t ? `-${r.away_t}` : ""}`}</td>
+                <td>{streakStr(r)}</td>
+              </tr>
+            ))}
+            {!list.length && (
+              <tr><td className="py-2 text-gray-500" colSpan={10}>Sin datos aún.</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+
+  // si aún no hay rows, mensaje mínimo
+  if (!rows || !rows.AFC) {
+    return (
+      <div className="max-w-6xl mx-auto p-4 md:p-6">
+        <h1 className="text-2xl font-extrabold mb-3">Standings NFL</h1>
+        <p className="text-sm text-gray-500">Cargando…</p>
+      </div>
+    );
+  }
 
   return (
     <div className="max-w-6xl mx-auto p-4 md:p-6">
       <h1 className="text-2xl font-extrabold mb-3">Standings NFL</h1>
-      {(!dataToUse || dataToUse.length === 0) && (
-        <p className="text-sm text-gray-500">Sin datos todavía.</p>
-      )}
 
       <div className="grid md:grid-cols-2 gap-4">
-        {["AFC", "NFC"].map((CONF) => (
-          <div key={CONF} className="space-y-4">
-            {divisionsOrder.map((DIV) => {
-              const list = sortDivision(byConfDiv[CONF][DIV] || []);
-              return (
-                <div key={`${CONF}-${DIV}`} className="p-4 border rounded-2xl bg-white card">
-                  <h3 className="font-semibold mb-2">
-                    {CONF} — {DIV}
-                  </h3>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-sm table-minimal">
-                      <thead>
-                        <tr>
-                          <th>Equipo</th>
-                          <th>W</th>
-                          <th>L</th>
-                          <th>T</th>
-                          <th>PCT</th>
-                          <th>Diff</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {list.map((r) => {
-                          const p = pct(r.w, r.l, r.t);
-                          return (
-                            <tr key={`${CONF}-${DIV}-${r.team_id}`}>
-                              <td className="font-mono">{r.team_id}</td>
-                              <td className="text-emerald-700 font-medium">{r.w}</td>
-                              <td className="text-red-600 font-medium">{r.l}</td>
-                              <td className="text-gray-600">{r.t}</td>
-                              <td>{pctStr(p)}</td>
-                              <td>{r.diff ?? 0}</td>
-                            </tr>
-                          );
-                        })}
-                        {!list.length && (
-                          <tr>
-                            <td className="py-2 text-gray-500" colSpan={6}>
-                              Sin datos.
-                            </td>
-                          </tr>
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        ))}
+        {/* Columna izquierda: AFC */}
+        <div className="grid gap-4">
+          {rows.AFC.map((g, idx) => (
+            <DivisionTable key={`AFC-${idx}`} title={`AFC — ${g.division}`} list={g.list} />
+          ))}
+        </div>
+
+        {/* Columna derecha: NFC */}
+        <div className="grid gap-4">
+          {rows.NFC.map((g, idx) => (
+            <DivisionTable key={`NFC-${idx}`} title={`NFC — ${g.division}`} list={g.list} />
+          ))}
+        </div>
       </div>
     </div>
   );
 }
+
 
 /* ========================= Asistente de Picks ========================= */
 function AssistantTab({ session }) {
