@@ -2217,11 +2217,13 @@ function AssistantTab({ session }) {
 
 
 /* ========================= Noticias ========================= */
+import { useState, useEffect, useMemo } from "react";
+
 function NewsTab() {
-  const [items, setItems] = React.useState([]);
-  const [loading, setLoading] = React.useState(true);
-  const [err, setErr] = React.useState(null);
-  const [q, setQ] = React.useState("");
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState(null);
+  const [q, setQ] = useState("");
 
   // Feeds de respaldo
   const RSS_FEEDS = [
@@ -2252,21 +2254,20 @@ function NewsTab() {
 
       if (error) throw error;
       return data || [];
-    } catch (e) {
-      // si la tabla no existe o falla, devolvemos vacío
+    } catch {
       return [];
     }
   }
 
   async function fetchFromRSS() {
-    // Trae varios feeds en paralelo, ignora los que fallen
     const results = await Promise.allSettled(
       RSS_FEEDS.map(f =>
-        fetch(f.url, { headers: { "Accept": "application/json" } }).then(r => r.json()).then(j => parseRssJson(j, f.source))
+        fetch(f.url, { headers: { "Accept": "application/json" } })
+          .then(r => r.json())
+          .then(j => parseRssJson(j, f.source))
       )
     );
     const merged = results.flatMap(r => (r.status === "fulfilled" ? r.value : []));
-    // Ordenar por fecha y limitar
     const withDates = merged.map(x => ({
       ...x,
       published_at: x.published_at ? x.published_at : null,
@@ -2276,17 +2277,15 @@ function NewsTab() {
     return withDates.slice(0, 30).map(({ _ts, ...rest }) => rest);
   }
 
-  React.useEffect(() => {
+  useEffect(() => {
     (async () => {
       setLoading(true);
       setErr(null);
-      // 1) Supabase
       let rows = await fetchFromSupabase();
-      // 2) Fallback RSS si vacío
       if (!rows || rows.length === 0) {
         try {
           rows = await fetchFromRSS();
-        } catch (e) {
+        } catch {
           setErr("No se pudieron cargar noticias desde las fuentes públicas.");
           rows = [];
         }
@@ -2296,7 +2295,7 @@ function NewsTab() {
     })();
   }, []);
 
-  const filtered = React.useMemo(() => {
+  const filtered = useMemo(() => {
     if (!q) return items;
     const needle = q.toLowerCase();
     return items.filter(n =>
@@ -2347,8 +2346,10 @@ function NewsTab() {
             </div>
             <div className="font-semibold">{n.title}</div>
             {n.summary && (
-              <div className="text-sm text-gray-600 mt-1 line-clamp-2"
-                   dangerouslySetInnerHTML={{ __html: n.summary }} />
+              <div
+                className="text-sm text-gray-600 mt-1 line-clamp-2"
+                dangerouslySetInnerHTML={{ __html: n.summary }}
+              />
             )}
           </a>
         ))}
@@ -2356,3 +2357,6 @@ function NewsTab() {
     </div>
   );
 }
+
+export default NewsTab;
+
