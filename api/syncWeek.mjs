@@ -5,24 +5,21 @@ const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.VITE_SU
 const SERVICE_KEY  = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_SERVICE_KEY;
 const CRON_TOKEN   = process.env.CRON_TOKEN || process.env.VITE_CRON_TOKEN;
 
-const FIXED_SEASON = 2025; // tu CHECK season
-const THE_ODDS_API_KEY = process.env.THE_ODDS_API_KEY || process.env.VITE_THE_ODDS_API_KEY;
+const FIXED_SEASON = 2025; // tu tabla tiene CHECK season = 2025
 
 const sb = createClient(SUPABASE_URL, SERVICE_KEY);
 
-async function fetchJSON(url, headers = {}) {
+/* ===================== utils ===================== */
+async function fetchJSON(url) {
   const r = await fetch(url, {
-    headers: {
-      'User-Agent': 'SurvivorSync/1.2',
-      'Accept': 'application/json',
-      ...headers,
-    },
+    headers: { 'User-Agent': 'SurvivorSync/1.1', 'Accept': 'application/json' }
   });
   if (!r.ok) throw new Error(`HTTP ${r.status} for ${url}`);
   return r.json();
 }
-
-const U = (s) => String(s || '').toUpperCase().trim();
+const U    = (s) => String(s || '').toUpperCase().trim();
+const num  = (x) => (x == null || x === '' ? null : Number(x));
+const pct  = (x) => (x == null || x === '' ? null : Math.round(Number(x) * 100) / 100);
 
 function mapStatus(src) {
   const t = (src?.status?.type?.name || '').toUpperCase();
@@ -32,243 +29,147 @@ function mapStatus(src) {
   return 'scheduled';
 }
 
-// -------- helpers odds ----------
-function parseOddsFromTheOddsAPI(game, oddsJson) {
-  // Busca mercado NFL – spreads y moneyline entre sportsbooks populares
-  // Este formato depende de tu proveedor. Ajusta si tu API devuelve diferente.
-  const byGame = (oddsJson || []).find(
-    (x) => (U(x?.home_team) === game.home_team && U(x?.away_team) === game.away_team)
-  );
-  if (!byGame) return null;
-
-  // Elegimos la primera casa disponible (por simplicidad)
-  const bk = byGame.bookmakers?.[0];
-  if (!bk) return null;
-
-  let spread_home = null,
-    spread_away = null,
-    ml_home = null,
-    ml_away = null;
-
-  for (const mkt of bk.markets || []) {
-    const key = (mkt.key || '').toLowerCase();
-    if (key === 'spreads') {
-      for (const out of mkt.outcomes || []) {
-        const team = U(out.name);
-        if (team === game.home_team) spread_home = out.point ?? spread_home;
-        if (team === game.away_team) spread_away = out.point ?? spread_away;
-      }
-    } else if (key === 'h2h') {
-      for (const out of mkt.outcomes || []) {
-        const team = U(out.name);
-        if (team === game.home_team) ml_home = out.price ?? ml_home;
-        if (team === game.away_team) ml_away = out.price ?? ml_away;
-      }
-    }
-  }
-
-  return { spread_home, spread_away, ml_home, ml_away };
-}
-
-// -------- weather (Open-Meteo simple) ----------
-async function getWeatherFor(cityText, isoKickoff) {
-  if (!cityText || !isoKickoff) return null;
-  // Resolución geo muy simplificada (usa Nominatim “free” via open-meteo geocoding)
-  try {
-    const geo = await fetchJSON(
-      `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(cityText)}&count=1&language=en&format=json`
-    );
-    const g0 = geo?.results?.[0];
-    if (!g0) return null;
-    const lat = g0.latitude, lon = g0.longitude;
-
-    // Busca condiciones alrededor de kickoff (hora exacta)
-    const dt = new Date(isoKickoff);
-    const yyyy = dt.getUTCFullYear();
-    const mm = String(dt.getUTCMonth() + 1).padStart(2, '0');
-    const dd = String(dt.getUTCDate()).padStart(2, '0');
-
-    const w = await fetchJSON(
-      `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
-      `&hourly=temperature_2m,precipitation,wind_speed_10m,weathercode&start_date=${yyyy}-${mm}-${dd}&end_date=${yyyy}-${mm}-${dd}`
-    );
-
-    // busca hora más cercana
-    const hours = w?.hourly?.time || [];
-    let bestIdx = -1, bestDiff = Infinity;
-    for (let i = 0; i < hours.length; i++) {
-      const diff = Math.abs(new Date(hours[i]).getTime() - dt.getTime());
-      if (diff < bestDiff) { bestDiff = diff; bestIdx = i; }
-    }
-    if (bestIdx < 0) return null;
-
-    return {
-      temp_c: w.hourly.temperature_2m?.[bestIdx] ?? null,
-      precip_mm: w.hourly.precipitation?.[bestIdx] ?? null,
-      wind_kph: w.hourly.wind_speed_10m?.[bestIdx] != null ? Math.round(w.hourly.wind_speed_10m[bestIdx] * 1.60934) : null,
-      condition: '', // podrías mapear weathercode si quieres
-    };
-  } catch {
-    return null;
-  }
-}
-
-// -------- ESPN summary (leaders + injuries + game info extra) ----------
 async function fetchSummary(gameId) {
-  try {
-    const url = `https://site.api.espn.com/apis/site/v2/sports/football/nfl/summary?event=${gameId}`;
-    const j = await fetchJSON(url);
-    return j;
-  } catch {
-    return null;
+  const url = `https://site.api.espn.com/apis/site/v2/sports/football/nfl/summary?event=${gameId}`;
+  return fetchJSON(url);
+}
+
+/* ========== ESPN team stats (temporada regular) ========== */
+async function fetchEspnTeamStats(year, espnTeamId) {
+  // type=2: regular season
+  const url = `https://sports.core.api.espn.com/v2/sports/football/leagues/nfl/seasons/${year}/types/2/teams/${espnTeamId}/statistics`;
+  const j = await fetchJSON(url);
+  const flat = {};
+  for (const cat of j?.splits?.categories || []) {
+    for (const st of cat?.stats || []) {
+      const k = (st?.name || '').toLowerCase();
+      flat[k] = st?.value ?? null;
+    }
   }
+  // Mapea nombres de ESPN -> tus columnas
+  return {
+    ppg:        num(flat['pointspergame']),
+    ypg:        num(flat['yardspergame']),
+    pass_ypg:   num(flat['passingyardspergame']),
+    rush_ypg:   num(flat['rushingyardspergame']),
+    opp_ppg:    num(flat['opponentspointspergame']),
+    opp_ypg:    num(flat['opponentsyardspergame']),
+    third_down: pct(flat['thirddownconversionpercent'] ?? flat['thirddownconversionpct']),
+    red_zone:   pct(flat['redzonescoringpercent'] ?? flat['redzonescorespct']),
+    to_diff:    num(flat['turnovermarginpergame'] ?? flat['turnovermargin']),
+    sacks:      num(flat['sacks']),
+  };
 }
 
-function pickAbbrev(teamObj) {
-  return U(teamObj?.abbreviation || teamObj?.team?.abbreviation || teamObj?.shortDisplayName || teamObj?.name);
-}
-
-function leadersFromSummary(summary, homeId, awayId) {
+/* ========== Líderes: boxscore (si hay) o teamLeaders (pregame) ========== */
+function leadersFromSummaryFlexible(summary, homeAbbr, awayAbbr) {
   const out = [];
+
+  // 1) Leaders del boxscore (en vivo / final)
   try {
     const cats = summary?.leaders || [];
     for (const cat of cats) {
-      const statName = U(cat?.name || cat?.displayName || '');
-      for (const teamBlock of cat?.leaders || []) {
-        const sideTeamAbbr = pickAbbrev(teamBlock?.team);
-        const side = sideTeamAbbr === homeId ? 'home' : sideTeamAbbr === awayId ? 'away' : null;
+      const statName = cat?.displayName || cat?.name || 'Leader';
+      for (const b of cat?.leaders || []) {
+        const abbr = U(b?.team?.abbreviation || b?.team?.shortDisplayName);
+        const side = abbr === homeAbbr ? 'home' : (abbr === awayAbbr ? 'away' : null);
         if (!side) continue;
-
-        const l0 = teamBlock?.leaders?.[0];
+        const l0 = b?.leaders?.[0];
         if (!l0) continue;
+        const player = l0?.athlete?.shortName || l0?.athlete?.displayName || '—';
+        const value  = l0?.value != null ? String(l0.value) : (l0?.stats?.join(' ') || '—');
+        out.push({ side, player, stat: statName, value });
+      }
+    }
+    if (out.length) return out;
+  } catch {}
 
-        const player = l0?.athlete?.shortName || l0?.athlete?.displayName || l0?.athlete?.fullName || '—';
-        const value = l0?.value != null ? String(l0.value) : (l0?.stats?.join(' ') || '—');
-
-        out.push({ side, player, stat: statName || 'LEADER', value });
+  // 2) teamLeaders (temporada a la fecha) cuando no hay boxscore todavía
+  try {
+    for (const tl of summary?.teamLeaders || []) {
+      const abbr = U(tl?.team?.abbreviation || tl?.team?.shortDisplayName);
+      const side = abbr === homeAbbr ? 'home' : (abbr === awayAbbr ? 'away' : null);
+      if (!side) continue;
+      for (const grp of tl?.leaders || []) {
+        const statName = grp?.name || grp?.displayName || 'Leader';
+        const p0 = grp?.leaders?.[0];
+        if (!p0) continue;
+        const player = p0?.athlete?.shortName || p0?.athlete?.displayName || '—';
+        const value  = p0?.displayValue || p0?.value || (p0?.statistics?.map(s => s.displayValue).join(' ') || '—');
+        out.push({ side, player, stat: statName, value: String(value) });
       }
     }
   } catch {}
+
   return out;
 }
 
-function injuriesFromSummary(summary, homeId, awayId) {
+/* ========== Lesiones desde summary (opcional) ========== */
+function injuriesFromSummary(summary) {
   const rows = [];
   try {
-    const inj = summary?.injuries || [];
-    for (const block of inj) {
-      const tAbbr = pickAbbrev(block?.team);
-      const team_id = tAbbr === homeId ? homeId : tAbbr === awayId ? awayId : null;
-      if (!team_id) continue;
-
-      for (const it of block?.injuries || []) {
-        const player = it?.athlete?.shortName || it?.athlete?.displayName || '—';
-        const status = it?.type?.text || it?.status || it?.type?.name || '—';
-        const note = it?.details || '';
-        rows.push({ team_id, player, status, note });
+    for (const grp of summary?.injuries || []) {
+      const teamAbbr = U(grp?.team?.abbreviation || grp?.team?.shortDisplayName);
+      for (const item of grp?.injuries || []) {
+        rows.push({
+          team_id: teamAbbr,
+          player: item?.athlete?.shortName || item?.athlete?.displayName || '—',
+          status: item?.status || item?.type || item?.details || '—',
+          note: item?.details || ''
+        });
       }
     }
   } catch {}
   return rows;
 }
 
-// -------- season simple team stats (PPG y Opp PPG) ----------
-async function computeSeasonStatsForTeams(season, teamIds) {
-  const ids = [...new Set(teamIds)];
-  if (!ids.length) return [];
+/* ========== Últimos 5 por equipo (a partir de tu tabla 'games') ========== */
+async function recomputeRecent5ForTeams(teamIds) {
+  const unique = [...new Set(teamIds.filter(Boolean))];
+  for (const team of unique) {
+    // Lee juegos de la temporada actual donde participa el equipo
+    const { data: gs } = await sb
+      .from('games')
+      .select('id,start_time,home_team,away_team,home_score,away_score,status')
+      .eq('season', FIXED_SEASON)
+      .or(`home_team.eq.${team},away_team.eq.${team}`)
+      .order('start_time', { ascending: false })
+      .limit(20);
 
-  const { data: games, error } = await sb
-    .from('games')
-    .select('home_team,away_team,home_score,away_score,status')
-    .eq('season', season);
-  if (error) throw error;
+    const rows = [];
+    for (const g of (gs || [])) {
+      // Solo considerar si ya tiene score (para W/L) — si quieres incluir scheduled, cambia aquí
+      const ended = String(g.status || '').toLowerCase() === 'final';
+      const hs = num(g.home_score) ?? 0;
+      const as = num(g.away_score) ?? 0;
+      const isHome = g.home_team === team;
+      const opp = isHome ? g.away_team : g.home_team;
 
-  const agg = new Map(); // team -> { pts:0, ga:0, gp:0 }
-  const ensure = (t) => agg.get(t) || (agg.set(t, { pts: 0, ga: 0, gp: 0 }), agg.get(t));
-
-  for (const g of games || []) {
-    if (g.home_score == null || g.away_score == null) continue;
-    // cuenta aunque no sea FINAL, para no complicarnos (o filtra g.status==='final')
-    const h = ensure(g.home_team), a = ensure(g.away_team);
-    h.pts += Number(g.home_score); h.ga += Number(g.away_score); h.gp += 1;
-    a.pts += Number(g.away_score); a.ga += Number(g.home_score); a.gp += 1;
-  }
-
-  const rows = ids.map((t) => {
-    const r = agg.get(t) || { pts: 0, ga: 0, gp: 0 };
-    const ppg = r.gp ? +(r.pts / r.gp).toFixed(1) : null;
-    const opp_ppg = r.gp ? +(r.ga / r.gp).toFixed(1) : null;
-    return {
-      team_id: t,
-      ppg,
-      opp_ppg,
-      // las demás métricas no las podemos calcular sin yardas: déjalas null
-      ypg: null,
-      pass_ypg: null,
-      rush_ypg: null,
-      opp_ypg: null,
-      third_down: null,
-      red_zone: null,
-      to_diff: null,
-      sacks: null,
-      season,
-      updated_at: new Date().toISOString(),
-    };
-  });
-
-  return rows;
-}
-
-// -------- team recent (últimos 5) ----------
-async function computeRecentForTeams(season, teamIds) {
-  const ids = [...new Set(teamIds)];
-  if (!ids.length) return [];
-
-  const { data: games, error } = await sb
-    .from('games')
-    .select('id,start_time,home_team,away_team,home_score,away_score,status')
-    .eq('season', season);
-  if (error) throw error;
-
-  const byTeam = new Map();
-  for (const t of ids) byTeam.set(t, []);
-
-  for (const g of games || []) {
-    for (const side of ['home', 'away']) {
-      const team = side === 'home' ? g.home_team : g.away_team;
-      if (!byTeam.has(team)) continue;
-      const opp = side === 'home' ? g.away_team : g.home_team;
-      const is_home = side === 'home';
-      let result = '—', score = '—';
-      if (g.home_score != null && g.away_score != null) {
-        const my = is_home ? g.home_score : g.away_score;
-        const op = is_home ? g.away_score : g.home_score;
-        result = my === op ? 'T' : (my > op ? 'W' : 'L');
-        score = `${my}-${op}`;
+      let result = '—';
+      if (ended) {
+        if (hs === as) result = 'T';
+        else if ((isHome && hs > as) || (!isHome && as > hs)) result = 'W';
+        else result = 'L';
       }
-      byTeam.get(team).push({
+
+      const score = `${g.away_team} ${as ?? 0} - ${hs ?? 0} ${g.home_team}`;
+      rows.push({
         team_id: team,
         date: g.start_time,
         opp,
-        is_home,
+        is_home: isHome,
         result,
-        score,
-        game_id: g.id,
+        score
       });
+      if (rows.length >= 5) break;
     }
-  }
 
-  const rows = [];
-  for (const [team, arr] of byTeam.entries()) {
-    const last5 = arr
-      .slice()
-      .sort((a, b) => new Date(b.date) - new Date(a.date))
-      .slice(0, 5);
-    rows.push(...last5);
+    await sb.from('team_recent_games').delete().eq('team_id', team);
+    if (rows.length) await sb.from('team_recent_games').insert(rows);
   }
-  return rows;
 }
 
+/* ===================== handler ===================== */
 export default async function handler(req, res) {
   try {
     const { token, week } = req.query;
@@ -276,31 +177,38 @@ export default async function handler(req, res) {
 
     const weekNum = Number(week || '1');
 
-    // 1) ESPN scoreboard (partidos base)
+    // ESPN scoreboard por semana
     const url = `https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?year=${FIXED_SEASON}&week=${weekNum}`;
     const json = await fetchJSON(url);
     const events = json?.events || [];
 
-    let upsertsGames = 0, upsertsMeta = 0, upsertsWeather = 0, upsertsOdds = 0, upsertsOddsHist = 0, upsertsLeaders = 0, upsertsInj = 0;
+    let upsertsGames = 0;
+    let upsertsLeaders = 0;
+    let upsertsStats = 0;
+    let upsertsInj = 0;
 
-    const teamsInWeek = new Set();
-    const gamesOfWeek = [];
+    // Acumularemos teams para recalcular "Últimos 5" al final
+    const teamsTouched = [];
 
     for (const ev of events) {
-      const comp = ev?.competitions?.[0] || {};
+      const comp  = ev?.competitions?.[0] || {};
       const comps = comp?.competitors || [];
-      const home = comps.find(c => (c.homeAway || c.homeaway) === 'home');
-      const away = comps.find(c => (c.homeAway || c.homeaway) === 'away');
+      const home  = comps.find(c => (c.homeAway || c.homeaway) === 'home');
+      const away  = comps.find(c => (c.homeAway || c.homeaway) === 'away');
 
-      const gameId = String(ev?.id || comp?.id || '');
+      const gameId   = String(ev?.id || comp?.id || '');
       if (!gameId) continue;
 
-      const home_id = U(home?.team?.abbreviation);
-      const away_id = U(away?.team?.abbreviation);
+      const home_id  = U(home?.team?.abbreviation);
+      const away_id  = U(away?.team?.abbreviation);
+      const home_num = home?.team?.id;
+      const away_num = away?.team?.id;
+
       if (!home_id || !away_id) continue;
 
-      teamsInWeek.add(home_id); teamsInWeek.add(away_id);
+      teamsTouched.push(home_id, away_id);
 
+      // ---- Upsert de games
       const row = {
         id: gameId,
         week: weekNum,
@@ -312,120 +220,79 @@ export default async function handler(req, res) {
         home_score: home?.score != null ? Number(home.score) : null,
         away_score: away?.score != null ? Number(away.score) : null,
         external_id: String(ev?.id || comp?.id || ''),
-        updated_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
       };
-
-      const gUp = await sb.from('games').upsert(row, { onConflict: 'id' });
-      if (gUp.error) throw gUp.error;
-      upsertsGames++;
-      gamesOfWeek.push({ id: gameId, ...row });
-
-      // 1b) meta (city) – usa venue de ESPN si está disponible
-      const city = comp?.venue?.address?.city || comp?.venue?.fullName || '';
-      if (city) {
-        const mUp = await sb.from('game_meta').upsert(
-          { game_id: gameId, city: city, stadium: comp?.venue?.fullName || null, tv: null },
-          { onConflict: 'game_id' }
-        );
-        if (!mUp.error) upsertsMeta++;
+      {
+        const { error } = await sb.from('games').upsert(row, { onConflict: 'id' });
+        if (error) throw error;
+        upsertsGames++;
       }
 
-      // 1c) clima para la ciudad
-      const wx = await getWeatherFor(city, row.start_time);
-      if (wx) {
-        const wUp = await sb.from('weather').upsert(
-          { game_id: gameId, ...wx, updated_at: new Date().toISOString() },
-          { onConflict: 'game_id' }
-        );
-        if (!wUp.error) upsertsWeather++;
-      }
-
-      // 1d) odds (si tienes API key)
-      if (THE_ODDS_API_KEY) {
-        try {
-          const odds = await fetchJSON(
-            `https://api.the-odds-api.com/v4/sports/americanfootball_nfl/odds?regions=us&markets=h2h,spreads&oddsFormat=american&apiKey=${THE_ODDS_API_KEY}`
+      // ---- Stats de temporada por equipo (siempre disponibles)
+      try {
+        const [homeStats, awayStats] = await Promise.all([
+          fetchEspnTeamStats(FIXED_SEASON, home_num),
+          fetchEspnTeamStats(FIXED_SEASON, away_num),
+        ]);
+        if (homeStats) {
+          await sb.from('season_team_stats').upsert(
+            { team_id: home_id, season: FIXED_SEASON, ...homeStats, updated_at: new Date().toISOString() },
+            { onConflict: 'team_id,season' }
           );
-          const parsed = parseOddsFromTheOddsAPI(row, odds);
-          if (parsed) {
-            const payload = {
-              game_id: gameId,
-              spread_home: parsed.spread_home,
-              spread_away: parsed.spread_away,
-              ml_home: parsed.ml_home,
-              ml_away: parsed.ml_away,
-              fetched_at: new Date().toISOString(),
-            };
-            const o1 = await sb.from('odds').upsert(payload, { onConflict: 'game_id' });
-            const o2 = await sb.from('odds_history').insert(payload);
-            if (!o1.error) upsertsOdds++;
-            if (!o2.error) upsertsOddsHist++;
-          }
-        } catch { /* no odds */ }
-      }
+          upsertsStats++;
+        }
+        if (awayStats) {
+          await sb.from('season_team_stats').upsert(
+            { team_id: away_id, season: FIXED_SEASON, ...awayStats, updated_at: new Date().toISOString() },
+            { onConflict: 'team_id,season' }
+          );
+          upsertsStats++;
+        }
+      } catch {}
 
-      // 1e) leaders + injuries desde summary
-      const summary = await fetchSummary(gameId);
-      if (summary) {
-        // leaders
-        const leaders = leadersFromSummary(summary, home_id, away_id);
-        if (leaders.length) {
-          // borra previos de ese juego para evitar duplicados
+      // ---- Summary: leaders (y lesiones opcional)
+      try {
+        const summary = await fetchSummary(gameId);
+        if (summary) {
+          const leaders = leadersFromSummaryFlexible(summary, home_id, away_id);
           await sb.from('game_leaders').delete().eq('game_id', gameId);
-          const rows = leaders.map((x) => ({ game_id: gameId, ...x }));
-          const ins = await sb.from('game_leaders').insert(rows);
-          if (!ins.error) upsertsLeaders += rows.length;
+          if (leaders.length) {
+            const rows = leaders.map(x => ({ game_id: gameId, ...x }));
+            await sb.from('game_leaders').insert(rows);
+            upsertsLeaders += rows.length;
+          }
+
+          // Lesiones (opcional)
+          const injRows = injuriesFromSummary(summary);
+          if (injRows.length) {
+            // limpiamos sólo de esos equipos (para no borrar otros juegos)
+            await sb.from('injuries')
+              .delete()
+              .in('team_id', [...new Set(injRows.map(r => r.team_id))]);
+            await sb.from('injuries').insert(injRows);
+            upsertsInj += injRows.length;
+          }
         }
-        // injuries
-        const inj = injuriesFromSummary(summary, home_id, away_id);
-        if (inj.length) {
-          await sb.from('injuries').delete().in('team_id', [home_id, away_id]); // mantén últimas del día
-          const rows = inj.map((x) => x);
-          const ins = await sb.from('injuries').insert(rows);
-          if (!ins.error) upsertsInj += rows.length;
-        }
-      }
+      } catch {}
     }
 
-    // 2) Season stats simples (PPG / Opp PPG) para equipos de la semana
-    const teamsList = Array.from(teamsInWeek);
-    const statsRows = await computeSeasonStatsForTeams(FIXED_SEASON, teamsList);
-    if (statsRows.length) {
-      for (const r of statsRows) {
-        await sb.from('season_team_stats').upsert(
-          r,
-          { onConflict: 'team_id' } // si tu PK es (team_id) por temporada; si es (team_id,season) usa onConflict:'team_id,season'
-        );
-      }
-    }
-
-    // 3) Últimos 5 de cada equipo
-    const recentRows = await computeRecentForTeams(FIXED_SEASON, teamsList);
-    if (recentRows.length) {
-      // Borra y reescribe solo de los equipos de esta semana (más seguro y simple)
-      await sb.from('team_recent_games').delete().in('team_id', teamsList);
-      await sb.from('team_recent_games').insert(recentRows);
-    }
+    // ---- Recalcula "Últimos 5" para todos los equipos tocados
+    await recomputeRecent5ForTeams(teamsTouched);
 
     return res.json({
       ok: true,
-      action: 'syncWeek+extras',
+      action: 'syncWeek',
       season: FIXED_SEASON,
       week: weekNum,
       upserts: {
         games: upsertsGames,
-        game_meta: upsertsMeta,
-        weather: upsertsWeather,
-        odds: upsertsOdds,
-        odds_history: upsertsOddsHist,
-        game_leaders: upsertsLeaders,
-        injuries: upsertsInj,
-        season_team_stats: statsRows.length,
-        team_recent_games: recentRows.length,
-      },
-      teams_in_week: teamsList.length,
+        team_stats_rows: upsertsStats,
+        game_leaders_rows: upsertsLeaders,
+        injuries_rows: upsertsInj
+      }
     });
   } catch (e) {
+    console.error('syncWeek error:', e);
     return res.status(500).json({ ok: false, error: e.message });
   }
 }
