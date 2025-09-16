@@ -1627,7 +1627,7 @@ function GamesTab({ session }) {
           Recuerda elegir: kickoff en <Countdown iso={nextKick} />
         </div>
       )}
-      {/* Modal Detalles de Juego */}
+            {/* Modal Detalles de Juego */}
       {details && (
         <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-[70]">
           <div className="w-full max-w-6xl bg-white rounded-2xl p-5 border card overflow-y-auto max-h-[90vh]">
@@ -1891,7 +1891,7 @@ function GamesTab({ session }) {
                   })}
                 </div>
               </div>
-            </div>{/* /grid principal */}
+            </div>
 
             {/* Comentarios */}
             <div className="mt-4 p-4 border rounded-xl bg-white">
@@ -1920,12 +1920,14 @@ function GamesTab({ session }) {
                 {(!notes || notes.length === 0) && <div className="text-xs text-gray-500">Sin comentarios.</div>}
               </div>
             </div>
-          </div>{/* /contenedor interno modal */}
-        </div>{/* /overlay */}
-      )}{/* /details conditional */}
-    </div>{/* /container */}
+          </div>
+        </div>
+      )}
+
+    </div>
   ); // end return
 } // end GamesTab
+
 	  
 
 /* ========================= Standings NFL ========================= */
