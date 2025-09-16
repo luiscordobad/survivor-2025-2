@@ -1954,13 +1954,16 @@ function GamesTab({ session }) {
                     <div className="text-sm mt-1">{n.note}</div>
                   </div>
                 ))}
-                {(!notes || notes.length === 0) && <div className="text-xs text-gray-500">Sin comentarios.</div>}
+                {(!notes || notes.length === 0) && (
+				<div className="text-xs text-gray-500">Sin comentarios.</div>
+				)}
               </div>
             </div>
           </div>
         </div>
       )}
-    </div> {/* /container */}
+    </div>
+	{/* /container */}
   ); // end return
 } // end GamesTab
   
