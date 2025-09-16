@@ -704,7 +704,6 @@ function GamesTab({ session }) {
     if (!allGamesSeason?.length || !allPicksSeason?.length) return;
     setPlayerStandings(recomputePlayerStandings(allPicksSeason, allGamesSeason));
   }, [allGamesSeason, allPicksSeason]);
-
   /* ---------- helpers picks ---------- */
   const myPickThisWeek = useMemo(
     () => (picks || []).find((p) => p.week === week && p.season === SEASON),
@@ -870,6 +869,7 @@ function GamesTab({ session }) {
       localStorage.setItem(bk, "1");
     }
     if (res === "loss") applyLivesIfNeeded(res);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [myPickThisWeek, gamesMap, week, uid]);
 
   // Auto-refresh si hay juegos en vivo
@@ -916,8 +916,7 @@ function GamesTab({ session }) {
         </div>
       </div>
     );
-    if (ended)
-      return (<div className="flex items-center justify-between">{score}<span className="badge">FINAL</span></div>);
+    if (ended) return (<div className="flex items-center justify-between">{score}<span className="badge">FINAL</span></div>);
     if (isLiveStatus(g.status))
       return (
         <div className="flex items-center justify-between">
@@ -1185,12 +1184,11 @@ function GamesTab({ session }) {
       </button>
     );
   };
-
   /* ========================= Render ========================= */
   const nextKick = nextKickoffISO;
 
   return (
-    <div className="max-w-6xl mx-auto p-4 md:p-6">
+    <div className="max-w-6xl mx-auto p-4 md:p-6">{/* container */}
       <header className="flex items-center justify-between gap-4">
         <div>
           <h1 className="text-3xl font-extrabold tracking-tight">{LEAGUE}</h1>
@@ -1480,9 +1478,8 @@ function GamesTab({ session }) {
           )}
         </div>
       </section>
-
       {/* Picks + popularidad */}
-      <section className="mt-6 grid md:grid-cols-2 gap-4">
+      <section className="mt-6 grid md-grid-cols-2 md:grid-cols-2 gap-4">
         <div className="p-4 border rounded-2xl bg-white card">
           <h2 className="font-semibold">Picks de la liga (W{week})</h2>
           <div className="overflow-x-auto">
@@ -1597,22 +1594,16 @@ function GamesTab({ session }) {
           </div>
         </div>
       </section>
-	  
-	        {/* Modal pick */}
+
+      {/* Modal pick */}
       {pendingPick && (
         <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50">
           <div className="w-full max-w-sm bg-white rounded-2xl p-5 border card">
             <h3 className="font-semibold text-lg">Confirmar pick</h3>
-            <p className="mt-2 text-sm">
-              ¿Confirmas tu pick de <b>{pendingPick.teamId}</b> en W{week}?
-            </p>
+            <p className="mt-2 text-sm">¿Confirmas tu pick de <b>{pendingPick.teamId}</b> en W{week}?</p>
             <div className="mt-4 flex gap-2">
-              <button className="px-4 py-2 rounded border" onClick={() => setPendingPick(null)}>
-                Cancelar
-              </button>
-              <button className="px-4 py-2 rounded bg-black text-white" onClick={doPick}>
-                Confirmar
-              </button>
+              <button className="px-4 py-2 rounded border" onClick={() => setPendingPick(null)}>Cancelar</button>
+              <button className="px-4 py-2 rounded bg-black text-white" onClick={doPick}>Confirmar</button>
             </div>
           </div>
         </div>
@@ -1626,9 +1617,7 @@ function GamesTab({ session }) {
               {resultBanner.type === "win" ? "¡Victoria!" : resultBanner.type === "loss" ? "Derrota" : "Push"}
             </h3>
             <p className="mt-2 text-sm">{resultBanner.msg}</p>
-            <button className="mt-4 px-4 py-2 rounded bg-black text-white" onClick={() => setResultBanner(null)}>
-              Cerrar
-            </button>
+            <button className="mt-4 px-4 py-2 rounded bg-black text-white" onClick={() => setResultBanner(null)}>Cerrar</button>
           </div>
         </div>
       )}
@@ -1638,7 +1627,6 @@ function GamesTab({ session }) {
           Recuerda elegir: kickoff en <Countdown iso={nextKick} />
         </div>
       )}
-
       {/* Modal Detalles de Juego */}
       {details && (
         <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-[70]">
@@ -1662,7 +1650,10 @@ function GamesTab({ session }) {
                 >
                   Ver en ESPN
                 </a>
-                <button className="px-3 py-1 rounded border text-sm" onClick={() => setDetails(null)}>
+                <button
+                  className="px-3 py-1 rounded border text-sm"
+                  onClick={() => setDetails(null)}
+                >
                   Cerrar
                 </button>
               </div>
@@ -1684,13 +1675,9 @@ function GamesTab({ session }) {
                       <div className="mb-2">
                         <div className="flex items-center justify-between text-sm">
                           <span className="font-mono">{label}</span>
-                          <span className="text-gray-500">
-                            Pick pop: <b>{pop}%</b>
-                          </span>
+                          <span className="text-gray-500">Pick pop: <b>{pop}%</b></span>
                         </div>
-                        <div className="progressbar mt-1">
-                          <div style={{ width: `${pct ?? 0}%` }} />
-                        </div>
+                        <div className="progressbar mt-1"><div style={{ width: `${pct ?? 0}%` }} /></div>
                         <div className="text-right text-xs text-gray-600">{pct != null ? `${pct}%` : "—"}</div>
                       </div>
                     );
@@ -1743,15 +1730,16 @@ function GamesTab({ session }) {
                       />
                     );
                   })()}
+
                   <div className="mt-3 text-xs text-gray-500">Histórico:</div>
                   <div className="grid grid-cols-2 gap-3 mt-2">
                     <div>
                       <div className="text-xs font-semibold mb-1">Spread Home</div>
-                      <Sparkline series={(oddsHistory || []).map((r) => r.spread_home).filter((v) => v != null)} />
+                      <Sparkline series={(oddsHistory || []).map(r => r.spread_home).filter(v => v != null)} />
                     </div>
                     <div>
                       <div className="text-xs font-semibold mb-1">Moneyline Home</div>
-                      <Sparkline series={(oddsHistory || []).map((r) => r.ml_home).filter((v) => v != null)} />
+                      <Sparkline series={(oddsHistory || []).map(r => r.ml_home).filter(v => v != null)} />
                     </div>
                   </div>
                 </div>
@@ -1760,27 +1748,21 @@ function GamesTab({ session }) {
                 <div className="p-4 border rounded-xl bg-white">
                   <div className="text-sm font-semibold mb-3">Últimos 5</div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
-                    {["home", "away"].map((side) => {
-                      const rows = recentForm?.[side] || [];
+                    {["home","away"].map(side => {
+                      const rows = (recentForm?.[side] || []);
                       const label = side === "home" ? details.game.home_team : details.game.away_team;
                       return (
                         <div key={side}>
                           <div className="font-semibold mb-1">{label}</div>
                           <div className="space-y-1">
-                            {rows.length ? (
-                              rows.map((r, i) => (
-                                <div key={i} className="flex items-center justify-between">
-                                  <span className="text-gray-600">
-                                    {DateTime.fromISO(r.date).setZone(TZ).toFormat("dd LLL")}
-                                  </span>
-                                  <span className="font-mono">{r.result}</span>
-                                  <span className="text-gray-700">{r.opp}</span>
-                                  <span className="font-mono">{r.score}</span>
-                                </div>
-                              ))
-                            ) : (
-                              <div className="text-xs text-gray-500">Sin datos.</div>
-                            )}
+                            {rows.length ? rows.map((r, i) => (
+                              <div key={i} className="flex items-center justify-between">
+                                <span className="text-gray-600">{DateTime.fromISO(r.date).setZone(TZ).toFormat("dd LLL")}</span>
+                                <span className="font-mono">{r.result}</span>
+                                <span className="text-gray-700">{r.opp}</span>
+                                <span className="font-mono">{r.score}</span>
+                              </div>
+                            )) : <div className="text-xs text-gray-500">Sin datos.</div>}
                           </div>
                         </div>
                       );
@@ -1792,11 +1774,11 @@ function GamesTab({ session }) {
               {/* Columna central */}
               <div className="space-y-4">
                 {/* Líderes */}
-                <div className="p-4 border rounded-xl bg-white">
+                <div className="p-4 border rounded-2xl bg-white">
                   <div className="text-sm font-semibold mb-3">Líderes</div>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    {["home", "away"].map((side) => {
-                      const rows = (leaders || []).filter((x) => x.side === side);
+                    {["home","away"].map(side => {
+                      const rows = (leaders || []).filter(x => x.side === side);
                       const label = side === "home" ? details.game.home_team : details.game.away_team;
                       return (
                         <div key={side}>
@@ -1805,16 +1787,12 @@ function GamesTab({ session }) {
                             <ul className="text-sm space-y-1">
                               {rows.map((r, i) => (
                                 <li key={i} className="flex justify-between">
-                                  <span className="text-gray-700">
-                                    {r.player} · {r.stat}
-                                  </span>
+                                  <span className="text-gray-700">{r.player} · {r.stat}</span>
                                   <span className="font-mono">{r.value}</span>
                                 </li>
                               ))}
                             </ul>
-                          ) : (
-                            <p className="text-xs text-gray-500">Sin datos de líderes.</p>
-                          )}
+                          ) : <p className="text-xs text-gray-500">Sin datos de líderes.</p>}
                         </div>
                       );
                     })}
@@ -1822,7 +1800,7 @@ function GamesTab({ session }) {
                 </div>
 
                 {/* Comparativa temporada */}
-                <div className="p-4 border rounded-xl bg-white">
+                <div className="p-4 border rounded-2xl bg-white">
                   <div className="text-sm font-semibold mb-3">Comparativa de equipos (temporada)</div>
                   <table className="w-full text-sm">
                     <thead className="text-xs text-gray-500">
@@ -1834,17 +1812,10 @@ function GamesTab({ session }) {
                     </thead>
                     <tbody>
                       {[
-                        ["PPG", "ppg"],
-                        ["Yds/G", "ypg"],
-                        ["Pass Y/G", "pass_ypg"],
-                        ["Rush Y/G", "rush_ypg"],
-                        ["Opp PPG", "opp_ppg"],
-                        ["Opp Y/G", "opp_ypg"],
-                        ["3rd down %", "third_down"],
-                        ["Red zone %", "red_zone"],
-                        ["TO Diff", "to_diff"],
-                        ["Sacks", "sacks"],
-                      ].map(([label, key]) => (
+                        ["PPG","ppg"],["Yds/G","ypg"],["Pass Y/G","pass_ypg"],["Rush Y/G","rush_ypg"],
+                        ["Opp PPG","opp_ppg"],["Opp Y/G","opp_ypg"],["3rd down %","third_down"],
+                        ["Red zone %","red_zone"],["TO Diff","to_diff"],["Sacks","sacks"],
+                      ].map(([label,key]) => (
                         <tr key={key}>
                           <td className="py-1 text-gray-600">{label}</td>
                           <td className="py-1 font-mono">{teamStats?.home?.[key] ?? "—"}</td>
@@ -1853,16 +1824,14 @@ function GamesTab({ session }) {
                       ))}
                     </tbody>
                   </table>
-                  <p className="mt-2 text-xs text-gray-500">
-                    Fuente: <code>season_team_stats</code>.
-                  </p>
+                  <p className="mt-2 text-xs text-gray-500">Fuente: <code>season_team_stats</code>.</p>
                 </div>
               </div>
 
               {/* Columna derecha */}
               <div className="space-y-4">
                 {/* Sede & Clima */}
-                <div className="p-4 border rounded-xl bg-white">
+                <div className="p-4 border rounded-2xl bg-white">
                   <div className="text-sm font-semibold mb-3">Sede & Clima</div>
                   <div className="space-y-1 text-sm">
                     <div>🏟️ {metaMap[details.game.id]?.stadium ?? "—"}</div>
@@ -1877,7 +1846,7 @@ function GamesTab({ session }) {
                 </div>
 
                 {/* Betting splits */}
-                <div className="p-4 border rounded-xl bg-white">
+                <div className="p-4 border rounded-2xl bg-white">
                   <div className="text-sm font-semibold mb-3">Betting Splits</div>
                   <div className="text-xs text-gray-500 mb-1">Tickets</div>
                   <div className="progressbar mb-2">
@@ -1899,36 +1868,30 @@ function GamesTab({ session }) {
                       return <div style={{ width: `${pctH}%` }} title={`${details.game.home_team} ${pctH}%`} />;
                     })()}
                   </div>
-                  <p className="mt-2 text-xs text-gray-500">
-                    Fuente: <code>betting_splits</code>.
-                  </p>
+                  <p className="mt-2 text-xs text-gray-500">Fuente: <code>betting_splits</code>.</p>
                 </div>
 
                 {/* Lesiones */}
-                <div className="p-4 border rounded-xl bg-white">
+                <div className="p-4 border rounded-2xl bg-white">
                   <div className="text-sm font-semibold mb-3">Lesionados</div>
-                  {["home", "away"].map((side) => {
+                  {["home","away"].map(side => {
                     const team = side === "home" ? details.game.home_team : details.game.away_team;
-                    const rows = (injuries || []).filter((i) => i.team_id === team);
+                    const rows = (injuries || []).filter(i => i.team_id === team);
                     return (
                       <div key={side} className="mb-3">
                         <div className="font-semibold text-xs mb-1">{team}</div>
-                        {rows.length ? (
-                          rows.slice(0, 5).map((r, i) => (
-                            <div key={i} className="text-sm flex items-center justify-between">
-                              <span>{r.player}</span>
-                              <span className="text-gray-600">{r.status}</span>
-                            </div>
-                          ))
-                        ) : (
-                          <p className="text-xs text-gray-500">Sin datos.</p>
-                        )}
+                        {rows.length ? rows.slice(0,5).map((r,i) => (
+                          <div key={i} className="text-sm flex items-center justify-between">
+                            <span>{r.player}</span>
+                            <span className="text-gray-600">{r.status}</span>
+                          </div>
+                        )) : <p className="text-xs text-gray-500">Sin datos.</p>}
                       </div>
                     );
                   })}
                 </div>
               </div>
-            </div>
+            </div>{/* /grid principal */}
 
             {/* Comentarios */}
             <div className="mt-4 p-4 border rounded-xl bg-white">
@@ -1954,19 +1917,16 @@ function GamesTab({ session }) {
                     <div className="text-sm mt-1">{n.note}</div>
                   </div>
                 ))}
-                {(!notes || notes.length === 0) && (
-				<div className="text-xs text-gray-500">Sin comentarios.</div>
-				)}
+                {(!notes || notes.length === 0) && <div className="text-xs text-gray-500">Sin comentarios.</div>}
               </div>
             </div>
-          </div>
-        </div>
-      )}
-    </div>
-	{/* /container */}
+          </div>{/* /contenedor interno modal */}
+        </div>{/* /overlay */}
+      )}{/* /details conditional */}
+    </div>{/* /container */}
   ); // end return
 } // end GamesTab
-  
+	  
 
 /* ========================= Standings NFL ========================= */
 /* ========================= Standings NFL ========================= */
