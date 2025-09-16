@@ -1868,6 +1868,7 @@ function StandingsTab() {
 
 
 /* ========================= Asistente de Picks ========================= */
+/* ========================= Asistente de Picks ========================= */
 function AssistantTab({ session }) {
   const uid = session?.user?.id || null;
 
@@ -1879,29 +1880,24 @@ function AssistantTab({ session }) {
   const [oddsPairs, setOddsPairs] = useState({});
   const [leaguePicks, setLeaguePicks] = useState([]);
   const [myPick, setMyPick] = useState(null);
-  const [popularity, setPopularity] = useState([]);
 
   const [pendingPick, setPendingPick] = useState(null);
 
-  // Cargas
+  // ---------- Carga de datos ----------
   useEffect(() => {
     (async () => {
       const email = session?.user?.email;
       if (!email || !uid) return;
 
-      // perfil
       const { data: prof } = await supabase.from("profiles").select("*").eq("id", uid).single();
       setMe(prof || null);
 
-      // teams
-      const { data: ts } = await supabase.from("teams").select("*");
+      const { data: ts } = await supabase.from("teams").select("id,name,logo_url");
       const map = {}; (ts || []).forEach((t) => (map[t.id] = t));
       setTeamsMap(map);
 
-      // juegos + odds
       await loadGamesA(week);
 
-      // pick mío
       const { data: myPicks } = await supabase
         .from("picks")
         .select("*")
@@ -1911,7 +1907,6 @@ function AssistantTab({ session }) {
         .limit(1);
       setMyPick(myPicks?.[0] || null);
 
-      // picks de liga (para popularidad)
       await loadLeaguePicksA(week);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1947,24 +1942,28 @@ function AssistantTab({ session }) {
       .eq("season", SEASON)
       .eq("week", w);
     setLeaguePicks(pks || []);
-    const counts = {};
-    (pks || []).forEach((p) => { if (p.team_id) counts[p.team_id] = (counts[p.team_id] || 0) + 1; });
-    // aproximamos total por número de perfiles (si existe) o por jugadores con pick
-    let totalPlayers = 0;
-    try {
-      const { count } = await supabase.from("profiles").select("*", { count: "exact", head: true });
-      totalPlayers = count || 0;
-    } catch { totalPlayers = new Set((pks || []).map(p => p.user_id)).size; }
-    const list = Object.entries(counts)
-      .map(([team_id, count]) => ({ team_id, count, pct: totalPlayers ? Math.round((count * 100) / totalPlayers) : 0 }))
-      .sort((a, b) => b.count - a.count);
-    setPopularity(list);
   };
 
-  // Helpers
+  // ---------- Helpers ----------
   const gamesMap = useMemo(() => {
     const m = {}; (games || []).forEach((g) => (m[g.id] = g)); return m;
   }, [games]);
+
+  const mySeasonTeams = useMemo(() => {
+    return new Set((leaguePicks || []).filter(p => p.user_id === uid).map(p => p.team_id));
+  }, [leaguePicks, uid]);
+
+  function popPct(teamId) {
+    // Popularidad = % de jugadores que pickearon ese equipo esta semana
+    const counts = {};
+    (leaguePicks || []).forEach((p) => { if (p.team_id) counts[p.team_id] = (counts[p.team_id] || 0) + 1; });
+    let totalPlayers = 0;
+    // aproximación: jugadores que han pickeado o total de perfiles si disponible
+    totalPlayers = new Set((leaguePicks || []).map(p=>p.user_id)).size;
+    if (!totalPlayers) return 0;
+    const count = counts[teamId] || 0;
+    return Math.round((count * 100) / totalPlayers);
+  }
 
   const pickFrozen = useMemo(() => {
     if (!myPick) return false;
@@ -1982,21 +1981,10 @@ function AssistantTab({ session }) {
       if (!same) return { ok: false, reason: "FROZEN" };
     }
     if (DateTime.fromISO(game.start_time) <= DateTime.now()) return { ok: false, reason: "LOCK" };
-    // no repetir equipo en la temporada
-    // (traemos todos mis picks de temporada para validar)
     return { ok: true };
   };
 
-  const mySeasonTeams = useMemo(() => {
-    // construimos a partir de leaguePicks cuando user_id === uid (rápido y suficiente)
-    return new Set((leaguePicks || []).filter(p => p.user_id === uid).map(p => p.team_id));
-  }, [leaguePicks, uid]);
-
-  function popPct(teamId) {
-    return popularity.find((p) => p.team_id === teamId)?.pct ?? 0;
-  }
-
-  // Modelos de recomendación (sencillos y explicables)
+  // Puntuar todas las opciones (equipo por juego)
   const scored = useMemo(() => {
     const rows = [];
     (games || []).forEach((g) => {
@@ -2005,7 +1993,7 @@ function AssistantTab({ session }) {
       const mlH = last?.ml_home ?? null;
       const mlA = last?.ml_away ?? null;
 
-      const wpHome = winProbFromSpread(spreadH);
+      const wpHome = winProbFromSpread(spreadH);                  // ~prob ganar home
       const wpAway = wpHome != null ? Math.max(0, 100 - wpHome) : null;
 
       const addRow = (teamId, wp, fav) => {
@@ -2017,48 +2005,58 @@ function AssistantTab({ session }) {
           teamId,
           wp: wp ?? null,
           fav,
-          diffScore: (wp != null ? wp : 0) - pct, // prob ganar - popularidad
-          riskScore: (wp != null ? 100 - wp : 100) + pct, // menor es mejor seguro
+          pop: pct,
           used,
           locked,
+          diffScore: (wp != null ? wp : 0) - pct,       // alto => buen valor diferencial
+          safetyScore: (wp != null ? wp : 0) - (pct / 4)  // prioriza win% pero castiga mucha popularidad
         });
       };
 
-      // home
       const favHome = (mlH != null && mlA != null) ? mlH < mlA : (spreadH != null ? spreadH < 0 : false);
       addRow(g.home_team, wpHome, favHome);
-      // away
+
       const favAway = (mlH != null && mlA != null) ? mlA < mlH : (spreadH != null ? spreadH > 0 : false);
       addRow(g.away_team, wpAway, favAway);
     });
     return rows;
-  }, [games, oddsPairs, popularity, mySeasonTeams]);
+  }, [games, oddsPairs, leaguePicks, mySeasonTeams]);
 
-  const bestSafe = useMemo(() => {
-    // alto wp, no usado, no locked
+  // Listas finales
+  const safePicks = useMemo(() => {
+    // Criterio: win% >= 60, no usado, no locked, orden por safetyScore, tomar top 3
     return scored
-      .filter(r => !r.locked && !r.used)
-      .sort((a, b) => (b.wp ?? -1) - (a.wp ?? -1))
-      [0] || null;
-  }, [scored]);
-
-  const bestDifferential = useMemo(() => {
-    // buena prob pero poco popular (alta diffScore), no usado, no locked
-    return scored
-      .filter(r => !r.locked && !r.used && (r.wp ?? 0) >= 50)
-      .sort((a, b) => (b.diffScore) - (a.diffScore))
-      [0] || null;
-  }, [scored]);
-
-  const trapGames = useMemo(() => {
-    // favoritos muy populares pero wp no tan alto
-    return scored
-      .filter(r => r.fav && (r.wp ?? 0) <= 58 && popPct(r.teamId) >= 35)
-      .sort((a, b) => (b.wp ?? 0) - (a.wp ?? 0))
+      .filter(r => !r.locked && !r.used && (r.wp ?? 0) >= 60)
+      .sort((a,b) => (b.safetyScore - a.safetyScore) || (b.wp - a.wp))
       .slice(0, 3);
   }, [scored]);
 
-  // UI helpers
+  const differentialPicks = useMemo(() => {
+    // Criterio: pop <= 25, win% >= 50 (o >=48 si hay pocos), no usado, no locked
+    let list = scored
+      .filter(r => !r.locked && !r.used && ((r.wp ?? 0) >= 50) && r.pop <= 25)
+      .sort((a,b)=> (b.diffScore - a.diffScore) || (b.wp - a.wp))
+      .slice(0, 6);
+    if (list.length < 5) {
+      // rellena con opciones de buen valor aunque pop hasta 35 o wp >=48
+      const extra = scored
+        .filter(r => !r.locked && !r.used && ((r.wp ?? 0) >= 48) && r.pop <= 35)
+        .sort((a,b)=> (b.diffScore - a.diffScore) || (b.wp - a.wp));
+      const set = new Set(list.map(x=>`${x.game.id}_${x.teamId}`));
+      for (const r of extra) { if (set.size >= 6) break; if (!set.has(`${r.game.id}_${r.teamId}`)) { list.push(r); set.add(`${r.game.id}_${r.teamId}`);} }
+    }
+    return list.slice(0,6);
+  }, [scored]);
+
+  const trapPicks = useMemo(() => {
+    // Criterio: favorito muy popular (>=35%) con win% no tan alto (<=58) => posibles "trampas"
+    return scored
+      .filter(r => r.fav && (r.wp ?? 0) <= 58 && r.pop >= 35)
+      .sort((a,b)=> (b.pop - a.pop) || ((a.wp ?? 0) - (b.wp ?? 0)))
+      .slice(0, 3);
+  }, [scored]);
+
+  // ---------- UI ----------
   const TeamMini = ({ id }) => {
     const logo = teamsMap[id]?.logo_url || `/teams/${id}.png`;
     return (
@@ -2069,17 +2067,12 @@ function AssistantTab({ session }) {
     );
   };
 
-  const PickButton = ({ rec }) => {
+  const CardRow = ({ rec }) => {
     if (!rec) return null;
     const disqUsed = mySeasonTeams.has(rec.teamId);
     const lock = DateTime.fromISO(rec.game.start_time) <= DateTime.now();
     const c = canPick(rec.game, rec.teamId);
     const disabled = !c.ok || disqUsed || lock;
-
-    const explain =
-      `Win% ~ ${rec.wp ?? "—"}% · Popularidad ${popPct(rec.teamId)}%` +
-      (disqUsed ? " · (ya usaste este equipo)" : "") +
-      (lock ? " · (bloqueado por kickoff)" : "");
 
     return (
       <div className="p-3 border rounded-xl bg-white card">
@@ -2087,9 +2080,13 @@ function AssistantTab({ session }) {
           <div className="text-sm">
             <div className="font-semibold flex items-center gap-2">
               <TeamMini id={rec.teamId} />
-              <span className="text-xs text-gray-500">vs {rec.game.home_team === rec.teamId ? rec.game.away_team : rec.game.home_team}</span>
+              <span className="text-xs text-gray-500">
+                vs {rec.game.home_team === rec.teamId ? rec.game.away_team : rec.game.home_team}
+              </span>
             </div>
-            <div className="text-xs text-gray-600 mt-1">{explain}</div>
+            <div className="text-xs text-gray-600 mt-1">
+              Win% ~ {rec.wp ?? "—"}% · Popularidad {rec.pop}% {disqUsed ? "· (ya usado)" : ""} {lock ? "· (bloqueado)" : ""}
+            </div>
           </div>
           <button
             className={clsx("px-3 py-1 rounded border text-sm", disabled ? "opacity-50 cursor-not-allowed" : "bg-black text-white")}
@@ -2118,7 +2115,6 @@ function AssistantTab({ session }) {
         });
         if (error) throw error;
       }
-      // refrescar estado local
       const { data: myPicks } = await supabase
         .from("picks").select("*")
         .eq("user_id", uid).eq("season", SEASON).eq("week", week).limit(1);
@@ -2151,28 +2147,47 @@ function AssistantTab({ session }) {
       )}
 
       <div className="mt-4 grid gap-4">
+        {/* Seguras (top 3) */}
         <div className="p-4 border rounded-2xl bg-white card">
-          <h3 className="font-semibold mb-2">Recomendación segura</h3>
-          {bestSafe ? <PickButton rec={bestSafe} /> : <p className="text-sm text-gray-500">Aún no hay datos suficientes.</p>}
+          <h3 className="font-semibold mb-2">Recomendaciones seguras</h3>
+          {safePicks.length ? (
+            <div className="space-y-2">
+              {safePicks.map((r, i) => (<CardRow key={`safe-${i}`} rec={r} />))}
+            </div>
+          ) : (
+            <p className="text-sm text-gray-500">Aún no hay datos suficientes.</p>
+          )}
         </div>
 
+        {/* Diferenciales (5-6) */}
         <div className="p-4 border rounded-2xl bg-white card">
-          <h3 className="font-semibold mb-2">Recomendación diferencial</h3>
-          {bestDifferential ? <PickButton rec={bestDifferential} /> : <p className="text-sm text-gray-500">Sin diferenciales claros por ahora.</p>}
+          <h3 className="font-semibold mb-2">Recomendaciones diferenciales</h3>
+          {differentialPicks.length ? (
+            <div className="space-y-2">
+              {differentialPicks.map((r, i) => (<CardRow key={`diff-${i}`} rec={r} />))}
+            </div>
+          ) : (
+            <p className="text-sm text-gray-500">Sin diferenciales claros por ahora.</p>
+          )}
         </div>
 
+        {/* Trampas (2-3) */}
         <div className="p-4 border rounded-2xl bg-white card">
           <h3 className="font-semibold mb-2">Candidatos trampa (para evitar)</h3>
-          {trapGames?.length ? (
+          {trapPicks.length ? (
             <div className="space-y-2">
-              {trapGames.map((r, i) => (
-                <div key={i} className="p-3 border rounded-xl bg-white">
+              {trapPicks.map((r, i) => (
+                <div key={`trap-${i}`} className="p-3 border rounded-xl bg-white">
                   <div className="flex items-center justify-between text-sm">
                     <div className="flex items-center gap-2">
                       <TeamMini id={r.teamId} />
-                      <span className="text-xs text-gray-500">vs {r.game.home_team === r.teamId ? r.game.away_team : r.game.home_team}</span>
+                      <span className="text-xs text-gray-500">
+                        vs {r.game.home_team === r.teamId ? r.game.away_team : r.game.home_team}
+                      </span>
                     </div>
-                    <div className="text-xs text-gray-600">Win% ~ {r.wp ?? "—"}% · Pop {popPct(r.teamId)}%</div>
+                    <div className="text-xs text-gray-600">
+                      Fav · Win% ~ {r.wp ?? "—"}% · Pop {r.pop}%
+                    </div>
                   </div>
                 </div>
               ))}
@@ -2188,9 +2203,7 @@ function AssistantTab({ session }) {
         <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50">
           <div className="w-full max-w-sm bg-white rounded-2xl p-5 border card">
             <h3 className="font-semibold text-lg">Confirmar pick</h3>
-            <p className="mt-2 text-sm">
-              ¿Confirmas tu pick de <b>{pendingPick.teamId}</b> en W{week}?
-            </p>
+            <p className="mt-2 text-sm">¿Confirmas tu pick de <b>{pendingPick.teamId}</b> en W{week}?</p>
             <div className="mt-4 flex gap-2">
               <button className="px-4 py-2 rounded border" onClick={() => setPendingPick(null)}>Cancelar</button>
               <button className="px-4 py-2 rounded bg-black text-white" onClick={doPick}>Confirmar</button>
@@ -2201,6 +2214,7 @@ function AssistantTab({ session }) {
     </div>
   );
 }
+
 
 /* ========================= Noticias ========================= */
 function NewsTab() {
