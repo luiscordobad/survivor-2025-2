@@ -3,6 +3,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { DateTime } from "luxon";
 import { supabase } from "./lib/supabaseClient";
 import Rules from "./Rules";
+/* ========================= Se agrego para NewsTab ========================= */
+import React, { useState, useEffect, useMemo } from "react";
+
 
 /* ========================= Config ========================= */
 const TZ = import.meta.env.VITE_TZ || "America/Mexico_City";
@@ -2217,7 +2220,7 @@ function AssistantTab({ session }) {
 
 
 /* ========================= Noticias ========================= */
-import { useState, useEffect, useMemo } from "react";
+// NO imports aquí. Ya importaste useState/useEffect/useMemo arriba.
 
 function NewsTab() {
   const [items, setItems] = useState([]);
@@ -2225,7 +2228,6 @@ function NewsTab() {
   const [err, setErr] = useState(null);
   const [q, setQ] = useState("");
 
-  // Feeds de respaldo
   const RSS_FEEDS = [
     { source: "ESPN NFL", url: "https://api.rss2json.com/v1/api.json?rss_url=https://www.espn.com/espn/rss/nfl/news" },
     { source: "NFL.com", url: "https://api.rss2json.com/v1/api.json?rss_url=https://www.nfl.com/rss/rsslanding?searchString=home" },
@@ -2251,7 +2253,6 @@ function NewsTab() {
         .select("id,title,url,source,published_at,summary,team_id")
         .order("published_at", { ascending: false })
         .limit(30);
-
       if (error) throw error;
       return data || [];
     } catch {
@@ -2357,6 +2358,6 @@ function NewsTab() {
     </div>
   );
 }
+// NO export aquí; en este archivo ya existe `export default App`
 
-export default NewsTab;
 
