@@ -1185,225 +1185,178 @@ function GamesTab({ session }) {
     );
   };
   /* ========================= Render ========================= */
+  const nextKick = nextKickoffISO;
 
-/* ==== Helpers de Standings (W-L-T) ==== */
-
-/** Devuelve nombre a mostrar (prefiere standings.display_name, luego userNames, luego id) */
-const displayNameFor = (userId) => {
-  const byIdFromStandings = (standings || []).find(s => s.user_id === userId)?.display_name;
-  if (byIdFromStandings) return byIdFromStandings;
-  if (userNames[userId]) return userNames[userId];
-  return userId?.slice(0, 6) || "—";
-};
-
-/** Ordenamiento por: Wins desc, Losses asc, Ties desc; como fallback usa playerStandings */
-const leagueStandings = useMemo(() => {
-  // Si tu tabla "standings" ya trae wins/losses/pushes y (opcional) lives, úsala
-  if ((standings || []).length) {
-    return (standings || [])
-      .map(s => ({
-        user_id: s.user_id,
-        name: s.display_name || displayNameFor(s.user_id),
-        w: Number(s.wins ?? s.w ?? 0),
-        l: Number(s.losses ?? s.l ?? 0),
-        t: Number(s.pushes ?? s.t ?? 0),
-        lives: Number(s.lives ?? 0)
-      }))
-      .sort((a, b) => b.w - a.w || a.l - b.l || b.t - a.t || a.name.localeCompare(b.name));
-  }
-  // Si no, recurre a los standings computados por picks (playerStandings)
-  return (playerStandings || [])
-    .map(r => ({
-      user_id: r.user_id,
-      name: displayNameFor(r.user_id),
-      w: Number(r.w ?? 0),
-      l: Number(r.l ?? 0),
-      t: Number(r.t ?? 0),
-      lives: (standings || []).find(s => s.user_id === r.user_id)?.lives ?? (me?.id === r.user_id ? me?.lives : undefined)
-    }))
-    .sort((a, b) => b.w - a.w || a.l - b.l || b.t - a.t || a.name.localeCompare(b.name));
-}, [standings, playerStandings, userNames, me?.id, me?.lives]);
-
-/** Win% mostrado con 1 decimal */
-const winPct = (w, l, t = 0) => {
-  const gp = w + l + t;
-  if (!gp) return "—";
-  return `${((w / gp) * 100).toFixed(1)}%`;
-};
-
-const nextKick = nextKickoffISO;
-
-return (
-  <div className="max-w-6xl mx-auto p-4 md:p-6">{/* container */}
-    <header className="flex items-center justify-between gap-4">
-      <div>
-        <h1 className="text-3xl font-extrabold tracking-tight">{LEAGUE}</h1>
-        {lastUpdated && (
-          <p className="text-xs text-gray-500">
-            Actualizado: {DateTime.fromISO(lastUpdated).setZone(TZ).toFormat("dd LLL HH:mm:ss")}
+  return (
+    <div className="max-w-6xl mx-auto p-4 md:p-6">{/* container */}
+      <header className="flex items-center justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-extrabold tracking-tight">{LEAGUE}</h1>
+          {lastUpdated && (
+            <p className="text-xs text-gray-500">
+              Actualizado: {DateTime.fromISO(lastUpdated).setZone(TZ).toFormat("dd LLL HH:mm:ss")}
+            </p>
+          )}
+        </div>
+        <div className="flex items-center gap-3">
+          <p className="text-sm text-gray-700">
+            Hola, <b>{me?.display_name}</b> · Vidas:{" "}
+            <span
+              className={clsx(
+                "inline-block px-2 py-0.5 rounded",
+                (me?.lives ?? 0) > 0 ? "bg-emerald-100 text-emerald-800" : "bg-rose-100 text-rose-800"
+              )}
+            >
+              {me?.lives ?? 0}
+            </span>
           </p>
-        )}
-      </div>
-      <div className="flex items-center gap-3">
-        <p className="text-sm text-gray-700">
-          Hola, <b>{me?.display_name}</b> · Vidas:{" "}
-          <span
-            className={clsx(
-              "inline-block px-2 py-0.5 rounded",
-              (me?.lives ?? 0) > 0 ? "bg-emerald-100 text-emerald-800" : "bg-rose-100 text-rose-800"
-            )}
-          >
-            {me?.lives ?? 0}
-          </span>
-        </p>
-        <button className="text-sm underline" onClick={() => supabase.auth.signOut()}>Salir</button>
-      </div>
-    </header>
+          <button className="text-sm underline" onClick={() => supabase.auth.signOut()}>Salir</button>
+        </div>
+      </header>
 
-    {(me?.lives ?? 0) <= 0 && (
-      <div className="mt-3 p-3 border-2 border-rose-300 rounded-xl bg-rose-50 text-rose-900 text-sm">
-        Estás <b>eliminado</b> 😵‍💫 — puedes seguir chismoseando la liga, pero ya no puedes pickear.
-      </div>
-    )}
+      {(me?.lives ?? 0) <= 0 && (
+        <div className="mt-3 p-3 border-2 border-rose-300 rounded-xl bg-rose-50 text-rose-900 text-sm">
+          Estás <b>eliminado</b> 😵‍💫 — puedes seguir chismoseando la liga, pero ya no puedes pickear.
+        </div>
+      )}
 
-    {showPickAlert && (me?.lives ?? 0) > 0 && (
-      <div className="mt-3 p-3 border-2 border-amber-300 rounded-xl bg-amber-50 text-amber-900 text-sm">
-        🔔 Aún no tienes pick en W{week}. El primer kickoff es en <b><Countdown iso={nextKick} /></b>.
-      </div>
-    )}
+      {showPickAlert && (me?.lives ?? 0) > 0 && (
+        <div className="mt-3 p-3 border-2 border-amber-300 rounded-xl bg-amber-50 text-amber-900 text-sm">
+          🔔 Aún no tienes pick en W{week}. El primer kickoff es en <b><Countdown iso={nextKick} /></b>.
+        </div>
+      )}
 
-    {/* Toolbar */}
-    <section className="mt-4 grid md:grid-cols-3 gap-4">
-      <div className="p-4 border rounded-2xl bg-white card">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <label className="text-xs text-gray-500">Semana</label>
-            <select className="border p-1 rounded-lg" value={week} onChange={(e) => setWeek(Number(e.target.value))}>
-              {Array.from({ length: 18 }, (_, i) => i + 1).map((w) => (
-                <option key={w} value={w}>W{w}</option>
+      {/* Toolbar */}
+      <section className="mt-4 grid md:grid-cols-3 gap-4">
+        <div className="p-4 border rounded-2xl bg-white card">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <label className="text-xs text-gray-500">Semana</label>
+              <select className="border p-1 rounded-lg" value={week} onChange={(e) => setWeek(Number(e.target.value))}>
+                {Array.from({ length: 18 }, (_, i) => i + 1).map((w) => (
+                  <option key={w} value={w}>W{w}</option>
+                ))}
+              </select>
+            </div>
+            <div className="flex gap-1 text-xs">
+              {["ALL", "THU", "FRI", "SAT", "SUN", "MON"].map((d) => (
+                <button
+                  key={d}
+                  className={clsx("px-2 py-1 rounded border", dayFilter === d && "bg-black text-white")}
+                  onClick={() => setDayFilter(d)}
+                >
+                  {d}
+                </button>
               ))}
-            </select>
+            </div>
           </div>
-          <div className="flex gap-1 text-xs">
-            {["ALL", "THU", "FRI", "SAT", "SUN", "MON"].map((d) => (
+
+          <input
+            ref={searchRef}
+            className="mt-3 border w-full p-2 rounded-lg"
+            placeholder="Buscar equipo..."
+            value={teamQuery}
+            onChange={(e) => setTeamQuery(e.target.value)}
+          />
+
+          {/* Estado */}
+          <div className="mt-3 flex gap-1 text-xs">
+            {["ALL","LIVE","FINAL","UPCOMING"].map(s => (
               <button
-                key={d}
-                className={clsx("px-2 py-1 rounded border", dayFilter === d && "bg-black text-white")}
-                onClick={() => setDayFilter(d)}
+                key={s}
+                className={clsx("px-2 py-1 rounded border", statusFilter === s && "bg-black text-white")}
+                onClick={() => setStatusFilter(s)}
               >
-                {d}
+                {s}
               </button>
             ))}
           </div>
-        </div>
 
-        <input
-          ref={searchRef}
-          className="mt-3 border w-full p-2 rounded-lg"
-          placeholder="Buscar equipo..."
-          value={teamQuery}
-          onChange={(e) => setTeamQuery(e.target.value)}
-        />
+          {/* Diferenciales */}
+          <div className="mt-3 flex items-center gap-3 text-xs">
+            <label className="inline-flex items-center gap-2">
+              <input type="checkbox" checked={onlyDiff} onChange={(e) => setOnlyDiff(e.target.checked)} />
+              Solo diferenciales
+            </label>
+            <div className="inline-flex items-center gap-1">
+              <span>umbral:</span>
+              <input
+                type="number"
+                className="border rounded px-2 py-1 w-16"
+                min={1} max={49}
+                value={diffCutoff}
+                onChange={(e) => setDiffCutoff(Math.max(1, Math.min(49, Number(e.target.value) || 20)))}
+              />
+              <span>%</span>
+            </div>
+          </div>
 
-        {/* Estado */}
-        <div className="mt-3 flex gap-1 text-xs">
-          {["ALL","LIVE","FINAL","UPCOMING"].map(s => (
+          <div className="mt-3 grid grid-cols-2 gap-2">
             <button
-              key={s}
-              className={clsx("px-2 py-1 rounded border", statusFilter === s && "bg-black text-white")}
-              onClick={() => setStatusFilter(s)}
+              className="text-xs px-3 py-1 rounded border"
+              onClick={() =>
+                downloadCSV("mis_picks.csv", [
+                  ["week", "team_id", "result", "auto_pick", "updated_at"],
+                  ...(picks || []).map((p) => [p.week, p.team_id, p.result, p.auto_pick, p.updated_at]),
+                ])
+              }
             >
-              {s}
+              Exportar mis picks (CSV)
             </button>
-          ))}
-        </div>
-
-        {/* Diferenciales */}
-        <div className="mt-3 flex items-center gap-3 text-xs">
-          <label className="inline-flex items-center gap-2">
-            <input type="checkbox" checked={onlyDiff} onChange={(e) => setOnlyDiff(e.target.checked)} />
-            Solo diferenciales
-          </label>
-          <div className="inline-flex items-center gap-1">
-            <span>umbral:</span>
-            <input
-              type="number"
-              className="border rounded px-2 py-1 w-16"
-              min={1} max={49}
-              value={diffCutoff}
-              onChange={(e) => setDiffCutoff(Math.max(1, Math.min(49, Number(e.target.value) || 20)))}
-            />
-            <span>%</span>
+            <button
+              className="text-xs px-3 py-1 rounded border"
+              onClick={() =>
+                downloadCSV("standings.csv", [
+                  ["player", "lives", "wins", "losses", "pushes", "margin_sum"],
+                  ...(standings || []).map((s) => [s.display_name, s.lives, s.wins, s.losses, s.pushes, s.margin_sum]),
+                ])
+              }
+            >
+              Exportar standings (CSV)
+            </button>
+            <AutoPickButtons week={week} session={session} />
           </div>
         </div>
 
-        <div className="mt-3 grid grid-cols-2 gap-2">
-          <button
-            className="text-xs px-3 py-1 rounded border"
-            onClick={() =>
-              downloadCSV("mis_picks.csv", [
-                ["week", "team_id", "result", "auto_pick", "updated_at"],
-                ...(picks || []).map((p) => [p.week, p.team_id, p.result, p.auto_pick, p.updated_at]),
-              ])
-            }
-          >
-            Exportar mis picks (CSV)
-          </button>
-          <button
-            className="text-xs px-3 py-1 rounded border"
-            onClick={() =>
-              downloadCSV("standings.csv", [
-                ["player", "lives", "wins", "losses", "pushes", "margin_sum"],
-                ...(standings || []).map((s) => [s.display_name, s.lives, s.wins, s.losses, s.pushes, s.margin_sum]),
-              ])
-            }
-          >
-            Exportar standings (CSV)
-          </button>
-          <AutoPickButtons week={week} session={session} />
+        <div className="md:col-span-2 p-4 border rounded-2xl bg-white card">
+          <h3 className="font-semibold">Resumen</h3>
+          <p className="text-sm text-gray-600">
+            Elige tu pick en los partidos de abajo. Lock “rolling” por partido. Win/Loss se marca automáticamente cuando
+            el juego es FINAL. Usa los filtros para LIVE/FINAL/UPCOMING y el switch de diferenciales.
+          </p>
         </div>
-      </div>
+      </section>
 
-      <div className="md:col-span-2 p-4 border rounded-2xl bg-white card">
-        <h3 className="font-semibold">Resumen</h3>
-        <p className="text-sm text-gray-600">
-          Elige tu pick en los partidos de abajo. Lock “rolling” por partido. Win/Loss se marca automáticamente cuando
-          el juego es FINAL. Usa los filtros para LIVE/FINAL/UPCOMING y el switch de diferenciales.
-        </p>
-      </div>
-    </section>
+      {/* Partidos */}
+      <section className="mt-4 p-4 border rounded-2xl bg-white card">
+        <h2 className="font-semibold mb-3">Partidos W{week}</h2>
+        <div className="space-y-3">
+          {gamesFiltered.map((g) => {
+            const locked = DateTime.fromISO(g.start_time) <= DateTime.now();
+            const local = DateTime.fromISO(g.start_time).setZone(TZ).toFormat("EEE dd LLL HH:mm");
+            const { last } = oddsPairs[g.id] || {};
+            const spreadHome = last?.spread_home ?? null;
+            const spreadAway = last?.spread_away ?? null;
+            const mlHome = last?.ml_home ?? null;
+            const mlAway = last?.ml_away ?? null;
+            const wpHome = winProbFromSpread(spreadHome) ?? null;
+            const wpAway = winProbFromSpread(-spreadHome) ?? (wpHome != null ? 100 - wpHome : null);
 
-    {/* Partidos */}
-    <section className="mt-4 p-4 border rounded-2xl bg-white card">
-      <h2 className="font-semibold mb-3">Partidos W{week}</h2>
-      <div className="space-y-3">
-        {gamesFiltered.map((g) => {
-          const locked = DateTime.fromISO(g.start_time) <= DateTime.now();
-          const local = DateTime.fromISO(g.start_time).setZone(TZ).toFormat("EEE dd LLL HH:mm");
-          const { last } = oddsPairs[g.id] || {};
-          const spreadHome = last?.spread_home ?? null;
-          const spreadAway = last?.spread_away ?? null;
-          const mlHome = last?.ml_home ?? null;
-          const mlAway = last?.ml_away ?? null;
-          const wpHome = winProbFromSpread(spreadHome) ?? null;
-          const wpAway = winProbFromSpread(-spreadHome) ?? (wpHome != null ? 100 - wpHome : null);
+            const badge = timeBadge(g);
+            const w = weatherMap[g.id];
+            const m = metaMap[g.id];
+            const tps = tipsMap[g.id] || [];
 
-          const badge = timeBadge(g);
-          const w = weatherMap[g.id];
-          const m = metaMap[g.id];
-          const tps = tipsMap[g.id] || [];
+            const h2h = lastMatchupsSummary(g.home_team, g.away_team, 3);
+            const stHome = teamStreak(g.home_team);
+            const stAway = teamStreak(g.away_team);
 
-          const h2h = lastMatchupsSummary(g.home_team, g.away_team, 3);
-          const stHome = teamStreak(g.home_team);
-          const stAway = teamStreak(g.away_team);
+            const lpForGame = (leaguePicks || []).filter(p => p.game_id === g.id);
+            const whoPickedHome = lpForGame.filter(p => p.team_id === g.home_team).map(p => userNames[p.user_id] || p.user_id.slice(0,6));
+            const whoPickedAway = lpForGame.filter(p => p.team_id === g.away_team).map(p => userNames[p.user_id] || p.user_id.slice(0,6));
 
-          const lpForGame = (leaguePicks || []).filter(p => p.game_id === g.id);
-          const whoPickedHome = lpForGame.filter(p => p.team_id === g.home_team).map(p => userNames[p.user_id] || p.user_id.slice(0,6));
-          const whoPickedAway = lpForGame.filter(p => p.team_id === g.away_team).map(p => userNames[p.user_id] || p.user_id.slice(0,6));
-
-          return (
-            <div id={`game-${g.id}`} key={g.id} className={clsx("p-4 border
-
+            return (
+              <div id={`game-${g.id}`} key={g.id} className={clsx("p-4 border rounded-xl card", locked && "opacity-60")}>
                 <div className="flex items-center justify-between">
                   <div className="text-sm flex items-center gap-2 flex-wrap">
                     <TeamChip id={g.away_team} />
