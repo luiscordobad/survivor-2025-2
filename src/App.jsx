@@ -704,6 +704,7 @@ function GamesTab({ session }) {
     if (!allGamesSeason?.length || !allPicksSeason?.length) return;
     setPlayerStandings(recomputePlayerStandings(allPicksSeason, allGamesSeason));
   }, [allGamesSeason, allPicksSeason]);
+
   /* ---------- helpers picks ---------- */
   const myPickThisWeek = useMemo(
     () => (picks || []).find((p) => p.week === week && p.season === SEASON),
@@ -1184,6 +1185,49 @@ function GamesTab({ session }) {
       </button>
     );
   };
+
+  /* ========================= Standings helpers (W–L–T) ========================= */
+  /** Devuelve nombre legible con prioridad: standings.display_name -> userNames -> id abreviado */
+  const displayNameFor = (userId) => {
+    const byStand = (standings || []).find(s => s.user_id === userId)?.display_name;
+    if (byStand) return byStand;
+    if (userNames[userId]) return userNames[userId];
+    return userId?.slice(0, 6) || "—";
+  };
+
+  /** Win% con 1 decimal */
+  const winPct = (w, l, t = 0) => {
+    const gp = w + l + t;
+    if (!gp) return "—";
+    return `${((w / gp) * 100).toFixed(1)}%`;
+  };
+
+  /** Lista ordenada de standings de liga priorizando tabla standings y, si no, playerStandings */
+  const leagueStandings = useMemo(() => {
+    if ((standings || []).length) {
+      return (standings || [])
+        .map(s => ({
+          user_id: s.user_id,
+          name: s.display_name || displayNameFor(s.user_id),
+          w: Number(s.wins ?? s.w ?? 0),
+          l: Number(s.losses ?? s.l ?? 0),
+          t: Number(s.pushes ?? s.t ?? 0),
+          lives: Number(s.lives ?? 0)
+        }))
+        .sort((a, b) => b.w - a.w || a.l - b.l || b.t - a.t || a.name.localeCompare(b.name));
+    }
+    return (playerStandings || [])
+      .map(r => ({
+        user_id: r.user_id,
+        name: displayNameFor(r.user_id),
+        w: Number(r.w ?? 0),
+        l: Number(r.l ?? 0),
+        t: Number(r.t ?? 0),
+        lives: (standings || []).find(s => s.user_id === r.user_id)?.lives ?? (me?.id === r.user_id ? me?.lives : undefined)
+      }))
+      .sort((a, b) => b.w - a.w || a.l - b.l || b.t - a.t || a.name.localeCompare(b.name));
+  }, [standings, playerStandings, userNames, me?.id, me?.lives]);
+
   /* ========================= Render ========================= */
   const nextKick = nextKickoffISO;
 
@@ -1478,6 +1522,7 @@ function GamesTab({ session }) {
           )}
         </div>
       </section>
+
       {/* Picks + popularidad */}
       <section className="mt-6 grid md-grid-cols-2 md:grid-cols-2 gap-4">
         <div className="p-4 border rounded-2xl bg-white card">
@@ -1548,6 +1593,88 @@ function GamesTab({ session }) {
               <div className="text-sm text-gray-500">Sin picks registrados.</div>
             )}
           </div>
+        </div>
+      </section>
+
+      {/* Standings de la liga (W–L–T) */}
+      <section className="mt-6">
+        <div className="p-4 border rounded-2xl bg-white card">
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <h2 className="font-semibold">Standings de la liga (temporada)</h2>
+            <p className="text-xs text-gray-500">
+              Ranking por victorias, luego derrotas, luego empates.
+            </p>
+          </div>
+
+          {(!leagueStandings || leagueStandings.length === 0) ? (
+            <div className="text-sm text-gray-500 mt-2">Aún no hay resultados para mostrar.</div>
+          ) : (
+            <div className="mt-3 overflow-x-auto">
+              <table className="w-full text-sm table-minimal">
+                <thead>
+                  <tr>
+                    <th className="w-10">#</th>
+                    <th>Jugador</th>
+                    <th className="text-right">W</th>
+                    <th className="text-right">L</th>
+                    <th className="text-right">T</th>
+                    <th className="text-right">Win%</th>
+                    <th className="text-right">Vidas</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {leagueStandings.map((row, idx) => (
+                    <tr key={row.user_id ?? idx}>
+                      <td className="text-gray-500">{idx + 1}</td>
+                      <td className="whitespace-nowrap">
+                        <span className={clsx(
+                          "inline-flex items-center gap-2",
+                          (row.user_id === uid) && "font-semibold"
+                        )}>
+                          {(row.user_id === uid) && <span className="badge">Tú</span>}
+                          <span>{row.name}</span>
+                        </span>
+                      </td>
+                      <td className="text-right font-mono">{row.w}</td>
+                      <td className="text-right font-mono">{row.l}</td>
+                      <td className="text-right font-mono">{row.t}</td>
+                      <td className="text-right font-mono">{winPct(row.w, row.l, row.t)}</td>
+                      <td className="text-right">
+                        <span className={clsx(
+                          "inline-block min-w-[2rem] text-center px-2 py-0.5 rounded",
+                          (row.lives ?? 0) > 0 ? "bg-emerald-100 text-emerald-800" : "bg-rose-100 text-rose-800"
+                        )}>
+                          {row.lives ?? "—"}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+
+              {/* Grid compacta: top 6 con barra de progreso de Win% (útil en móvil) */}
+              <div className="mt-4 grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                {leagueStandings.slice(0, 6).map((row) => {
+                  const pctNum = (() => {
+                    const gp = row.w + row.l + row.t;
+                    return gp ? Math.round((row.w / gp) * 100) : 0;
+                  })();
+                  return (
+                    <div key={`mini-${row.user_id}`} className="p-3 border rounded-xl">
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="truncate">{row.name}</span>
+                        <span className="font-mono">{row.w}-{row.l}{row.t ? `-${row.t}` : ""}</span>
+                      </div>
+                      <div className="progressbar mt-1">
+                        <div style={{ width: `${pctNum}%` }} />
+                      </div>
+                      <div className="text-right text-xs text-gray-600 mt-1">{pctNum}%</div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
       </section>
 
@@ -1627,7 +1754,8 @@ function GamesTab({ session }) {
           Recuerda elegir: kickoff en <Countdown iso={nextKick} />
         </div>
       )}
-            {/* Modal Detalles de Juego */}
+
+      {/* Modal Detalles de Juego */}
       {details && (
         <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-[70]">
           <div className="w-full max-w-6xl bg-white rounded-2xl p-5 border card overflow-y-auto max-h-[90vh]">
@@ -1927,6 +2055,7 @@ function GamesTab({ session }) {
     </div>
   ); // end return
 } // end GamesTab
+
 
 	  
 
