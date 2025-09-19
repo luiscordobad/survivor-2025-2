@@ -1541,48 +1541,49 @@ function GamesTab({ session }) {
         </div>
       </section>
 
-      {/* ===== NUEVO: Standings (W-L-T) de la liga ===== */}
-      <section className="mt-6">
-        <div className="p-4 border rounded-2xl bg-white card">
-          <h2 className="font-semibold">Standings de la liga (W-L-T)</h2>
-          <p className="text-xs text-gray-600">Cómputo con todos los picks resueltos de la temporada.</p>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm mt-3 table-minimal">
-              <thead>
-                <tr>
-                  <th>Jugador</th>
-                  <th className="text-right">W</th>
-                  <th className="text-right">L</th>
-                  <th className="text-right">T</th>
-                  <th className="text-right">Win %</th>
+{/* ========================= Standings de la liga (W-L-T) ========================= */}
+<section className="mt-6">
+  <div className="p-4 border rounded-2xl bg-white card">
+    <h2 className="font-semibold">Standings de la liga (W-L-T)</h2>
+    <p className="text-xs text-gray-600">Cómputo con todos los picks resueltos de la temporada.</p>
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm mt-3 table-minimal">
+        <thead>
+          <tr>
+            <th>Jugador</th>
+            <th className="text-right">W</th>
+            <th className="text-right">L</th>
+            <th className="text-right">T</th>
+            <th className="text-right">Win %</th>
+          </tr>
+        </thead>
+        <tbody>
+          {(playerStandings || []).length ? (
+            playerStandings.map((row) => {
+              const name = userNames[row.user_id] || row.user_id.slice(0,6);
+              const total = (row.w || 0) + (row.l || 0) + (row.t || 0);
+              const wpct = total ? Math.round((row.w * 1000) / total) / 10 : 0;
+              return (
+                <tr key={row.user_id}>
+                  <td className="whitespace-nowrap">{name}</td>
+                  <td className="text-right font-mono">{row.w}</td>
+                  <td className="text-right font-mono">{row.l}</td>
+                  <td className="text-right font-mono">{row.t}</td>
+                  <td className="text-right font-mono">{wpct}%</td>
                 </tr>
-              </thead>
-              <tbody>
-                {(playerStandings || []).length ? (
-                  playerStandings.map((row) => {
-                    const name = userNames[row.user_id] || row.user_id.slice(0,6);
-                    const total = row.w + row.l + row.t;
-                    const wpct = total ? Math.round((row.w * 1000) / total) / 10 : 0;
-                    return (
-                      <tr key={row.user_id}>
-                        <td className="whitespace-nowrap">{name}</td>
-                        <td className="text-right font-mono">{row.w}</td>
-                        <td className="text-right font-mono">{row.l}</td>
-                        <td className="text-right font-mono">{row.t}</td>
-                        <td className="text-right font-mono">{wpct}%</td>
-                      </tr>
-                    );
-                  })
-                ) : (
-                  <tr>
-                    <td className="py-2 text-gray-500" colSpan={5}>Aún no hay standings calculados.</td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </section>
+              );
+            })
+          ) : (
+            <tr>
+              <td className="py-2 text-gray-500" colSpan={5}>Aún no hay standings calculados.</td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
       {/* ===== Historial de usuario ===== */}
       <section className="mt-6">
         <div className="p-4 border rounded-2xl bg-white card">
