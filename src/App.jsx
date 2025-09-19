@@ -445,6 +445,7 @@ function AutoPickButtons({ week, session }) {
 /* ========================= PARTIDOS ========================= */
 /* ========================= PARTIDOS ========================= */
 /* ========================= PARTIDOS (GamesTab) ========================= */
+/* ========================= PARTIDOS (GamesTab) — versión optimizada mobile ========================= */
 function GamesTab({ session }) {
   const uid = session?.user?.id || null;
 
@@ -463,6 +464,7 @@ function GamesTab({ session }) {
   const [pendingPick, setPendingPick] = useState(null);
   const [lastUpdated, setLastUpdated] = useState(null);
 
+  // Para standings W-L-T calculados
   const [allGamesSeason, setAllGamesSeason] = useState([]);
   const [allPicksSeason, setAllPicksSeason] = useState([]);
   const [playerStandings, setPlayerStandings] = useState([]);
@@ -471,19 +473,19 @@ function GamesTab({ session }) {
   const [details, setDetails] = useState(null); // { game, odds, popHome, popAway }
 
   // ---- Datos del modal Detalles ----
-  const [oddsHistory, setOddsHistory] = useState([]); // historial odds
-  const [leaders, setLeaders] = useState([]);         // líderes
-  const [notes, setNotes] = useState([]);             // comentarios
+  const [oddsHistory, setOddsHistory] = useState([]);
+  const [leaders, setLeaders] = useState([]);
+  const [notes, setNotes] = useState([]);
   const [newNote, setNewNote] = useState("");
-  const [detailsTab, setDetailsTab] = useState("resumen"); // resumen | odds | leaders | notes
+  const [detailsTab, setDetailsTab] = useState("resumen");
 
-  // ---- Filtros / búsqueda ----
+  // ---- Filtros / búsqueda (persistentes) ----
   const [dayFilter, setDayFilter] = useState(localStorage.getItem("dayFilter") || "ALL");
   const [teamQuery, setTeamQuery] = useState(localStorage.getItem("teamQuery") || "");
   const [statusFilter, setStatusFilter] = useState(localStorage.getItem("statusFilter") || "ALL"); // ALL|LIVE|FINAL|UPCOMING
   const searchRef = useRef(null);
 
-  // ---- Favoritos + diferenciales ----
+  // ---- Diferenciales & “pin” ----
   const [onlyDiff, setOnlyDiff] = useState(() => localStorage.getItem("onlyDiff") === "1");
   const [diffCutoff, setDiffCutoff] = useState(() => Number(localStorage.getItem("diffCutoff") || 20));
   const [pinned, setPinned] = useState(() => {
@@ -491,14 +493,14 @@ function GamesTab({ session }) {
   });
 
   // ---- Clima / meta / tips (opcional) ----
-  const [weatherMap, setWeatherMap] = useState({}); // game_id -> { temp_c, precip_mm, wind_kph, condition, updated_at }
-  const [metaMap, setMetaMap] = useState({});       // game_id -> { stadium, city, tv }
-  const [tipsMap, setTipsMap] = useState({});       // game_id -> [ { tip, kind } ]
+  const [weatherMap, setWeatherMap] = useState({});
+  const [metaMap, setMetaMap] = useState({});
+  const [tipsMap, setTipsMap] = useState({});
 
   // ---- Detalles avanzados tipo ESPN ----
-  const [betSplits, setBetSplits] = useState(null);       // tickets/money split
-  const [teamStats, setTeamStats] = useState(null);       // comparativa temporada
-  const [injuries, setInjuries] = useState([]);           // lesionados
+  const [betSplits, setBetSplits] = useState(null);
+  const [teamStats, setTeamStats] = useState(null);
+  const [injuries, setInjuries] = useState([]);
   const [recentForm, setRecentForm] = useState({ home: [], away: [] });
 
   // ---- Realtime ----
@@ -540,11 +542,7 @@ function GamesTab({ session }) {
 
   const loadGames = async (w) => {
     const { data: gs } = await supabase
-      .from("games")
-      .select("*")
-      .eq("week", w)
-      .eq("season", SEASON)
-      .order("start_time");
+      .from("games").select("*").eq("week", w).eq("season", SEASON).order("start_time");
     setGames(gs || []);
     const ids = (gs || []).map((g) => g.id);
     if (ids.length) {
@@ -587,10 +585,7 @@ function GamesTab({ session }) {
   async function loadGameTips(ids) {
     try {
       const { data: tps } = await supabase
-        .from("game_tips")
-        .select("game_id, tip, kind")
-        .in("game_id", ids)
-        .limit(200);
+        .from("game_tips").select("game_id, tip, kind").in("game_id", ids).limit(200);
       const tm = {};
       (tps || []).forEach(t => {
         if (!tm[t.game_id]) tm[t.game_id] = [];
@@ -704,6 +699,7 @@ function GamesTab({ session }) {
     if (!allGamesSeason?.length || !allPicksSeason?.length) return;
     setPlayerStandings(recomputePlayerStandings(allPicksSeason, allGamesSeason));
   }, [allGamesSeason, allPicksSeason]);
+
   /* ---------- helpers picks ---------- */
   const myPickThisWeek = useMemo(
     () => (picks || []).find((p) => p.week === week && p.season === SEASON),
@@ -746,8 +742,8 @@ function GamesTab({ session }) {
     const c = canPick(game, teamId);
     if (!c.ok) {
       const msg =
-        c.reason === "ELIMINATED" ? "Estás eliminado 😵‍💫. Puedes ver cómo van los demás, pero ya no puedes pickear."
-        : c.reason === "FROZEN" ? "Tu pick ya quedó congelado porque su partido ya inició/terminó."
+        c.reason === "ELIMINATED" ? "Estás eliminado. Puedes ver la liga, pero ya no puedes pickear."
+        : c.reason === "FROZEN" ? "Tu pick quedó congelado porque su partido ya inició/terminó."
         : c.reason === "LOCK" ? "Este partido ya está cerrado por kickoff."
         : c.reason === "NOSESSION" ? "Iniciando sesión… intenta de nuevo en unos segundos."
         : "Ya usaste este equipo antes.";
@@ -802,7 +798,7 @@ function GamesTab({ session }) {
     finally { localStorage.setItem(lk, "1"); }
   }
 
-  function funnyMsg(res) { if (res === "win") return "¡Ganaste esta semana! 🕺"; if (res === "loss") return "Perdiste esta semana 😬…"; return "Push… ni fu ni fa."; }
+  function funnyMsg(res) { if (res === "win") return "¡Ganaste esta semana!"; if (res === "loss") return "Perdiste esta semana…"; return "Push."; }
   async function onMyPickResolved(res) { setResultBanner({ type: res, msg: funnyMsg(res) }); if (res === "loss") await applyLivesIfNeeded(res); }
 
   async function settleMyPicksIfNeeded(currentWeek, gamesArr, myPicksArr) {
@@ -881,7 +877,7 @@ function GamesTab({ session }) {
     return () => clearInterval(id);
   }, [games, week]);
 
-  /* ---------- UI helpers ---------- */
+  /* ---------- UI helpers (compactos) ---------- */
   const TeamMini = ({ id }) => {
     const logo = teamsMap[id]?.logo_url || `/teams/${id}.png`;
     return (
@@ -906,12 +902,12 @@ function GamesTab({ session }) {
   const ScoreStrip = ({ g }) => {
     const ended = hasGameEnded(g);
     const score = (
-      <div className="flex items-center gap-4">
-        <div className="text-lg font-bold">
+      <div className="flex items-center gap-3">
+        <div className="text-base sm:text-lg font-bold">
           {g.away_team} <span className="tabular-nums">{g.away_score ?? 0}</span>
         </div>
         <div className="text-gray-300">—</div>
-        <div className="text-lg font-bold">
+        <div className="text-base sm:text-lg font-bold">
           {g.home_team} <span className="tabular-nums">{g.home_score ?? 0}</span>
         </div>
       </div>
@@ -921,9 +917,8 @@ function GamesTab({ session }) {
       return (
         <div className="flex items-center justify-between">
           {score}
-          <div className="text-xs flex items-center gap-2">
+          <div className="text-[11px] sm:text-xs flex items-center gap-2">
             {g.period != null && <span className="badge badge-warn">Q{g.period} {g.clock || ""}</span>}
-            {g.down != null && g.distance != null && <span className="badge">@ {g.down}&amp;{g.distance}</span>}
             {g.possession && <span className="badge">⬤ {g.possession}</span>}
             {g.red_zone && <span className="badge badge-danger">Red Zone</span>}
           </div>
@@ -937,7 +932,6 @@ function GamesTab({ session }) {
     );
   };
 
-  // Badges SNF/MNF/TNF/Playoffs
   function timeBadge(g) {
     const lt = DateTime.fromISO(g.start_time).setZone(TZ);
     const wd = lt.weekday; const hour = lt.hour;
@@ -948,7 +942,6 @@ function GamesTab({ session }) {
     return null;
   }
 
-  // Rachas y H2H
   function teamStreak(teamId) {
     const gamesTeam = (allGamesSeason || [])
       .filter(x => x.home_team === teamId || x.away_team === teamId)
@@ -964,7 +957,7 @@ function GamesTab({ session }) {
     return streak ? `${type}${streak}` : "—";
   }
 
-  function lastMatchupsSummary(homeId, awayId, maxN = 5) {
+  function lastMatchupsSummary(homeId, awayId, maxN = 3) {
     const relevant = (allGamesSeason || [])
       .filter(x =>
         (x.home_team === homeId && x.away_team === awayId) ||
@@ -980,8 +973,7 @@ function GamesTab({ session }) {
     });
   }
 
-  // Delta de spread
-  function spreadDeltaFor(gameId, side /* 'home' | 'away' */) {
+  function spreadDeltaFor(gameId, side) {
     const pair = oddsPairs[gameId];
     if (!pair?.last || !pair?.prev) return null;
     const last = side === "home" ? pair.last.spread_home : pair.last.spread_away;
@@ -1056,7 +1048,6 @@ function GamesTab({ session }) {
     return (<svg width={w} height={h} className="block"><path d={d} fill="none" stroke="currentColor" strokeWidth="2" /></svg>);
   };
 
-  // Win% helper
   function winPctForTeam(game, teamId) {
     const pair = oddsPairs[game.id];
     if (!pair?.last) return null;
@@ -1064,7 +1055,7 @@ function GamesTab({ session }) {
     return sp != null ? winProbFromSpread(sp) : null;
   }
 
-  /* ---- Cargar Detalles (ampliado tipo ESPN) ---- */
+  /* ---- Cargar Detalles ---- */
   async function openDetails(g) {
     const { last, prev } = oddsPairs[g.id] || {};
     const popHome = popPct(g.home_team);
@@ -1072,7 +1063,6 @@ function GamesTab({ session }) {
     setDetails({ game: g, odds: { last, prev }, popHome, popAway });
     setDetailsTab("resumen");
 
-    // Historial odds
     const { data: oh } = await supabase
       .from("odds_history")
       .select("fetched_at, spread_home, spread_away, ml_home, ml_away")
@@ -1081,7 +1071,6 @@ function GamesTab({ session }) {
       .limit(200);
     setOddsHistory(oh || []);
 
-    // Líderes
     const { data: gl } = await supabase
       .from("game_leaders")
       .select("side, player, stat, value")
@@ -1089,7 +1078,6 @@ function GamesTab({ session }) {
       .order("side").order("stat");
     setLeaders(gl || []);
 
-    // Notas
     const { data: ns } = await supabase
       .from("game_notes")
       .select("id, user_id, note, created_at")
@@ -1098,7 +1086,6 @@ function GamesTab({ session }) {
       .limit(100);
     setNotes(ns || []);
 
-    // Betting splits
     try {
       const { data: bs } = await supabase
         .from("betting_splits")
@@ -1108,7 +1095,6 @@ function GamesTab({ session }) {
       setBetSplits(bs || null);
     } catch { setBetSplits(null); }
 
-    // Team stats temporada
     try {
       const { data: stats } = await supabase
         .from("season_team_stats")
@@ -1119,7 +1105,6 @@ function GamesTab({ session }) {
       setTeamStats({ home, away });
     } catch { setTeamStats(null); }
 
-    // Lesiones
     try {
       const { data: inj } = await supabase
         .from("injuries")
@@ -1129,7 +1114,6 @@ function GamesTab({ session }) {
       setInjuries(inj || []);
     } catch { setInjuries([]); }
 
-    // Últimos 5
     try {
       const { data: recs } = await supabase
         .from("team_recent_games")
@@ -1148,7 +1132,7 @@ function GamesTab({ session }) {
     if (!error && data) { setNotes((xs) => [data, ...xs]); setNewNote(""); } else { alert(error?.message || "No se pudo guardar la nota."); }
   }
 
-  /* ---- Botón de pick por equipo ---- */
+  /* ---- Botón de pick por equipo (tap target grande) ---- */
   const TeamBox = ({ game, teamId }) => {
     const disabled = !canPick(game, teamId).ok;
     const selected = myPickThisWeek?.game_id === game.id && myPickThisWeek?.team_id === teamId;
@@ -1161,7 +1145,7 @@ function GamesTab({ session }) {
           (((last.spread_away ?? 0) < (last.spread_home ?? 0)) || (last.ml_away ?? 9999) < (last.ml_home ?? 9999))));
     const pct = popPct(teamId);
     const wp = winPctForTeam(game, teamId);
-    const titleTxt = `${teamId} · Win% ${wp ?? "—"} · Popularidad ${pct}%`;
+    const titleTxt = `${teamId} · Win% ${wp ?? "—"} · Pop ${pct}%`;
 
     return (
       <button
@@ -1169,7 +1153,7 @@ function GamesTab({ session }) {
         onClick={() => confirmPick(game, teamId)}
         disabled={disabled}
         className={clsx(
-          "w-full text-left rounded-xl border transition px-4 py-3",
+          "w-full text-left rounded-2xl border transition px-4 py-3 active:scale-[0.99]",
           selected ? "border-emerald-500 bg-emerald-50 card" : "border-gray-200 hover:bg-gray-50 card",
           disabled && "opacity-50 cursor-not-allowed"
         )}
@@ -1184,22 +1168,24 @@ function GamesTab({ session }) {
       </button>
     );
   };
+
   /* ========================= Render ========================= */
   const nextKick = nextKickoffISO;
 
   return (
-    <div className="max-w-6xl mx-auto p-4 md:p-6">{/* container */}
-      <header className="flex items-center justify-between gap-4">
+    <div className="max-w-6xl mx-auto p-3 sm:p-4">{/* container */}
+      {/* HEADER */}
+      <header className="flex items-center justify-between gap-3">
         <div>
-          <h1 className="text-3xl font-extrabold tracking-tight">{LEAGUE}</h1>
+          <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">{LEAGUE}</h1>
           {lastUpdated && (
-            <p className="text-xs text-gray-500">
+            <p className="text-[11px] sm:text-xs text-gray-500">
               Actualizado: {DateTime.fromISO(lastUpdated).setZone(TZ).toFormat("dd LLL HH:mm:ss")}
             </p>
           )}
         </div>
-        <div className="flex items-center gap-3">
-          <p className="text-sm text-gray-700">
+        <div className="flex items-center gap-2 sm:gap-3">
+          <p className="text-sm text-gray-700 hidden xs:block">
             Hola, <b>{me?.display_name}</b> · Vidas:{" "}
             <span
               className={clsx(
@@ -1215,121 +1201,113 @@ function GamesTab({ session }) {
       </header>
 
       {(me?.lives ?? 0) <= 0 && (
-        <div className="mt-3 p-3 border-2 border-rose-300 rounded-xl bg-rose-50 text-rose-900 text-sm">
-          Estás <b>eliminado</b> 😵‍💫 — puedes seguir chismoseando la liga, pero ya no puedes pickear.
+        <div className="mt-3 p-3 border-2 border-rose-300 rounded-2xl bg-rose-50 text-rose-900 text-sm">
+          Estás <b>eliminado</b> — puedes seguir viendo todo, pero ya no puedes pickear.
         </div>
       )}
 
       {showPickAlert && (me?.lives ?? 0) > 0 && (
-        <div className="mt-3 p-3 border-2 border-amber-300 rounded-xl bg-amber-50 text-amber-900 text-sm">
-          🔔 Aún no tienes pick en W{week}. El primer kickoff es en <b><Countdown iso={nextKick} /></b>.
+        <div className="mt-3 p-3 border-2 border-amber-300 rounded-2xl bg-amber-50 text-amber-900 text-sm">
+          🔔 Aún no tienes pick en W{week}. Primer kickoff en <b><Countdown iso={nextKick} /></b>.
         </div>
       )}
 
-      {/* Toolbar */}
-      <section className="mt-4 grid md:grid-cols-3 gap-4">
-        <div className="p-4 border rounded-2xl bg-white card">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <label className="text-xs text-gray-500">Semana</label>
-              <select className="border p-1 rounded-lg" value={week} onChange={(e) => setWeek(Number(e.target.value))}>
-                {Array.from({ length: 18 }, (_, i) => i + 1).map((w) => (
-                  <option key={w} value={w}>W{w}</option>
-                ))}
-              </select>
-            </div>
-            <div className="flex gap-1 text-xs">
-              {["ALL", "THU", "FRI", "SAT", "SUN", "MON"].map((d) => (
-                <button
-                  key={d}
-                  className={clsx("px-2 py-1 rounded border", dayFilter === d && "bg-black text-white")}
-                  onClick={() => setDayFilter(d)}
-                >
-                  {d}
-                </button>
+      {/* TOOLBAR STICKY (mobile-first) */}
+      <section className="mt-4 sticky top-0 z-30 bg-white/85 backdrop-blur border rounded-2xl">
+        <div className="p-3 sm:p-4 grid grid-cols-2 sm:grid-cols-4 gap-2">
+          <div className="flex items-center gap-2">
+            <label className="text-xs text-gray-500">Semana</label>
+            <select className="border p-2 rounded-xl text-sm" value={week} onChange={(e) => setWeek(Number(e.target.value))}>
+              {Array.from({ length: 18 }, (_, i) => i + 1).map((w) => (
+                <option key={w} value={w}>W{w}</option>
               ))}
-            </div>
+            </select>
           </div>
 
-          <input
-            ref={searchRef}
-            className="mt-3 border w-full p-2 rounded-lg"
-            placeholder="Buscar equipo..."
-            value={teamQuery}
-            onChange={(e) => setTeamQuery(e.target.value)}
-          />
-
-          {/* Estado */}
-          <div className="mt-3 flex gap-1 text-xs">
-            {["ALL","LIVE","FINAL","UPCOMING"].map(s => (
+          <div className="flex gap-1 text-[11px] sm:text-xs justify-end sm:justify-start">
+            {["ALL","THU","FRI","SAT","SUN","MON"].map((d) => (
               <button
-                key={s}
-                className={clsx("px-2 py-1 rounded border", statusFilter === s && "bg-black text-white")}
-                onClick={() => setStatusFilter(s)}
+                key={d}
+                className={clsx(
+                  "px-2 py-1 rounded-full border",
+                  dayFilter === d ? "bg-black text-white" : "bg-white"
+                )}
+                onClick={() => setDayFilter(d)}
               >
-                {s}
+                {d}
               </button>
             ))}
           </div>
 
-          {/* Diferenciales */}
-          <div className="mt-3 flex items-center gap-3 text-xs">
-            <label className="inline-flex items-center gap-2">
+          <div className="col-span-2 sm:col-span-1">
+            <input
+              ref={searchRef}
+              className="border w-full p-2 rounded-xl text-sm"
+              placeholder="Buscar equipo…"
+              value={teamQuery}
+              onChange={(e) => setTeamQuery(e.target.value)}
+            />
+          </div>
+
+          <div className="flex items-center gap-2 justify-end sm:justify-start">
+            <select
+              className="border p-2 rounded-xl text-sm"
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+            >
+              {["ALL","LIVE","FINAL","UPCOMING"].map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+
+            <label className="inline-flex items-center gap-2 text-sm">
               <input type="checkbox" checked={onlyDiff} onChange={(e) => setOnlyDiff(e.target.checked)} />
-              Solo diferenciales
-            </label>
-            <div className="inline-flex items-center gap-1">
-              <span>umbral:</span>
+              DIF{" "}
               <input
                 type="number"
-                className="border rounded px-2 py-1 w-16"
+                className="border rounded-lg px-2 py-1 w-14"
                 min={1} max={49}
                 value={diffCutoff}
                 onChange={(e) => setDiffCutoff(Math.max(1, Math.min(49, Number(e.target.value) || 20)))}
               />
-              <span>%</span>
-            </div>
+              %
+            </label>
           </div>
+        </div>
 
-          <div className="mt-3 grid grid-cols-2 gap-2">
-            <button
-              className="text-xs px-3 py-1 rounded border"
-              onClick={() =>
-                downloadCSV("mis_picks.csv", [
-                  ["week", "team_id", "result", "auto_pick", "updated_at"],
-                  ...(picks || []).map((p) => [p.week, p.team_id, p.result, p.auto_pick, p.updated_at]),
-                ])
-              }
-            >
-              Exportar mis picks (CSV)
-            </button>
-            <button
-              className="text-xs px-3 py-1 rounded border"
-              onClick={() =>
-                downloadCSV("standings.csv", [
-                  ["player", "lives", "wins", "losses", "pushes", "margin_sum"],
-                  ...(standings || []).map((s) => [s.display_name, s.lives, s.wins, s.losses, s.pushes, s.margin_sum]),
-                ])
-              }
-            >
-              Exportar standings (CSV)
-            </button>
+        {/* Acciones secundarias */}
+        <div className="px-3 pb-3 sm:px-4 grid grid-cols-2 sm:flex sm:items-center sm:gap-2">
+          <button
+            className="text-[11px] sm:text-xs px-3 py-1 rounded-xl border w-full sm:w-auto"
+            onClick={() =>
+              downloadCSV("mis_picks.csv", [
+                ["week", "team_id", "result", "auto_pick", "updated_at"],
+                ...(picks || []).map((p) => [p.week, p.team_id, p.result, p.auto_pick, p.updated_at]),
+              ])
+            }
+          >
+            Exportar mis picks
+          </button>
+          <button
+            className="text-[11px] sm:text-xs px-3 py-1 rounded-xl border w-full sm:w-auto"
+            onClick={() =>
+              downloadCSV("standings.csv", [
+                ["player", "lives", "wins", "losses", "pushes", "margin_sum"],
+                ...(standings || []).map((s) => [s.display_name, s.lives, s.wins, s.losses, s.pushes, s.margin_sum]),
+              ])
+            }
+          >
+            Exportar standings
+          </button>
+          <div className="col-span-2 sm:ml-auto my-2 sm:my-0">
             <AutoPickButtons week={week} session={session} />
           </div>
         </div>
-
-        <div className="md:col-span-2 p-4 border rounded-2xl bg-white card">
-          <h3 className="font-semibold">Resumen</h3>
-          <p className="text-sm text-gray-600">
-            Elige tu pick en los partidos de abajo. Lock “rolling” por partido. Win/Loss se marca automáticamente cuando
-            el juego es FINAL. Usa los filtros para LIVE/FINAL/UPCOMING y el switch de diferenciales.
-          </p>
-        </div>
       </section>
 
-      {/* Partidos */}
-      <section className="mt-4 p-4 border rounded-2xl bg-white card">
-        <h2 className="font-semibold mb-3">Partidos W{week}</h2>
+      {/* PARTIDOS */}
+      <section className="mt-4">
+        <h2 className="font-semibold mb-2">Partidos W{week}</h2>
+
+        {/* Tarjetas compactas (mobile) */}
         <div className="space-y-3">
           {gamesFiltered.map((g) => {
             const locked = DateTime.fromISO(g.start_time) <= DateTime.now();
@@ -1356,7 +1334,8 @@ function GamesTab({ session }) {
             const whoPickedAway = lpForGame.filter(p => p.team_id === g.away_team).map(p => userNames[p.user_id] || p.user_id.slice(0,6));
 
             return (
-              <div id={`game-${g.id}`} key={g.id} className={clsx("p-4 border rounded-xl card", locked && "opacity-60")}>
+              <div id={`game-${g.id}`} key={g.id} className={clsx("p-3 sm:p-4 border rounded-2xl card", locked && "opacity-60")}>
+                {/* Top row */}
                 <div className="flex items-center justify-between">
                   <div className="text-sm flex items-center gap-2 flex-wrap">
                     <TeamChip id={g.away_team} />
@@ -1364,49 +1343,38 @@ function GamesTab({ session }) {
                     <TeamChip id={g.home_team} />
                     {badge && <span className="badge">{badge}</span>}
                   </div>
-                  <div className="text-xs text-gray-600 flex items-center gap-2">
-                    <a
-                      href={`https://www.espn.com/nfl/game/_/gameId/${g.id}`}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="underline text-gray-500"
-                    >
-                      Stats
-                    </a>
+                  <div className="text-[11px] sm:text-xs text-gray-600 flex items-center gap-2">
                     <button className="underline text-gray-700" onClick={() => openDetails(g)}>Detalles</button>
-                    <button className="px-2 py-0.5 rounded border" onClick={() => copyGameLink(g)}>Copiar link</button>
+                    <button className="px-2 py-0.5 rounded border" onClick={() => copyGameLink(g)}>Copiar</button>
                     <button
                       className={clsx("px-2 py-0.5 rounded border", pinned.includes(g.id) && "bg-black text-white")}
                       onClick={() => togglePin(g.id)}
                       title={pinned.includes(g.id) ? "Desfijar" : "Fijar"}
                     >
-                      {pinned.includes(g.id) ? "★ Pin" : "☆ Pin"}
+                      {pinned.includes(g.id) ? "★" : "☆"}
                     </button>
                     <span className="badge">{local}</span>
                   </div>
                 </div>
 
-                <div className="mt-3"><ScoreStrip g={g} /></div>
+                {/* Score / Estado */}
+                <div className="mt-2"><ScoreStrip g={g} /></div>
 
-                {(m || w) && (
-                  <div className="mt-2 text-xs text-gray-700 flex items-center gap-2 flex-wrap">
-                    {m && (
-                      <span className="badge">
-                        {m.stadium ? `${m.stadium}` : "Estadio —"}{m.city ? ` · ${m.city}` : ""}{m.tv ? ` · TV: ${m.tv}` : ""}
-                      </span>
-                    )}
-                    {w && (
-                      <>
-                        <span className="badge">🌡️ {w.temp_c != null ? `${w.temp_c}°C` : "—"}</span>
-                        <span className="badge">🌧️ {w.precip_mm != null ? `${w.precip_mm} mm` : "—"}</span>
-                        <span className="badge">💨 {w.wind_kph != null ? `${w.wind_kph} kph` : "—"}</span>
-                        {w.condition && <span className="badge">{w.condition}</span>}
-                      </>
-                    )}
-                  </div>
-                )}
-
-                <div className="mt-2 text-xs text-gray-700 flex items-center gap-3 flex-wrap">
+                {/* Info rápida en chips (compacta) */}
+                <div className="mt-2 text-[11px] sm:text-xs text-gray-700 flex items-center gap-2 flex-wrap">
+                  {m && (
+                    <span className="badge">
+                      {m.stadium || "Estadio"}{m.city ? ` · ${m.city}` : ""}{m.tv ? ` · ${m.tv}` : ""}
+                    </span>
+                  )}
+                  {w && (
+                    <>
+                      <span className="badge">🌡️ {w.temp_c != null ? `${w.temp_c}°C` : "—"}</span>
+                      <span className="badge">🌧️ {w.precip_mm != null ? `${w.precip_mm} mm` : "—"}</span>
+                      <span className="badge">💨 {w.wind_kph != null ? `${w.wind_kph} kph` : "—"}</span>
+                      {w.condition && <span className="badge">{w.condition}</span>}
+                    </>
+                  )}
                   {spreadHome != null && (
                     <span className="badge">
                       Spread: {g.home_team} {spreadHome > 0 ? `+${spreadHome}` : spreadHome}, {g.away_team} {spreadAway > 0 ? `+${spreadAway}` : spreadAway}
@@ -1431,42 +1399,53 @@ function GamesTab({ session }) {
                   })()}
                 </div>
 
-                {(tps.length || true) && (
-                  <div className="mt-3 grid sm:grid-cols-2 lg:grid-cols-3 gap-2">
-                    {(tps || []).slice(0,3).map((t,i) => (
-                      <div key={i} className="p-2 border rounded-lg text-xs text-gray-700 bg-white">
-                        <span className="font-semibold">{t.kind ? `${t.kind}: ` : ""}</span>{t.tip}
-                      </div>
-                    ))}
-                    <div className="p-2 border rounded-lg text-xs text-gray-700 bg-white">
-                      <span className="font-semibold">Racha: </span>
-                      {g.home_team} {stHome}, {g.away_team} {stAway}
-                    </div>
-                    {h2h.length > 0 && (
+                {/* Tips / H2H compactos */}
+                {(tps.length || h2h.length) && (
+                  <details className="mt-2">
+                    <summary className="text-sm cursor-pointer select-none">Datos rápidos</summary>
+                    <div className="mt-2 grid sm:grid-cols-2 gap-2">
+                      {(tps || []).slice(0,3).map((t,i) => (
+                        <div key={i} className="p-2 border rounded-lg text-xs text-gray-700 bg-white">
+                          <span className="font-semibold">{t.kind ? `${t.kind}: ` : ""}</span>{t.tip}
+                        </div>
+                      ))}
                       <div className="p-2 border rounded-lg text-xs text-gray-700 bg-white">
-                        <span className="font-semibold">H2H: </span>
-                        {h2h.map((r,ix) => (
-                          <span key={ix} className="mr-2">{r.when}: {r.a} {r.as}–{r.hs} {r.h} ({r.winner})</span>
-                        ))}
+                        <span className="font-semibold">Racha: </span>
+                        {g.home_team} {stHome}, {g.away_team} {stAway}
                       </div>
-                    )}
-                  </div>
+                      {h2h.length > 0 && (
+                        <div className="p-2 border rounded-lg text-xs text-gray-700 bg-white">
+                          <span className="font-semibold">H2H: </span>
+                          {h2h.map((r,ix) => (
+                            <span key={ix} className="mr-2 block sm:inline">
+                              {r.when}: {r.a} {r.as}–{r.hs} {r.h} ({r.winner})
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </details>
                 )}
 
+                {/* Quién pickeó (colapsable en mobile) */}
                 {lpForGame.length > 0 && (
-                  <div className="mt-3 text-xs text-gray-700 flex gap-3 flex-wrap">
-                    <div className="inline-flex items-center gap-2">
-                      <span className="badge">{g.home_team}</span>
-                      <span className="text-gray-600">{whoPickedHome.slice(0,6).join(", ")}{whoPickedHome.length > 6 ? "…" : ""}</span>
+                  <details className="mt-2">
+                    <summary className="text-sm cursor-pointer select-none">Quién pickeó</summary>
+                    <div className="mt-2 text-[11px] sm:text-xs text-gray-700 flex gap-3 flex-wrap">
+                      <div className="inline-flex items-center gap-2">
+                        <span className="badge">{g.home_team}</span>
+                        <span className="text-gray-600">{whoPickedHome.slice(0,8).join(", ")}{whoPickedHome.length > 8 ? "…" : ""}</span>
+                      </div>
+                      <div className="inline-flex items-center gap-2">
+                        <span className="badge">{g.away_team}</span>
+                        <span className="text-gray-600">{whoPickedAway.slice(0,8).join(", ")}{whoPickedAway.length > 8 ? "…" : ""}</span>
+                      </div>
                     </div>
-                    <div className="inline-flex items-center gap-2">
-                      <span className="badge">{g.away_team}</span>
-                      <span className="text-gray-600">{whoPickedAway.slice(0,6).join(", ")}{whoPickedAway.length > 6 ? "…" : ""}</span>
-                    </div>
-                  </div>
+                  </details>
                 )}
 
-                <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {/* Botones de pick grandes (thumb-friendly) */}
+                <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
                   <TeamBox game={g} teamId={g.home_team} />
                   <TeamBox game={g} teamId={g.away_team} />
                 </div>
@@ -1478,9 +1457,11 @@ function GamesTab({ session }) {
           )}
         </div>
       </section>
-      {/* Picks + popularidad */}
-      <section className="mt-6 grid md-grid-cols-2 md:grid-cols-2 gap-4">
-        <div className="p-4 border rounded-2xl bg-white card">
+
+      {/* Picks + Popularidad + Standings (W-L-T) */}
+      <section className="mt-6 grid md:grid-cols-3 gap-4">
+        {/* Picks liga */}
+        <div className="p-4 border rounded-2xl bg-white card md:col-span-1">
           <h2 className="font-semibold">Picks de la liga (W{week})</h2>
           <div className="overflow-x-auto">
             <table className="w-full text-sm mt-3 table-minimal">
@@ -1488,9 +1469,9 @@ function GamesTab({ session }) {
                 <tr>
                   <th>Jugador</th>
                   <th>Equipo</th>
-                  <th>Resultado</th>
+                  <th>Res</th>
                   <th>Auto</th>
-                  <th>Actualizado</th>
+                  <th>Upd</th>
                 </tr>
               </thead>
               <tbody>
@@ -1502,7 +1483,7 @@ function GamesTab({ session }) {
                       const shownRes = derivedResultForPick(p);
                       return (
                         <tr key={p.id}>
-                          <td>{userNames[p.user_id] || p.user_id.slice(0, 6)}</td>
+                          <td className="whitespace-nowrap">{userNames[p.user_id] || p.user_id.slice(0, 6)}</td>
                           <td><TeamMini id={p.team_id} /></td>
                           <td>
                             <span className={
@@ -1528,7 +1509,8 @@ function GamesTab({ session }) {
           </div>
         </div>
 
-        <div className="p-4 border rounded-2xl bg-white card">
+        {/* Popularidad */}
+        <div className="p-4 border rounded-2xl bg-white card md:col-span-1">
           <h2 className="font-semibold">Popularidad de equipos</h2>
           <p className="text-xs text-gray-600">Porcentaje de jugadores que pickearon ese equipo.</p>
           <div className="mt-3 space-y-2">
@@ -1546,6 +1528,36 @@ function GamesTab({ session }) {
               ))
             ) : (
               <div className="text-sm text-gray-500">Sin picks registrados.</div>
+            )}
+          </div>
+        </div>
+
+        {/* NUEVO: Standings W-L-T (liga completa) */}
+        <div className="p-4 border rounded-2xl bg-white card md:col-span-1">
+          <h2 className="font-semibold">Standings (W-L-T)</h2>
+          <p className="text-xs text-gray-600">Cómputo por resultados reales de la temporada.</p>
+          <div className="mt-3 max-h-80 overflow-auto">
+            {(playerStandings || []).length ? (
+              <table className="w-full text-sm table-minimal">
+                <thead>
+                  <tr>
+                    <th>#</th><th>Jugador</th><th className="text-right">W</th><th className="text-right">L</th><th className="text-right">T</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {playerStandings.map((r, i) => (
+                    <tr key={r.user_id}>
+                      <td>{i + 1}</td>
+                      <td className="whitespace-nowrap">{userNames[r.user_id] || r.user_id.slice(0,6)}</td>
+                      <td className="text-right font-medium text-emerald-700">{r.w}</td>
+                      <td className="text-right font-medium text-rose-600">{r.l}</td>
+                      <td className="text-right text-gray-600">{r.t}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : (
+              <div className="text-sm text-gray-500">Sin datos de standings aún.</div>
             )}
           </div>
         </div>
@@ -1622,310 +1634,481 @@ function GamesTab({ session }) {
         </div>
       )}
 
+      {/* Toast recordatorio (mobile corner) */}
       {!myPickThisWeek && nextKick && (me?.lives ?? 0) > 0 && (
         <div className="fixed bottom-4 right-4 px-4 py-2 rounded-xl bg-black text-white text-sm shadow-lg">
-          Recuerda elegir: kickoff en <Countdown iso={nextKick} />
+          Elige tu pick: kickoff en <Countdown iso={nextKick} />
         </div>
       )}
-            {/* Modal Detalles de Juego */}
-      {details && (
-        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-[70]">
-          <div className="w-full max-w-6xl bg-white rounded-2xl p-5 border card overflow-y-auto max-h-[90vh]">
-            {/* Header */}
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <h3 className="font-semibold text-xl">
-                  {details.game.away_team} @ {details.game.home_team}
-                </h3>
-                <p className="text-sm text-gray-600">
-                  {DateTime.fromISO(details.game.start_time).setZone(TZ).toFormat("EEE dd LLL HH:mm")}
-                </p>
-              </div>
-              <div className="flex gap-2">
-                <a
-                  href={`https://www.espn.com/nfl/game/_/gameId/${details.game.id}`}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="px-3 py-1 rounded border text-sm"
-                >
-                  Ver en ESPN
-                </a>
-                <button
-                  className="px-3 py-1 rounded border text-sm"
-                  onClick={() => setDetails(null)}
-                >
-                  Cerrar
-                </button>
-              </div>
-            </div>
+	  
+	  {/* Modal Detalles de Juego */}
+{details && (
+  <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-[70]">
+    <div className="w-full max-w-6xl bg-white rounded-2xl p-0 md:p-5 border card overflow-hidden">
+      {/* Header (sticky en móvil) */}
+      <div className="sticky top-0 z-10 bg-white/95 backdrop-blur px-4 py-3 md:px-0 md:py-0 border-b md:border-none">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h3 className="font-semibold text-lg md:text-xl">
+              {details.game.away_team} @ {details.game.home_team}
+            </h3>
+            <p className="text-xs md:text-sm text-gray-600">
+              {DateTime.fromISO(details.game.start_time).setZone(TZ).toFormat("EEE dd LLL HH:mm")}
+            </p>
+          </div>
+          <div className="flex gap-2">
+            <a
+              href={`https://www.espn.com/nfl/game/_/gameId/${details.game.id}`}
+              target="_blank"
+              rel="noreferrer"
+              className="px-3 py-2 rounded-lg border text-xs md:text-sm hover:bg-gray-50"
+            >
+              Ver en ESPN
+            </a>
+            <button
+              className="px-3 py-2 rounded-lg border text-xs md:text-sm bg-black text-white"
+              onClick={() => setDetails(null)}
+            >
+              Cerrar
+            </button>
+          </div>
+        </div>
+      </div>
 
-            {/* GRID principal */}
-            <div className="mt-4 grid grid-cols-1 lg:grid-cols-3 gap-4">
-              {/* Columna izquierda */}
-              <div className="space-y-4">
-                {/* Probabilidades & Popularidad */}
-                <div className="p-4 border rounded-xl bg-white">
-                  <div className="text-sm font-semibold mb-3">Probabilidades & Popularidad</div>
-                  {(() => {
-                    const last = details.odds?.last;
-                    const spreadHome = last?.spread_home ?? null;
-                    const wpHome = winProbFromSpread(spreadHome);
-                    const wpAway = winProbFromSpread(-spreadHome) ?? (wpHome != null ? 100 - wpHome : null);
-                    const Row = ({ label, pct, pop }) => (
-                      <div className="mb-2">
-                        <div className="flex items-center justify-between text-sm">
-                          <span className="font-mono">{label}</span>
-                          <span className="text-gray-500">Pick pop: <b>{pop}%</b></span>
-                        </div>
-                        <div className="progressbar mt-1"><div style={{ width: `${pct ?? 0}%` }} /></div>
-                        <div className="text-right text-xs text-gray-600">{pct != null ? `${pct}%` : "—"}</div>
-                      </div>
-                    );
-                    return (
-                      <>
-                        <Row label={details.game.home_team} pct={wpHome} pop={details.popHome ?? 0} />
-                        <Row label={details.game.away_team} pct={wpAway} pop={details.popAway ?? 0} />
-                      </>
-                    );
-                  })()}
-                </div>
+      {/* GRID principal */}
+      <div className="mt-4 grid grid-cols-1 lg:grid-cols-3 gap-4 px-4 md:px-0 pb-4 overflow-y-auto max-h-[85vh]">
+        {/* Columna izquierda */}
+        <div className="space-y-4">
+          {/* Probabilidades & Popularidad */}
+          <div className="p-4 border rounded-xl bg-white">
+            <div className="text-sm font-semibold mb-3">Probabilidades & Popularidad</div>
+            {(() => {
+              const last = details.odds?.last;
+              const spreadHome = last?.spread_home ?? null;
+              const wpHome = winProbFromSpread(spreadHome);
+              const wpAway = winProbFromSpread(-spreadHome) ?? (wpHome != null ? 100 - wpHome : null);
 
-                {/* Mercado + histórico */}
-                <div className="p-4 border rounded-xl bg-white">
-                  <div className="text-sm font-semibold mb-3">Mercado</div>
-                  {(() => {
-                    const { last, prev } = details.odds || {};
-                    const Line = ({ tHome, tAway, lh, la, ph, pa }) => (
-                      <table className="w-full text-sm">
-                        <thead>
-                          <tr className="text-gray-500 text-xs">
-                            <th className="text-left w-24">Tipo</th>
-                            <th className="text-left">{tHome}</th>
-                            <th className="text-left">{tAway}</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          <tr>
-                            <td className="py-1 text-gray-500">Actual</td>
-                            <td className="py-1 font-mono">{lh ?? "—"}</td>
-                            <td className="py-1 font-mono">{la ?? "—"}</td>
-                          </tr>
-                          <tr>
-                            <td className="py-1 text-gray-500">Previo</td>
-                            <td className="py-1 font-mono">{ph ?? "—"}</td>
-                            <td className="py-1 font-mono">{pa ?? "—"}</td>
-                          </tr>
-                        </tbody>
-                      </table>
-                    );
-                    const fmt = (v) => (v != null ? (v > 0 ? `+${v}` : v) : null);
-                    return (
-                      <Line
-                        tHome={details.game.home_team}
-                        tAway={details.game.away_team}
-                        lh={last?.spread_home != null ? `${fmt(last.spread_home)} | ML ${last?.ml_home ?? "—"}` : null}
-                        la={last?.spread_away != null ? `${fmt(last.spread_away)} | ML ${last?.ml_away ?? "—"}` : null}
-                        ph={prev?.spread_home != null ? `${fmt(prev.spread_home)} | ML ${prev?.ml_home ?? "—"}` : null}
-                        pa={prev?.spread_away != null ? `${fmt(prev.spread_away)} | ML ${prev?.ml_away ?? "—"}` : null}
-                      />
-                    );
-                  })()}
-
-                  <div className="mt-3 text-xs text-gray-500">Histórico:</div>
-                  <div className="grid grid-cols-2 gap-3 mt-2">
-                    <div>
-                      <div className="text-xs font-semibold mb-1">Spread Home</div>
-                      <Sparkline series={(oddsHistory || []).map(r => r.spread_home).filter(v => v != null)} />
-                    </div>
-                    <div>
-                      <div className="text-xs font-semibold mb-1">Moneyline Home</div>
-                      <Sparkline series={(oddsHistory || []).map(r => r.ml_home).filter(v => v != null)} />
-                    </div>
+              const Row = ({ label, pct, pop }) => (
+                <div className="mb-3">
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="font-mono">{label}</span>
+                    <span className="text-gray-500">Pick pop: <b>{pop}%</b></span>
                   </div>
-                </div>
-
-                {/* Últimos 5 */}
-                <div className="p-4 border rounded-xl bg-white">
-                  <div className="text-sm font-semibold mb-3">Últimos 5</div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
-                    {["home","away"].map(side => {
-                      const rows = (recentForm?.[side] || []);
-                      const label = side === "home" ? details.game.home_team : details.game.away_team;
-                      return (
-                        <div key={side}>
-                          <div className="font-semibold mb-1">{label}</div>
-                          <div className="space-y-1">
-                            {rows.length ? rows.map((r, i) => (
-                              <div key={i} className="flex items-center justify-between">
-                                <span className="text-gray-600">{DateTime.fromISO(r.date).setZone(TZ).toFormat("dd LLL")}</span>
-                                <span className="font-mono">{r.result}</span>
-                                <span className="text-gray-700">{r.opp}</span>
-                                <span className="font-mono">{r.score}</span>
-                              </div>
-                            )) : <div className="text-xs text-gray-500">Sin datos.</div>}
-                          </div>
-                        </div>
-                      );
-                    })}
+                  <div className="progressbar mt-1">
+                    <div style={{ width: `${pct ?? 0}%` }} />
                   </div>
+                  <div className="text-right text-xs text-gray-600">{pct != null ? `${pct}%` : "—"}</div>
                 </div>
-              </div>
+              );
 
-              {/* Columna central */}
-              <div className="space-y-4">
-                {/* Líderes */}
-                <div className="p-4 border rounded-2xl bg-white">
-                  <div className="text-sm font-semibold mb-3">Líderes</div>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    {["home","away"].map(side => {
-                      const rows = (leaders || []).filter(x => x.side === side);
-                      const label = side === "home" ? details.game.home_team : details.game.away_team;
-                      return (
-                        <div key={side}>
-                          <div className="font-semibold mb-1">{label}</div>
-                          {rows.length ? (
-                            <ul className="text-sm space-y-1">
-                              {rows.map((r, i) => (
-                                <li key={i} className="flex justify-between">
-                                  <span className="text-gray-700">{r.player} · {r.stat}</span>
-                                  <span className="font-mono">{r.value}</span>
-                                </li>
-                              ))}
-                            </ul>
-                          ) : <p className="text-xs text-gray-500">Sin datos de líderes.</p>}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
+              return (
+                <>
+                  <Row label={details.game.home_team} pct={wpHome} pop={details.popHome ?? 0} />
+                  <Row label={details.game.away_team} pct={wpAway} pop={details.popAway ?? 0} />
+                </>
+              );
+            })()}
+          </div>
 
-                {/* Comparativa temporada */}
-                <div className="p-4 border rounded-2xl bg-white">
-                  <div className="text-sm font-semibold mb-3">Comparativa de equipos (temporada)</div>
-                  <table className="w-full text-sm">
-                    <thead className="text-xs text-gray-500">
-                      <tr>
-                        <th className="text-left">Métrica</th>
-                        <th className="text-left">{details.game.home_team}</th>
-                        <th className="text-left">{details.game.away_team}</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {[
-                        ["PPG","ppg"],["Yds/G","ypg"],["Pass Y/G","pass_ypg"],["Rush Y/G","rush_ypg"],
-                        ["Opp PPG","opp_ppg"],["Opp Y/G","opp_ypg"],["3rd down %","third_down"],
-                        ["Red zone %","red_zone"],["TO Diff","to_diff"],["Sacks","sacks"],
-                      ].map(([label,key]) => (
-                        <tr key={key}>
-                          <td className="py-1 text-gray-600">{label}</td>
-                          <td className="py-1 font-mono">{teamStats?.home?.[key] ?? "—"}</td>
-                          <td className="py-1 font-mono">{teamStats?.away?.[key] ?? "—"}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                  <p className="mt-2 text-xs text-gray-500">Fuente: <code>season_team_stats</code>.</p>
-                </div>
-              </div>
-
-              {/* Columna derecha */}
-              <div className="space-y-4">
-                {/* Sede & Clima */}
-                <div className="p-4 border rounded-2xl bg-white">
-                  <div className="text-sm font-semibold mb-3">Sede & Clima</div>
-                  <div className="space-y-1 text-sm">
-                    <div>🏟️ {metaMap[details.game.id]?.stadium ?? "—"}</div>
-                    <div>📍 {metaMap[details.game.id]?.city ?? "—"}</div>
-                    <div>📺 {metaMap[details.game.id]?.tv ?? "—"}</div>
-                    <div className="h-px bg-gray-200 my-2" />
-                    <div>🌡️ Temp: {weatherMap[details.game.id]?.temp_c ?? "—"}°C</div>
-                    <div>🌧️ Lluvia: {weatherMap[details.game.id]?.precip_mm ?? "—"} mm</div>
-                    <div>💨 Viento: {weatherMap[details.game.id]?.wind_kph ?? "—"} kph</div>
-                    <div>{weatherMap[details.game.id]?.condition ?? ""}</div>
-                  </div>
-                </div>
-
-                {/* Betting splits */}
-                <div className="p-4 border rounded-2xl bg-white">
-                  <div className="text-sm font-semibold mb-3">Betting Splits</div>
-                  <div className="text-xs text-gray-500 mb-1">Tickets</div>
-                  <div className="progressbar mb-2">
-                    {(() => {
-                      const th = betSplits?.tickets_home ?? 0;
-                      const ta = betSplits?.tickets_away ?? 0;
-                      const total = th + ta || 1;
-                      const pctH = Math.round((th * 100) / total);
-                      return <div style={{ width: `${pctH}%` }} title={`${details.game.home_team} ${pctH}%`} />;
-                    })()}
-                  </div>
-                  <div className="text-xs text-gray-500 mb-1">Dinero</div>
-                  <div className="progressbar">
-                    {(() => {
-                      const mh = betSplits?.money_home ?? 0;
-                      const ma = betSplits?.money_away ?? 0;
-                      const total = mh + ma || 1;
-                      const pctH = Math.round((mh * 100) / total);
-                      return <div style={{ width: `${pctH}%` }} title={`${details.game.home_team} ${pctH}%`} />;
-                    })()}
-                  </div>
-                  <p className="mt-2 text-xs text-gray-500">Fuente: <code>betting_splits</code>.</p>
-                </div>
-
-                {/* Lesiones */}
-                <div className="p-4 border rounded-2xl bg-white">
-                  <div className="text-sm font-semibold mb-3">Lesionados</div>
-                  {["home","away"].map(side => {
-                    const team = side === "home" ? details.game.home_team : details.game.away_team;
-                    const rows = (injuries || []).filter(i => i.team_id === team);
-                    return (
-                      <div key={side} className="mb-3">
-                        <div className="font-semibold text-xs mb-1">{team}</div>
-                        {rows.length ? rows.slice(0,5).map((r,i) => (
-                          <div key={i} className="text-sm flex items-center justify-between">
-                            <span>{r.player}</span>
-                            <span className="text-gray-600">{r.status}</span>
-                          </div>
-                        )) : <p className="text-xs text-gray-500">Sin datos.</p>}
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            </div>
-
-            {/* Comentarios */}
-            <div className="mt-4 p-4 border rounded-xl bg-white">
-              <div className="text-sm font-semibold mb-2">Comentarios del juego</div>
-              <div className="flex gap-2">
-                <input
-                  className="border rounded-lg p-2 w-full"
-                  placeholder="Escribe una nota (visible para la liga)…"
-                  value={newNote}
-                  onChange={(e) => setNewNote(e.target.value)}
+          {/* Mercado + histórico */}
+          <div className="p-4 border rounded-xl bg-white">
+            <div className="text-sm font-semibold mb-3">Mercado</div>
+            {(() => {
+              const { last, prev } = details.odds || {};
+              const Line = ({ tHome, tAway, lh, la, ph, pa }) => (
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-gray-500 text-xs">
+                      <th className="text-left w-24">Tipo</th>
+                      <th className="text-left">{tHome}</th>
+                      <th className="text-left">{tAway}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td className="py-1 text-gray-500">Actual</td>
+                      <td className="py-1 font-mono">{lh ?? "—"}</td>
+                      <td className="py-1 font-mono">{la ?? "—"}</td>
+                    </tr>
+                    <tr>
+                      <td className="py-1 text-gray-500">Previo</td>
+                      <td className="py-1 font-mono">{ph ?? "—"}</td>
+                      <td className="py-1 font-mono">{pa ?? "—"}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              );
+              const fmt = (v) => (v != null ? (v > 0 ? `+${v}` : v) : null);
+              return (
+                <Line
+                  tHome={details.game.home_team}
+                  tAway={details.game.away_team}
+                  lh={last?.spread_home != null ? `${fmt(last.spread_home)} | ML ${last?.ml_home ?? "—"}` : null}
+                  la={last?.spread_away != null ? `${fmt(last.spread_away)} | ML ${last?.ml_away ?? "—"}` : null}
+                  ph={prev?.spread_home != null ? `${fmt(prev.spread_home)} | ML ${prev?.ml_home ?? "—"}` : null}
+                  pa={prev?.spread_away != null ? `${fmt(prev.spread_away)} | ML ${prev?.ml_away ?? "—"}` : null}
                 />
-                <button className="px-3 py-2 rounded bg-black text-white text-sm" onClick={addNote}>
-                  Guardar
-                </button>
+              );
+            })()}
+
+            <div className="mt-3 text-xs text-gray-500">Histórico:</div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-2">
+              <div>
+                <div className="text-xs font-semibold mb-1">Spread Home</div>
+                <Sparkline series={(oddsHistory || []).map(r => r.spread_home).filter(v => v != null)} />
               </div>
-              <div className="mt-3 space-y-2 max-h-64 overflow-auto">
-                {(notes || []).map((n) => (
-                  <div key={n.id} className="p-2 border rounded-lg">
-                    <div className="text-xs text-gray-500">
-                      {userNames[n.user_id] || n.user_id.slice(0, 6)} ·{" "}
-                      {DateTime.fromISO(n.created_at).setZone(TZ).toFormat("dd LLL HH:mm")}
-                    </div>
-                    <div className="text-sm mt-1">{n.note}</div>
-                  </div>
-                ))}
-                {(!notes || notes.length === 0) && <div className="text-xs text-gray-500">Sin comentarios.</div>}
+              <div>
+                <div className="text-xs font-semibold mb-1">Moneyline Home</div>
+                <Sparkline series={(oddsHistory || []).map(r => r.ml_home).filter(v => v != null)} />
               </div>
             </div>
           </div>
-        </div>
-      )}
 
+          {/* Últimos 5 */}
+          <div className="p-4 border rounded-xl bg-white">
+            <div className="text-sm font-semibold mb-3">Últimos 5</div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+              {["home","away"].map(side => {
+                const rows = (recentForm?.[side] || []);
+                const label = side === "home" ? details.game.home_team : details.game.away_team;
+                return (
+                  <div key={side}>
+                    <div className="font-semibold mb-1">{label}</div>
+                    <div className="space-y-1">
+                      {rows.length ? rows.map((r, i) => (
+                        <div key={i} className="flex items-center justify-between gap-2">
+                          <span className="text-gray-600">{DateTime.fromISO(r.date).setZone(TZ).toFormat("dd LLL")}</span>
+                          <span className="font-mono">{r.result}</span>
+                          <span className="text-gray-700 truncate">{r.opp}</span>
+                          <span className="font-mono">{r.score}</span>
+                        </div>
+                      )) : <div className="text-xs text-gray-500">Sin datos.</div>}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+
+        {/* Columna central */}
+        <div className="space-y-4">
+          {/* Líderes */}
+          <div className="p-4 border rounded-2xl bg-white">
+            <div className="text-sm font-semibold mb-3">Líderes</div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {["home","away"].map(side => {
+                const rows = (leaders || []).filter(x => x.side === side);
+                const label = side === "home" ? details.game.home_team : details.game.away_team;
+                return (
+                  <div key={side}>
+                    <div className="font-semibold mb-1">{label}</div>
+                    {rows.length ? (
+                      <ul className="text-sm space-y-1">
+                        {rows.map((r, i) => (
+                          <li key={i} className="flex justify-between">
+                            <span className="text-gray-700">{r.player} · {r.stat}</span>
+                            <span className="font-mono">{r.value}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : <p className="text-xs text-gray-500">Sin datos de líderes.</p>}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Comparativa temporada */}
+          <div className="p-4 border rounded-2xl bg-white">
+            <div className="text-sm font-semibold mb-3">Comparativa de equipos (temporada)</div>
+            <table className="w-full text-sm">
+              <thead className="text-xs text-gray-500">
+                <tr>
+                  <th className="text-left">Métrica</th>
+                  <th className="text-left">{details.game.home_team}</th>
+                  <th className="text-left">{details.game.away_team}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {[
+                  ["PPG","ppg"],["Yds/G","ypg"],["Pass Y/G","pass_ypg"],["Rush Y/G","rush_ypg"],
+                  ["Opp PPG","opp_ppg"],["Opp Y/G","opp_ypg"],["3rd down %","third_down"],
+                  ["Red zone %","red_zone"],["TO Diff","to_diff"],["Sacks","sacks"],
+                ].map(([label,key]) => (
+                  <tr key={key}>
+                    <td className="py-1 text-gray-600">{label}</td>
+                    <td className="py-1 font-mono">{teamStats?.home?.[key] ?? "—"}</td>
+                    <td className="py-1 font-mono">{teamStats?.away?.[key] ?? "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <p className="mt-2 text-xs text-gray-500">Fuente: <code>season_team_stats</code>.</p>
+          </div>
+        </div>
+
+        {/* Columna derecha */}
+        <div className="space-y-4">
+          {/* Sede & Clima */}
+          <div className="p-4 border rounded-2xl bg-white">
+            <div className="text-sm font-semibold mb-3">Sede & Clima</div>
+            <div className="space-y-1 text-sm">
+              <div>🏟️ {metaMap[details.game.id]?.stadium ?? "—"}</div>
+              <div>📍 {metaMap[details.game.id]?.city ?? "—"}</div>
+              <div>📺 {metaMap[details.game.id]?.tv ?? "—"}</div>
+              <div className="h-px bg-gray-200 my-2" />
+              <div>🌡️ Temp: {weatherMap[details.game.id]?.temp_c ?? "—"}°C</div>
+              <div>🌧️ Lluvia: {weatherMap[details.game.id]?.precip_mm ?? "—"} mm</div>
+              <div>💨 Viento: {weatherMap[details.game.id]?.wind_kph ?? "—"} kph</div>
+              <div>{weatherMap[details.game.id]?.condition ?? ""}</div>
+            </div>
+          </div>
+
+          {/* Betting splits */}
+          <div className="p-4 border rounded-2xl bg-white">
+            <div className="text-sm font-semibold mb-3">Betting Splits</div>
+            <div className="text-xs text-gray-500 mb-1">Tickets</div>
+            <div className="progressbar mb-2">
+              {(() => {
+                const th = betSplits?.tickets_home ?? 0;
+                const ta = betSplits?.tickets_away ?? 0;
+                const total = th + ta || 1;
+                const pctH = Math.round((th * 100) / total);
+                return <div style={{ width: `${pctH}%` }} title={`${details.game.home_team} ${pctH}%`} />;
+              })()}
+            </div>
+            <div className="text-xs text-gray-500 mb-1">Dinero</div>
+            <div className="progressbar">
+              {(() => {
+                const mh = betSplits?.money_home ?? 0;
+                const ma = betSplits?.money_away ?? 0;
+                const total = mh + ma || 1;
+                const pctH = Math.round((mh * 100) / total);
+                return <div style={{ width: `${pctH}%` }} title={`${details.game.home_team} ${pctH}%`} />;
+              })()}
+            </div>
+            <p className="mt-2 text-xs text-gray-500">Fuente: <code>betting_splits</code>.</p>
+          </div>
+
+          {/* Lesiones */}
+          <div className="p-4 border rounded-2xl bg-white">
+            <div className="text-sm font-semibold mb-3">Lesionados</div>
+            {["home","away"].map(side => {
+              const team = side === "home" ? details.game.home_team : details.game.away_team;
+              const rows = (injuries || []).filter(i => i.team_id === team);
+              return (
+                <div key={side} className="mb-3">
+                  <div className="font-semibold text-xs mb-1">{team}</div>
+                  {rows.length ? rows.slice(0,5).map((r,i) => (
+                    <div key={i} className="text-sm flex items-center justify-between">
+                      <span className="truncate">{r.player}</span>
+                      <span className="text-gray-600">{r.status}</span>
+                    </div>
+                  )) : <p className="text-xs text-gray-500">Sin datos.</p>}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+
+      {/* Comentarios */}
+      <div className="px-4 md:px-0 pb-4">
+        <div className="p-4 border-t md:border rounded-none md:rounded-xl bg-white">
+          <div className="text-sm font-semibold mb-2">Comentarios del juego</div>
+          <div className="flex gap-2">
+            <input
+              className="border rounded-lg p-2 w-full"
+              placeholder="Escribe una nota (visible para la liga)…"
+              value={newNote}
+              onChange={(e) => setNewNote(e.target.value)}
+            />
+            <button className="px-3 py-2 rounded bg-black text-white text-sm" onClick={addNote}>
+              Guardar
+            </button>
+          </div>
+          <div className="mt-3 space-y-2 max-h-64 overflow-auto">
+            {(notes || []).map((n) => (
+              <div key={n.id} className="p-2 border rounded-lg">
+                <div className="text-xs text-gray-500">
+                  {userNames[n.user_id] || n.user_id.slice(0, 6)} ·{" "}
+                  {DateTime.fromISO(n.created_at).setZone(TZ).toFormat("dd LLL HH:mm")}
+                </div>
+                <div className="text-sm mt-1">{n.note}</div>
+              </div>
+            ))}
+            {(!notes || notes.length === 0) && <div className="text-xs text-gray-500">Sin comentarios.</div>}
+          </div>
+        </div>
+      </div>
     </div>
-  ); // end return
+  </div>
+)}
+
+{/* ===== NUEVO: Standings (W-L-T) de la liga ===== */}
+<section className="mt-6">
+  <div className="p-4 border rounded-2xl bg-white card">
+    <h2 className="font-semibold">Standings de la liga (W-L-T)</h2>
+    <p className="text-xs text-gray-600">Cómputo con todos los picks resueltos de la temporada.</p>
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm mt-3 table-minimal">
+        <thead>
+          <tr>
+            <th>Jugador</th>
+            <th className="text-right">W</th>
+            <th className="text-right">L</th>
+            <th className="text-right">T</th>
+            <th className="text-right">Win %</th>
+          </tr>
+        </thead>
+        <tbody>
+          {(playerStandings || []).length ? (
+            playerStandings.map((row) => {
+              const name = userNames[row.user_id] || row.user_id.slice(0,6);
+              const total = row.w + row.l + row.t;
+              const wpct = total ? Math.round((row.w * 1000) / total) / 10 : 0;
+              return (
+                <tr key={row.user_id}>
+                  <td className="whitespace-nowrap">{name}</td>
+                  <td className="text-right font-mono">{row.w}</td>
+                  <td className="text-right font-mono">{row.l}</td>
+                  <td className="text-right font-mono">{row.t}</td>
+                  <td className="text-right font-mono">{wpct}%</td>
+                </tr>
+              );
+            })
+          ) : (
+            <tr>
+              <td className="py-2 text-gray-500" colSpan={5}>Aún no hay standings calculados.</td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+{/* (El resto del componente continúa igual: Historial de tus picks, modales y toasts ya presentes arriba) */}
+
+{/* ===== Historial de usuario ===== */}
+<section className="mt-6">
+  <div className="p-4 border rounded-2xl bg-white card">
+    <h2 className="font-semibold">Historial de tus picks</h2>
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm mt-3 table-minimal">
+        <thead>
+          <tr>
+            <th>W</th>
+            <th>Equipo</th>
+            <th>Resultado</th>
+          </tr>
+        </thead>
+        <tbody>
+          {(picks || [])
+            .filter((p) => p.season === SEASON)
+            .sort((a, b) => a.week - b.week)
+            .map((p) => {
+              const shownRes = derivedResultForPick(p);
+              return (
+                <tr key={p.id}>
+                  <td>{p.week}</td>
+                  <td>
+                    <span className="inline-flex items-center gap-1">
+                      <img
+                        src={teamsMap[p.team_id]?.logo_url || `/teams/${p.team_id}.png`}
+                        alt={p.team_id}
+                        className="h-5 w-5 object-contain"
+                        onError={(e) => (e.currentTarget.style.visibility = "hidden")}
+                      />
+                      <span className="font-mono font-semibold">{p.team_id}</span>
+                    </span>
+                  </td>
+                  <td>
+                    <span
+                      className={
+                        shownRes === "win"
+                          ? "text-emerald-700 font-semibold"
+                          : shownRes === "loss"
+                          ? "text-red-600 font-semibold"
+                          : shownRes === "push"
+                          ? "text-gray-600"
+                          : "text-gray-500"
+                      }
+                    >
+                      {shownRes}
+                    </span>
+                  </td>
+                </tr>
+              );
+            })}
+          {(!picks || picks.length === 0) && (
+            <tr>
+              <td className="py-2 text-gray-500" colSpan={3}>
+                Sin picks aún.
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+{/* ===== Modal de confirmación de pick ===== */}
+{pendingPick && (
+  <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50">
+    <div className="w-full max-w-sm bg-white rounded-2xl p-5 border card">
+      <h3 className="font-semibold text-lg">Confirmar pick</h3>
+      <p className="mt-2 text-sm">
+        ¿Confirmas tu pick de <b>{pendingPick.teamId}</b> en W{week}?
+      </p>
+      <div className="mt-4 flex gap-2">
+        <button className="px-4 py-2 rounded border" onClick={() => setPendingPick(null)}>
+          Cancelar
+        </button>
+        <button className="px-4 py-2 rounded bg-black text-white" onClick={doPick}>
+          Confirmar
+        </button>
+      </div>
+    </div>
+  </div>
+)}
+
+{/* ===== Banner resultado (win/loss/push) ===== */}
+{resultBanner && (
+  <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-[60]">
+    <div className="w-full max-w-sm bg-white rounded-2xl p-5 border card text-center">
+      <h3 className="font-semibold text-lg">
+        {resultBanner.type === "win" ? "¡Victoria!" : resultBanner.type === "loss" ? "Derrota" : "Push"}
+      </h3>
+      <p className="mt-2 text-sm">{resultBanner.msg}</p>
+      <button className="mt-4 px-4 py-2 rounded bg-black text-white" onClick={() => setResultBanner(null)}>
+        Cerrar
+      </button>
+    </div>
+  </div>
+)}
+
+{/* ===== Recordatorio flotante (si no hay pick y se acerca kickoff) ===== */}
+{!myPickThisWeek && nextKick && (me?.lives ?? 0) > 0 && (
+  <div className="fixed bottom-4 right-4 left-4 md:left-auto px-4 py-2 rounded-xl bg-black text-white text-sm shadow-lg flex items-center justify-between gap-3">
+    <span>Recuerda elegir: kickoff en <Countdown iso={nextKick} /></span>
+    <button
+      className="hidden md:inline px-2 py-1 rounded bg-white text-black text-xs"
+      onClick={() => {
+        const el = document.querySelector("#games-top");
+        if (el) el.scrollIntoView({ behavior: "smooth" });
+      }}
+    >
+      Ir a partidos
+    </button>
+  </div>
+)}
+
+{/* ===== Cierre del contenedor principal y del componente ===== */}
+</div> {/* container (max-w-6xl) */}
+); // end return
 } // end GamesTab
 
 	  
