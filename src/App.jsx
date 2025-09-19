@@ -445,81 +445,7 @@ function AutoPickButtons({ week, session }) {
 /* ========================= PARTIDOS ========================= */
 /* ========================= PARTIDOS ========================= */
 /* ========================= PARTIDOS (GamesTab) ========================= */
-/* ========================= GamesTab – Parte 1 (imports, setup y estado) ========================= */
-
-import { useEffect, useMemo, useRef, useState } from "react";
-import clsx from "clsx";
-import { DateTime } from "luxon";
-import { supabase } from "../lib/supabaseClient";
-
-/* --- Constantes globales esperadas en tu app --- */
-// Ajusta si en tu proyecto vienen de otro módulo .env o constants
-const SEASON = window.SEASON ?? 2025;
-const TZ = window.APP_TZ ?? "America/Mexico_City";
-const SITE = window.SITE_URL ?? "";
-const CRON_TOKEN = window.CRON_TOKEN ?? "";
-
-/* --- Utilidades mínimas usadas en el tab --- */
-function isLiveStatus(status) {
-  return ["in","live","halftime","Q1","Q2","Q3","Q4","OT"].some((k) =>
-    String(status || "").toLowerCase().includes(k)
-  );
-}
-function hasGameEnded(g) {
-  const s = String(g?.status || "").toLowerCase();
-  return s.includes("final") || s === "post";
-}
-function winProbFromSpread(spread) {
-  if (spread == null || !isFinite(Number(spread))) return null;
-  // Aproximación logística simple (puedes reemplazar por tu curva real)
-  const x = -Number(spread);
-  const p = 1 / (1 + Math.exp(-0.45 * x));
-  return Math.round(p * 100);
-}
-function computePickResultFromGame(game, teamId) {
-  if (!hasGameEnded(game)) return "pending";
-  const hs = Number(game.home_score ?? 0);
-  const as = Number(game.away_score ?? 0);
-  const winner =
-    hs === as ? "push" : hs > as ? game.home_team : game.away_team;
-  if (winner === "push") return "push";
-  return winner === teamId ? "win" : "loss";
-}
-function isPickFrozen(myPick, gamesMap) {
-  if (!myPick) return false;
-  const g = gamesMap[myPick.game_id];
-  if (!g) return false;
-  const started = DateTime.fromISO(g.start_time) <= DateTime.now();
-  const ended = hasGameEnded(g);
-  return started || ended;
-}
-
-/* --- Helpers de UI pequeños --- */
-function downloadCSV(filename, rows) {
-  const csv = rows.map((r) => r.map((c) => `"${String(c ?? "").replace(/"/g, '""')}"`).join(",")).join("\n");
-  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url; a.download = filename; a.click();
-  URL.revokeObjectURL(url);
-}
-
-/* --- Placeholder de componentes que ya existen en tu proyecto --- */
-// Deben existir en tu código base
-const Countdown = ({ iso }) => {
-  const [now, setNow] = useState(DateTime.now());
-  useEffect(() => { const id = setInterval(() => setNow(DateTime.now()), 1000); return () => clearInterval(id); }, []);
-  if (!iso) return null;
-  const diff = DateTime.fromISO(iso).diff(now, ["hours","minutes","seconds"]).toObject();
-  const h = Math.max(0, Math.floor(diff.hours || 0));
-  const m = Math.max(0, Math.floor(diff.minutes || 0));
-  const s = Math.max(0, Math.floor(diff.seconds || 0));
-  return <span className="tabular-nums">{h}h {m}m {s}s</span>;
-};
-const AutoPickButtons = ({ week, session }) => null; // reemplaza por tu implementación real
-
-/* ========================= COMPONENTE ========================= */
-export default function GamesTab({ session }) {
+function GamesTab({ session }) {
   const uid = session?.user?.id || null;
 
   // ---- Estado base ----
@@ -545,16 +471,16 @@ export default function GamesTab({ session }) {
   const [details, setDetails] = useState(null); // { game, odds, popHome, popAway }
 
   // ---- Datos del modal Detalles ----
-  const [oddsHistory, setOddsHistory] = useState([]);
-  const [leaders, setLeaders] = useState([]);
-  const [notes, setNotes] = useState([]);
+  const [oddsHistory, setOddsHistory] = useState([]); // historial odds
+  const [leaders, setLeaders] = useState([]);         // líderes
+  const [notes, setNotes] = useState([]);             // comentarios
   const [newNote, setNewNote] = useState("");
   const [detailsTab, setDetailsTab] = useState("resumen"); // resumen | odds | leaders | notes
 
   // ---- Filtros / búsqueda ----
   const [dayFilter, setDayFilter] = useState(localStorage.getItem("dayFilter") || "ALL");
   const [teamQuery, setTeamQuery] = useState(localStorage.getItem("teamQuery") || "");
-  const [statusFilter, setStatusFilter] = useState(localStorage.getItem("statusFilter") || "ALL");
+  const [statusFilter, setStatusFilter] = useState(localStorage.getItem("statusFilter") || "ALL"); // ALL|LIVE|FINAL|UPCOMING
   const searchRef = useRef(null);
 
   // ---- Favoritos + diferenciales ----
@@ -565,21 +491,220 @@ export default function GamesTab({ session }) {
   });
 
   // ---- Clima / meta / tips (opcional) ----
-  const [weatherMap, setWeatherMap] = useState({});
-  const [metaMap, setMetaMap] = useState({});
-  const [tipsMap, setTipsMap] = useState({});
+  const [weatherMap, setWeatherMap] = useState({}); // game_id -> { temp_c, precip_mm, wind_kph, condition, updated_at }
+  const [metaMap, setMetaMap] = useState({});       // game_id -> { stadium, city, tv }
+  const [tipsMap, setTipsMap] = useState({});       // game_id -> [ { tip, kind } ]
 
   // ---- Detalles avanzados tipo ESPN ----
-  const [betSplits, setBetSplits] = useState(null);
-  const [teamStats, setTeamStats] = useState(null);
-  const [injuries, setInjuries] = useState([]);
+  const [betSplits, setBetSplits] = useState(null);       // tickets/money split
+  const [teamStats, setTeamStats] = useState(null);       // comparativa temporada
+  const [injuries, setInjuries] = useState([]);           // lesionados
   const [recentForm, setRecentForm] = useState({ home: [], away: [] });
 
-  // ---- Realtime (se configurará más adelante) ----
-  // (Dejamos el hook listo; lo completamos en la Parte 3)
-  // useEffect(() => { ... }, [week]);
+  // ---- Realtime ----
+  useEffect(() => {
+    const ch = supabase
+      .channel("realtime-app")
+      .on("postgres_changes", { event: "*", schema: "public", table: "picks" }, (payload) => {
+        const wk = payload.new?.week ?? payload.old?.week;
+        const ssn = payload.new?.season ?? payload.old?.season;
+        if (wk === week && ssn === SEASON) {
+          loadMyPicks();
+          loadLeaguePicks(week);
+          setLastUpdated(new Date().toISOString());
+        }
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "games" }, (payload) => {
+        const wk = payload.new?.week ?? payload.old?.week;
+        const ssn = payload.new?.season ?? payload.old?.season;
+        if (wk === week && ssn === SEASON) {
+          loadGames(week);
+          setLastUpdated(new Date().toISOString());
+        }
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "odds" }, () => {
+        loadGames(week);
+        setLastUpdated(new Date().toISOString());
+      })
+      .subscribe();
+    return () => { try { supabase.removeChannel(ch); } catch {} };
+  }, [week]);
 
-  /* ---------- helpers memorizados ---------- */
+  /* ---------- Cargas ---------- */
+  const loadTeams = async () => {
+    const { data: ts } = await supabase.from("teams").select("*");
+    const map = {};
+    (ts || []).forEach((t) => (map[t.id] = t));
+    setTeamsMap(map);
+  };
+
+  const loadGames = async (w) => {
+    const { data: gs } = await supabase
+      .from("games")
+      .select("*")
+      .eq("week", w)
+      .eq("season", SEASON)
+      .order("start_time");
+    setGames(gs || []);
+    const ids = (gs || []).map((g) => g.id);
+    if (ids.length) {
+      const { data } = await supabase
+        .from("odds")
+        .select("game_id, spread_home, spread_away, ml_home, ml_away, fetched_at")
+        .in("game_id", ids)
+        .order("fetched_at", { ascending: false });
+      const by = {};
+      for (const row of data || []) {
+        if (!by[row.game_id]) by[row.game_id] = { last: row, prev: null };
+        else if (!by[row.game_id].prev) by[row.game_id].prev = row;
+      }
+      setOddsPairs(by);
+      // meta/clima/tips
+      loadGameMetaWeather(ids);
+      loadGameTips(ids);
+    } else {
+      setOddsPairs({}); setWeatherMap({}); setMetaMap({}); setTipsMap({});
+    }
+  };
+
+  async function loadGameMetaWeather(ids) {
+    try {
+      const { data: metas } = await supabase
+        .from("game_meta").select("game_id, stadium, city, tv").in("game_id", ids);
+      const mm = {}; (metas || []).forEach(m => { mm[m.game_id] = { stadium: m.stadium, city: m.city, tv: m.tv }; });
+      setMetaMap(mm);
+    } catch {}
+    try {
+      const { data: ws } = await supabase
+        .from("weather")
+        .select("game_id, temp_c, precip_mm, wind_kph, condition, updated_at")
+        .in("game_id", ids);
+      const wm = {}; (ws || []).forEach(w => { wm[w.game_id] = w; });
+      setWeatherMap(wm);
+    } catch {}
+  }
+
+  async function loadGameTips(ids) {
+    try {
+      const { data: tps } = await supabase
+        .from("game_tips")
+        .select("game_id, tip, kind")
+        .in("game_id", ids)
+        .limit(200);
+      const tm = {};
+      (tps || []).forEach(t => {
+        if (!tm[t.game_id]) tm[t.game_id] = [];
+        tm[t.game_id].push({ tip: t.tip, kind: t.kind });
+      });
+      setTipsMap(tm);
+    } catch {}
+  }
+
+  const loadMyPicks = async () => {
+    if (!uid) return;
+    const { data: pk } = await supabase.from("picks").select("*").eq("user_id", uid).eq("season", SEASON);
+    setPicks(pk || []);
+  };
+
+  const loadLeaguePicks = async (w) => {
+    const { data: pks } = await supabase
+      .from("picks")
+      .select("id,user_id,team_id,result,auto_pick,updated_at,week,season,game_id")
+      .eq("week", w)
+      .eq("season", SEASON);
+    setLeaguePicks(pks || []);
+    const ids = [...new Set((pks || []).map((x) => x.user_id))];
+    if (ids.length) {
+      const { data: profs } = await supabase.from("profiles").select("id,display_name").in("id", ids);
+      const m = {}; (profs || []).forEach((p) => (m[p.id] = p.display_name)); setUserNames(m);
+    } else setUserNames({});
+
+    let totalPlayers = 0;
+    try {
+      const { count } = await supabase.from("profiles").select("*", { count: "exact", head: true });
+      totalPlayers = count || 0;
+    } catch {
+      const { data: std } = await supabase.from("standings").select("user_id");
+      totalPlayers = std?.length || 0;
+    }
+    const counts = {};
+    (pks || []).forEach((x) => { if (x.team_id) counts[x.team_id] = (counts[x.team_id] || 0) + 1; });
+    const list = Object.entries(counts)
+      .map(([team_id, count]) => ({ team_id, count, pct: totalPlayers ? Math.round((count * 100) / totalPlayers) : 0 }))
+      .sort((a, b) => b.count - a.count);
+    setPopularity(list);
+  };
+
+  const loadSeasonData = async () => {
+    const { data: gs } = await supabase.from("games").select("*").eq("season", SEASON);
+    setAllGamesSeason(gs || []);
+    const { data: pks } = await supabase
+      .from("picks")
+      .select("id,user_id,team_id,game_id,week,season,result,updated_at")
+      .eq("season", SEASON);
+    setAllPicksSeason(pks || []);
+  };
+
+  const recomputePlayerStandings = (allPicks, allGames) => {
+    const gm = {}; (allGames || []).forEach((g) => (gm[g.id] = g));
+    const agg = new Map();
+    (allPicks || []).forEach((p) => {
+      const g = gm[p.game_id]; if (!g) return;
+      const res = p.result && p.result !== "pending" ? p.result : computePickResultFromGame(g, p.team_id);
+      if (res === "pending") return;
+      const row = agg.get(p.user_id) || { w: 0, l: 0, t: 0 };
+      if (res === "win") row.w++; else if (res === "loss") row.l++; else if (res === "push") row.t++;
+      agg.set(p.user_id, row);
+    });
+    return [...agg.entries()]
+      .map(([user_id, { w, l, t }]) => ({ user_id, w, l, t }))
+      .sort((a, b) => b.w - a.w || a.l - b.l || b.t - a.t);
+  };
+
+  const initAll = async () => {
+    if (!uid) return;
+    const email = session.user.email;
+    let { data: prof } = await supabase.from("profiles").select("*").eq("email", email).single();
+    if (!prof) {
+      await supabase.from("profiles").insert({
+        id: uid, email, display_name: email.split("@")[0], lives: 2,
+      });
+      const r = await supabase.from("profiles").select("*").eq("email", email).single();
+      prof = r.data;
+    }
+    setMe(prof);
+
+    await loadTeams();
+    await loadGames(week);
+    await loadMyPicks();
+    const { data: st } = await supabase.from("standings").select("*");
+    setStandings(st || []);
+    await loadLeaguePicks(week);
+    await loadSeasonData();
+    setLastUpdated(new Date().toISOString());
+  };
+
+  useEffect(() => { initAll(); /* eslint-disable-next-line */ }, [uid]);
+
+  useEffect(() => {
+    loadGames(week);
+    loadLeaguePicks(week);
+    localStorage.setItem("week", String(week));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [week]);
+
+  useEffect(() => localStorage.setItem("dayFilter", dayFilter), [dayFilter]);
+  useEffect(() => localStorage.setItem("teamQuery", teamQuery), [teamQuery]);
+  useEffect(() => localStorage.setItem("statusFilter", statusFilter), [statusFilter]);
+  useEffect(() => localStorage.setItem("onlyDiff", onlyDiff ? "1" : "0"), [onlyDiff]);
+  useEffect(() => localStorage.setItem("diffCutoff", String(diffCutoff)), [diffCutoff]);
+  useEffect(() => localStorage.setItem("pinnedGames", JSON.stringify(pinned)), [pinned]);
+
+  useEffect(() => {
+    if (!allGamesSeason?.length || !allPicksSeason?.length) return;
+    setPlayerStandings(recomputePlayerStandings(allPicksSeason, allGamesSeason));
+  }, [allGamesSeason, allPicksSeason]);
+  /* ---------- helpers picks ---------- */
   const myPickThisWeek = useMemo(
     () => (picks || []).find((p) => p.week === week && p.season === SEASON),
     [picks, week]
@@ -604,274 +729,180 @@ export default function GamesTab({ session }) {
 
   const popPct = (teamId) => popularity.find((p) => p.team_id === teamId)?.pct ?? 0;
 
-  /* (Continuaremos con loaders, efectos y render en la Parte 2) */
-}
-/* ========================= GamesTab – Parte 2 (loaders y efectos) ========================= */
-
-  /* ---------- Cargas de datos desde Supabase ---------- */
-  const loadTeams = async () => {
-    const { data: ts } = await supabase.from("teams").select("*");
-    const map = {};
-    (ts || []).forEach((t) => (map[t.id] = t));
-    setTeamsMap(map);
+  const canPick = (candidateGame, candidateTeam) => {
+    if (!uid) return { ok: false, reason: "NOSESSION" };
+    if ((me?.lives ?? 0) <= 0) return { ok: false, reason: "ELIMINATED" };
+    if (pickFrozen) {
+      const same = myPickThisWeek?.game_id === candidateGame.id && myPickThisWeek?.team_id === candidateTeam;
+      if (!same) return { ok: false, reason: "FROZEN" };
+    }
+    if (DateTime.fromISO(candidateGame.start_time) <= DateTime.now()) return { ok: false, reason: "LOCK" };
+    const used = (picks || []).some((p) => p.team_id === candidateTeam && p.user_id === uid);
+    if (used && !(myPickThisWeek && myPickThisWeek.team_id === candidateTeam)) return { ok: false, reason: "USED" };
+    return { ok: true };
   };
 
-  const loadGames = async (w) => {
-    const { data: gs } = await supabase
-      .from("games")
-      .select("*")
-      .eq("week", w)
-      .eq("season", SEASON)
-      .order("start_time");
-    setGames(gs || []);
-    const ids = (gs || []).map((g) => g.id);
+  const confirmPick = (game, teamId) => {
+    const c = canPick(game, teamId);
+    if (!c.ok) {
+      const msg =
+        c.reason === "ELIMINATED" ? "Estás eliminado 😵‍💫. Puedes ver cómo van los demás, pero ya no puedes pickear."
+        : c.reason === "FROZEN" ? "Tu pick ya quedó congelado porque su partido ya inició/terminó."
+        : c.reason === "LOCK" ? "Este partido ya está cerrado por kickoff."
+        : c.reason === "NOSESSION" ? "Iniciando sesión… intenta de nuevo en unos segundos."
+        : "Ya usaste este equipo antes.";
+      return alert(msg);
+    }
+    setPendingPick({ game, teamId });
+  };
 
-    if (ids.length) {
-      const { data } = await supabase
-        .from("odds")
-        .select("game_id, spread_home, spread_away, ml_home, ml_away, fetched_at")
-        .in("game_id", ids)
-        .order("fetched_at", { ascending: false });
-
-      const by = {};
-      for (const row of data || []) {
-        if (!by[row.game_id]) by[row.game_id] = { last: row, prev: null };
-        else if (!by[row.game_id].prev) by[row.game_id].prev = row;
-      }
-      setOddsPairs(by);
-      loadGameMetaWeather(ids);
-      loadGameTips(ids);
+  const doPick = async () => {
+    if (!pendingPick || !uid) return;
+    const { game, teamId } = pendingPick;
+    if (myPickThisWeek) {
+      const { error } = await supabase
+        .from("picks")
+        .update({ team_id: teamId, game_id: game.id, updated_at: new Date().toISOString() })
+        .eq("id", myPickThisWeek.id);
+      if (error) return alert(error.message);
     } else {
-      setOddsPairs({});
-      setWeatherMap({});
-      setMetaMap({});
-      setTipsMap({});
+      const { error } = await supabase.from("picks").insert({
+        user_id: uid, game_id: game.id, team_id: teamId, week, season: SEASON,
+      });
+      if (error) return alert(error.message);
     }
+    await loadMyPicks(); await loadLeaguePicks(week); await loadSeasonData();
+    const { data: st } = await supabase.from("standings").select("*"); setStandings(st || []);
+    setPendingPick(null); setLastUpdated(new Date().toISOString());
   };
 
-  async function loadGameMetaWeather(ids) {
-    try {
-      const { data: metas } = await supabase
-        .from("game_meta")
-        .select("game_id, stadium, city, tv")
-        .in("game_id", ids);
-      const mm = {};
-      (metas || []).forEach(m => { mm[m.game_id] = { stadium: m.stadium, city: m.city, tv: m.tv }; });
-      setMetaMap(mm);
-    } catch {}
-
-    try {
-      const { data: ws } = await supabase
-        .from("weather")
-        .select("game_id, temp_c, precip_mm, wind_kph, condition, updated_at")
-        .in("game_id", ids);
-      const wm = {};
-      (ws || []).forEach(w => { wm[w.game_id] = w; });
-      setWeatherMap(wm);
-    } catch {}
+  function derivedResultForPick(pick) {
+    if (!pick) return "pending";
+    if (pick?.result && pick.result !== "pending") return pick.result;
+    const g = gamesMap[pick?.game_id]; if (!g) return "pending";
+    return computePickResultFromGame(g, pick.team_id);
   }
 
-  async function loadGameTips(ids) {
+  const bannerKey = (w, u) => `resultShown-W${w}-${u}`;
+  const livesKey = (w, u) => `livesApplied-W${w}-${u}`;
+
+  async function applyLivesIfNeeded(outcome) {
+    if (outcome !== "loss" || !uid) return;
+    const lk = livesKey(week, uid);
+    if (localStorage.getItem(lk)) return;
     try {
-      const { data: tps } = await supabase
-        .from("game_tips")
-        .select("game_id, tip, kind")
-        .in("game_id", ids)
-        .limit(200);
-      const tm = {};
-      (tps || []).forEach(t => {
-        if (!tm[t.game_id]) tm[t.game_id] = [];
-        tm[t.game_id].push({ tip: t.tip, kind: t.kind });
-      });
-      setTipsMap(tm);
-    } catch {}
+      const { data: profNow } = await supabase.from("profiles").select("lives").eq("id", uid).single();
+      const currentLives = profNow?.lives ?? me?.lives ?? 0;
+      const newLives = Math.max(0, currentLives - 1);
+      if (newLives !== currentLives) {
+        await supabase.from("profiles").update({ lives: newLives }).eq("id", uid);
+        setMe((m) => ({ ...m, lives: newLives }));
+      }
+    } catch (e) { console.warn("applyLivesIfNeeded error:", e.message); }
+    finally { localStorage.setItem(lk, "1"); }
   }
 
-  const loadMyPicks = async () => {
-    if (!uid) return;
-    const { data: pk } = await supabase
-      .from("picks")
-      .select("*")
-      .eq("user_id", uid)
-      .eq("season", SEASON);
-    setPicks(pk || []);
-  };
+  function funnyMsg(res) { if (res === "win") return "¡Ganaste esta semana! 🕺"; if (res === "loss") return "Perdiste esta semana 😬…"; return "Push… ni fu ni fa."; }
+  async function onMyPickResolved(res) { setResultBanner({ type: res, msg: funnyMsg(res) }); if (res === "loss") await applyLivesIfNeeded(res); }
 
-  const loadLeaguePicks = async (w) => {
-    const { data: pks } = await supabase
-      .from("picks")
-      .select("id,user_id,team_id,result,auto_pick,updated_at,week,season,game_id")
-      .eq("week", w)
-      .eq("season", SEASON);
-    setLeaguePicks(pks || []);
-
-    const ids = [...new Set((pks || []).map((x) => x.user_id))];
-    if (ids.length) {
-      const { data: profs } = await supabase
-        .from("profiles")
-        .select("id,display_name")
-        .in("id", ids);
-      const m = {};
-      (profs || []).forEach((p) => (m[p.id] = p.display_name));
-      setUserNames(m);
-    } else setUserNames({});
-
-    let totalPlayers = 0;
-    try {
-      const { count } = await supabase.from("profiles").select("*", { count: "exact", head: true });
-      totalPlayers = count || 0;
-    } catch {
-      const { data: std } = await supabase.from("standings").select("user_id");
-      totalPlayers = std?.length || 0;
-    }
-
-    const counts = {};
-    (pks || []).forEach((x) => {
-      if (x.team_id) counts[x.team_id] = (counts[x.team_id] || 0) + 1;
+  async function settleMyPicksIfNeeded(currentWeek, gamesArr, myPicksArr) {
+    const finals = {}; (gamesArr || []).forEach((g) => { if (hasGameEnded(g)) finals[g.id] = g; });
+    const updates = []; let myResolvedResult = null;
+    (myPicksArr || []).forEach((p) => {
+      if (p.week !== currentWeek) return;
+      const g = finals[p.game_id]; if (!g) return;
+      const res = computePickResultFromGame(g, p.team_id);
+      if ((!p.result || p.result === "pending") && res !== "pending") {
+        updates.push({ id: p.id, result: res }); if (p.user_id === uid) myResolvedResult = res;
+      }
     });
-
-    const list = Object.entries(counts)
-      .map(([team_id, count]) => ({
-        team_id,
-        count,
-        pct: totalPlayers ? Math.round((count * 100) / totalPlayers) : 0
-      }))
-      .sort((a, b) => b.count - a.count);
-
-    setPopularity(list);
-  };
-
-  const loadSeasonData = async () => {
-    const { data: gs } = await supabase
-      .from("games")
-      .select("*")
-      .eq("season", SEASON);
-    setAllGamesSeason(gs || []);
-
-    const { data: pks } = await supabase
-      .from("picks")
-      .select("id,user_id,team_id,game_id,week,season,result,updated_at")
-      .eq("season", SEASON);
-    setAllPicksSeason(pks || []);
-  };
-
-  const recomputePlayerStandings = (allPicks, allGames) => {
-    const gm = {};
-    (allGames || []).forEach((g) => (gm[g.id] = g));
-    const agg = new Map();
-    (allPicks || []).forEach((p) => {
-      const g = gm[p.game_id];
-      if (!g) return;
-      const res =
-        p.result && p.result !== "pending"
-          ? p.result
-          : computePickResultFromGame(g, p.team_id);
-      if (res === "pending") return;
-      const row = agg.get(p.user_id) || { w: 0, l: 0, t: 0 };
-      if (res === "win") row.w++;
-      else if (res === "loss") row.l++;
-      else if (res === "push") row.t++;
-      agg.set(p.user_id, row);
-    });
-
-    return [...agg.entries()]
-      .map(([user_id, { w, l, t }]) => ({ user_id, w, l, t }))
-      .sort((a, b) => b.w - a.w || a.l - b.l || b.t - a.t);
-  };
-
-  /* ---------- Inicialización y efectos ---------- */
-  const initAll = async () => {
-    if (!uid) return;
-    const email = session.user.email;
-    let { data: prof } = await supabase
-      .from("profiles")
-      .select("*")
-      .eq("email", email)
-      .single();
-
-    if (!prof) {
-      await supabase.from("profiles").insert({
-        id: uid,
-        email,
-        display_name: email.split("@")[0],
-        lives: 2
-      });
-      const r = await supabase
-        .from("profiles")
-        .select("*")
-        .eq("email", email)
-        .single();
-      prof = r.data;
+    if (updates.length) {
+      for (const row of updates) {
+        const { error } = await supabase.from("picks").update({ result: row.result }).eq("id", row.id);
+        if (error) console.warn("settleMyPicksIfNeeded error:", error.message);
+      }
     }
-    setMe(prof);
+    if (myResolvedResult && uid) {
+      const key = bannerKey(currentWeek, uid);
+      if (!localStorage.getItem(key)) { await onMyPickResolved(myResolvedResult); localStorage.setItem(key, "1"); }
+    }
+  }
 
-    await loadTeams();
-    await loadGames(week);
-    await loadMyPicks();
-    const { data: st } = await supabase.from("standings").select("*");
-    setStandings(st || []);
-    await loadLeaguePicks(week);
-    await loadSeasonData();
-    setLastUpdated(new Date().toISOString());
-  };
-
-  useEffect(() => { initAll(); /* eslint-disable-line */ }, [uid]);
+  async function settleLeaguePicksIfNeeded(currentWeek, gamesArr, leaguePicksArr) {
+    const finals = {}; (gamesArr || []).forEach((g) => { if (hasGameEnded(g)) finals[g.id] = g; });
+    const updates = [];
+    (leaguePicksArr || []).forEach((p) => {
+      if (p.week !== currentWeek) return;
+      if (p.result && p.result !== "pending") return;
+      const g = finals[p.game_id]; if (!g) return;
+      const res = computePickResultFromGame(g, p.team_id);
+      if (res !== "pending") updates.push({ id: p.id, result: res });
+    });
+    if (updates.length) {
+      for (const row of updates) {
+        const { error } = await supabase.from("picks").update({ result: row.result }).eq("id", row.id);
+        if (error) console.warn("settleLeaguePicksIfNeeded error:", error.message);
+      }
+    }
+  }
 
   useEffect(() => {
-    loadGames(week);
-    loadLeaguePicks(week);
-    localStorage.setItem("week", String(week));
-  }, [week]);
-
-  useEffect(() => localStorage.setItem("dayFilter", dayFilter), [dayFilter]);
-  useEffect(() => localStorage.setItem("teamQuery", teamQuery), [teamQuery]);
-  useEffect(() => localStorage.setItem("statusFilter", statusFilter), [statusFilter]);
-  useEffect(() => localStorage.setItem("onlyDiff", onlyDiff ? "1" : "0"), [onlyDiff]);
-  useEffect(() => localStorage.setItem("diffCutoff", String(diffCutoff)), [diffCutoff]);
-  useEffect(() => localStorage.setItem("pinnedGames", JSON.stringify(pinned)), [pinned]);
+    if (!games?.length) return;
+    if (picks?.length) settleMyPicksIfNeeded(week, games, picks);
+    if (leaguePicks?.length) settleLeaguePicksIfNeeded(week, games, leaguePicks);
+    (async () => {
+      try {
+        const url = `${SITE}/api/control?action=settleWeek&week=${week}&token=${encodeURIComponent(CRON_TOKEN)}`;
+        await fetch(url);
+      } catch {}
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [games, picks, leaguePicks, week, uid]);
 
   useEffect(() => {
-    if (!allGamesSeason?.length || !allPicksSeason?.length) return;
-    setPlayerStandings(
-      recomputePlayerStandings(allPicksSeason, allGamesSeason)
-    );
-  }, [allGamesSeason, allPicksSeason]);
-/* ========================= GamesTab – Parte 3 (helpers UI) ========================= */
+    if (!myPickThisWeek || !uid) return;
+    const res = derivedResultForPick(myPickThisWeek);
+    if (res === "pending") return;
+    const bk = bannerKey(week, uid);
+    if (!localStorage.getItem(bk)) {
+      setResultBanner({ type: res, msg: funnyMsg(res) });
+      localStorage.setItem(bk, "1");
+    }
+    if (res === "loss") applyLivesIfNeeded(res);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [myPickThisWeek, gamesMap, week, uid]);
 
-  // ---- Componente mini logo + sigla ----
+  // Auto-refresh si hay juegos en vivo
+  useEffect(() => {
+    if (!games?.length) return;
+    const anyLive = (games || []).some((g) => isLiveStatus(g.status));
+    if (!anyLive) return;
+    const id = setInterval(() => { loadGames(week); }, 25_000);
+    return () => clearInterval(id);
+  }, [games, week]);
+
+  /* ---------- UI helpers ---------- */
   const TeamMini = ({ id }) => {
     const logo = teamsMap[id]?.logo_url || `/teams/${id}.png`;
     return (
       <span className="inline-flex items-center gap-1">
-        <img
-          src={logo}
-          alt={id}
-          className="h-5 w-5 object-contain"
-          onError={(e) => (e.currentTarget.style.visibility = "hidden")}
-        />
+        <img src={logo} alt={id} className="h-5 w-5 object-contain" onError={(e) => (e.currentTarget.style.visibility = "hidden")} />
         <span className="font-mono font-semibold">{id}</span>
       </span>
     );
   };
 
-  // ---- Chip con nombre completo ----
   const TeamChip = ({ id }) => {
     const t = teamsMap[id] || {};
     const logo = t.logo_url || `/teams/${id}.png`;
     return (
       <span className="inline-flex items-center gap-2">
-        <img
-          src={logo}
-          alt={id}
-          className="h-6 w-6 object-contain"
-          onError={(e) => (e.currentTarget.style.visibility = "hidden")}
-        />
+        <img src={logo} alt={id} className="h-6 w-6 object-contain" onError={(e) => (e.currentTarget.style.visibility = "hidden")} />
         <span className="font-medium">{t.name || id}</span>
       </span>
     );
   };
 
-  // ---- ScoreStrip: marcador / estado del partido ----
   const ScoreStrip = ({ g }) => {
     const ended = hasGameEnded(g);
     const score = (
@@ -885,46 +916,31 @@ export default function GamesTab({ session }) {
         </div>
       </div>
     );
-
-    if (ended)
-      return (
-        <div className="flex items-center justify-between">
-          {score}
-          <span className="badge">FINAL</span>
-        </div>
-      );
-
+    if (ended) return (<div className="flex items-center justify-between">{score}<span className="badge">FINAL</span></div>);
     if (isLiveStatus(g.status))
       return (
         <div className="flex items-center justify-between">
           {score}
           <div className="text-xs flex items-center gap-2">
-            {g.period != null && (
-              <span className="badge badge-warn">
-                Q{g.period} {g.clock || ""}
-              </span>
-            )}
+            {g.period != null && <span className="badge badge-warn">Q{g.period} {g.clock || ""}</span>}
+            {g.down != null && g.distance != null && <span className="badge">@ {g.down}&amp;{g.distance}</span>}
             {g.possession && <span className="badge">⬤ {g.possession}</span>}
             {g.red_zone && <span className="badge badge-danger">Red Zone</span>}
           </div>
         </div>
       );
-
     return (
       <div className="flex items-center justify-between">
         {score}
-        <span className="badge">
-          Kickoff en&nbsp;<Countdown iso={g.start_time} />
-        </span>
+        <span className="badge">Kickoff en&nbsp;<Countdown iso={g.start_time} /></span>
       </div>
     );
   };
 
-  // ---- Badges especiales (SNF/MNF/TNF/Playoffs) ----
+  // Badges SNF/MNF/TNF/Playoffs
   function timeBadge(g) {
     const lt = DateTime.fromISO(g.start_time).setZone(TZ);
-    const wd = lt.weekday;
-    const hour = lt.hour;
+    const wd = lt.weekday; const hour = lt.hour;
     if (g.is_playoffs) return "Playoffs";
     if (wd === 1 && hour >= 19) return "MNF";
     if (wd === 5 && hour >= 19) return "TNF";
@@ -932,164 +948,205 @@ export default function GamesTab({ session }) {
     return null;
   }
 
-  // ---- Rachas W/L ----
+  // Rachas y H2H
   function teamStreak(teamId) {
     const gamesTeam = (allGamesSeason || [])
       .filter(x => x.home_team === teamId || x.away_team === teamId)
-      .sort((a, b) => DateTime.fromISO(b.start_time) - DateTime.fromISO(a.start_time));
-    let streak = 0;
-    let type = null;
+      .sort((a,b) => DateTime.fromISO(b.start_time) - DateTime.fromISO(a.start_time));
+    let streak = 0, type = null;
     for (const g of gamesTeam) {
       if (!hasGameEnded(g)) continue;
       const res = computePickResultFromGame(g, teamId);
-      if (res === "win") {
-        if (type === "W" || type === null) {
-          type = "W";
-          streak++;
-        } else break;
-      } else if (res === "loss") {
-        if (type === "L" || type === null) {
-          type = "L";
-          streak++;
-        } else break;
-      }
+      if (res === "win") { if (type === "W" || type === null) { type = "W"; streak++; } else break; }
+      else if (res === "loss") { if (type === "L" || type === null) { type = "L"; streak++; } else break; }
+      else { if (type === null) continue; else break; }
     }
     return streak ? `${type}${streak}` : "—";
   }
 
-  // ---- Head-to-head últimos juegos ----
   function lastMatchupsSummary(homeId, awayId, maxN = 5) {
     const relevant = (allGamesSeason || [])
-      .filter(
-        x =>
-          (x.home_team === homeId && x.away_team === awayId) ||
-          (x.home_team === awayId && x.away_team === homeId)
+      .filter(x =>
+        (x.home_team === homeId && x.away_team === awayId) ||
+        (x.home_team === awayId && x.away_team === homeId)
       )
-      .sort((a, b) => DateTime.fromISO(b.start_time) - DateTime.fromISO(a.start_time))
+      .sort((a,b) => DateTime.fromISO(b.start_time) - DateTime.fromISO(a.start_time))
       .slice(0, maxN);
     return relevant.map(g => {
-      const hs = g.home_score ?? 0;
-      const as = g.away_score ?? 0;
-      const winner = hs === as ? "TIE" : hs > as ? g.home_team : g.away_team;
-      return {
-        when: DateTime.fromISO(g.start_time).setZone(TZ).toFormat("dd LLL yyyy"),
-        h: g.home_team,
-        a: g.away_team,
-        hs,
-        as,
-        winner
-      };
+      const h = g.home_team, a = g.away_team;
+      const hs = g.home_score ?? 0, as = g.away_score ?? 0;
+      const winner = hs === as ? "TIE" : (hs > as ? h : a);
+      return { when: DateTime.fromISO(g.start_time).setZone(TZ).toFormat("dd LLL yyyy"), h, a, hs, as, winner };
     });
   }
 
-  // ---- Variación del spread ----
-  function spreadDeltaFor(gameId, side) {
+  // Delta de spread
+  function spreadDeltaFor(gameId, side /* 'home' | 'away' */) {
     const pair = oddsPairs[gameId];
     if (!pair?.last || !pair?.prev) return null;
     const last = side === "home" ? pair.last.spread_home : pair.last.spread_away;
     const prev = side === "home" ? pair.prev.spread_home : pair.prev.spread_away;
     if (last == null || prev == null) return null;
     const d = Number(last) - Number(prev);
-    return !isFinite(d) ? null : Math.round(d * 10) / 10;
+    if (!isFinite(d) || d === 0) return 0;
+    return Math.round(d * 10) / 10;
   }
 
-  // ---- Pin de juegos ----
   function togglePin(gameId) {
-    setPinned(xs => (xs.includes(gameId) ? xs.filter(id => id !== gameId) : [...xs, gameId]));
+    setPinned((xs) => (xs.includes(gameId) ? xs.filter((id) => id !== gameId) : [...xs, gameId]));
   }
 
   async function copyGameLink(g) {
     const url = `${SITE}?week=${week}#game-${g.id}`;
-    try {
-      await navigator.clipboard.writeText(url);
-      alert("Enlace copiado");
-    } catch {
-      alert(url);
-    }
+    try { await navigator.clipboard.writeText(url); alert("Enlace copiado"); } catch { alert(url); }
   }
 
-  // ---- Estado de un juego ----
   function statusOf(g) {
     if (hasGameEnded(g)) return "FINAL";
     if (isLiveStatus(g.status)) return "LIVE";
+    if (DateTime.fromISO(g.start_time) > DateTime.now()) return "UPCOMING";
     return "UPCOMING";
   }
 
-  // ---- Filtrado de juegos ----
+  /* ---------- filtros ---------- */
   const gamesByDay = useMemo(() => {
     if (dayFilter === "ALL") return games;
     const map = { THU: 4, FRI: 5, SAT: 6, SUN: 7, MON: 1 };
     const want = map[dayFilter];
-    return (games || []).filter(
-      g => DateTime.fromISO(g.start_time).setZone(TZ).weekday === want
-    );
+    return (games || []).filter((g) => DateTime.fromISO(g.start_time).setZone(TZ).weekday === want);
   }, [games, dayFilter]);
 
   const gamesFiltered = useMemo(() => {
     const q = teamQuery.trim().toLowerCase();
     let base = gamesByDay || [];
     if (q) {
-      const match = id => {
+      const match = (id) => {
         const t = teamsMap[id];
         return id.toLowerCase().includes(q) || (t?.name || "").toLowerCase().includes(q);
       };
-      base = base.filter(g => match(g.away_team) || match(g.home_team));
+      base = base.filter((g) => match(g.away_team) || match(g.home_team));
     }
-    if (statusFilter !== "ALL")
-      base = base.filter(g => statusOf(g) === statusFilter);
-
+    if (statusFilter !== "ALL") base = base.filter((g) => statusOf(g) === statusFilter);
     if (onlyDiff) {
-      base = base.filter(g => {
+      base = base.filter((g) => {
         const homePct = popPct(g.home_team);
         const awayPct = popPct(g.away_team);
         return homePct < diffCutoff || awayPct < diffCutoff;
       });
     }
-
     const setPins = new Set(pinned);
-    return base
-      .slice()
-      .sort((a, b) => {
-        const ap = setPins.has(a.id) ? 1 : 0;
-        const bp = setPins.has(b.id) ? 1 : 0;
-        if (ap !== bp) return bp - ap;
-        return DateTime.fromISO(a.start_time) - DateTime.fromISO(b.start_time);
-      });
+    return base.slice().sort((a, b) => {
+      const ap = setPins.has(a.id) ? 1 : 0;
+      const bp = setPins.has(b.id) ? 1 : 0;
+      if (ap !== bp) return bp - ap;
+      return DateTime.fromISO(a.start_time) - DateTime.fromISO(b.start_time);
+    });
   }, [gamesByDay, teamQuery, teamsMap, statusFilter, onlyDiff, diffCutoff, pinned]);
 
-  // ---- Sparkline para odds ----
+  /* ---- Mini sparkline ---- */
   const Sparkline = ({ series }) => {
-    if (!series?.length)
-      return <div className="text-xs text-gray-400">Sin historial</div>;
+    if (!series?.length) return <div className="text-xs text-gray-400">Sin historial</div>;
     const w = 220, h = 60, p = 4;
     const xs = series.map((v, i) => ({ x: i, y: Number(v) }));
-    const ys = xs.map(d => d.y);
-    const minY = Math.min(...ys);
-    const maxY = Math.max(...ys);
-    const xScale = i => (i / (xs.length - 1 || 1)) * (w - p * 2) + p;
-    const yScale = v =>
-      h - p - ((v - minY) / (maxY - minY || 1)) * (h - p * 2);
-    const d = xs
-      .map((pt, i) => `${i === 0 ? "M" : "L"}${xScale(pt.x)},${yScale(pt.y)}`)
-      .join(" ");
-    return (
-      <svg width={w} height={h} className="block">
-        <path d={d} fill="none" stroke="currentColor" strokeWidth="2" />
-      </svg>
-    );
+    const ys = xs.map((d) => d.y);
+    const minY = Math.min(...ys), maxY = Math.max(...ys);
+    const xScale = (i) => (i / (xs.length - 1 || 1)) * (w - p * 2) + p;
+    const yScale = (v) => (h - p) - ((v - minY) / (maxY - minY || 1)) * (h - p * 2);
+    const d = xs.map((pt, i) => `${i === 0 ? "M" : "L"}${xScale(pt.x)},${yScale(pt.y)}`).join(" ");
+    return (<svg width={w} height={h} className="block"><path d={d} fill="none" stroke="currentColor" strokeWidth="2" /></svg>);
   };
 
-  // ---- Win% según spread ----
+  // Win% helper
   function winPctForTeam(game, teamId) {
     const pair = oddsPairs[game.id];
     if (!pair?.last) return null;
-    const sp =
-      teamId === game.home_team
-        ? pair.last.spread_home
-        : pair.last.spread_away;
+    const sp = teamId === game.home_team ? pair.last.spread_home : pair.last.spread_away;
     return sp != null ? winProbFromSpread(sp) : null;
   }
-  /* ========================= GamesTab – Parte 4 (TeamBox + Render: header, toolbar y partidos) ========================= */
+
+  /* ---- Cargar Detalles (ampliado tipo ESPN) ---- */
+  async function openDetails(g) {
+    const { last, prev } = oddsPairs[g.id] || {};
+    const popHome = popPct(g.home_team);
+    const popAway = popPct(g.away_team);
+    setDetails({ game: g, odds: { last, prev }, popHome, popAway });
+    setDetailsTab("resumen");
+
+    // Historial odds
+    const { data: oh } = await supabase
+      .from("odds_history")
+      .select("fetched_at, spread_home, spread_away, ml_home, ml_away")
+      .eq("game_id", g.id)
+      .order("fetched_at", { ascending: true })
+      .limit(200);
+    setOddsHistory(oh || []);
+
+    // Líderes
+    const { data: gl } = await supabase
+      .from("game_leaders")
+      .select("side, player, stat, value")
+      .eq("game_id", g.id)
+      .order("side").order("stat");
+    setLeaders(gl || []);
+
+    // Notas
+    const { data: ns } = await supabase
+      .from("game_notes")
+      .select("id, user_id, note, created_at")
+      .eq("game_id", g.id)
+      .order("created_at", { ascending: false })
+      .limit(100);
+    setNotes(ns || []);
+
+    // Betting splits
+    try {
+      const { data: bs } = await supabase
+        .from("betting_splits")
+        .select("tickets_home, tickets_away, money_home, money_away, updated_at")
+        .eq("game_id", g.id)
+        .single();
+      setBetSplits(bs || null);
+    } catch { setBetSplits(null); }
+
+    // Team stats temporada
+    try {
+      const { data: stats } = await supabase
+        .from("season_team_stats")
+        .select("team_id, ppg, ypg, pass_ypg, rush_ypg, opp_ppg, opp_ypg, third_down, red_zone, to_diff, sacks")
+        .in("team_id", [g.home_team, g.away_team]);
+      const home = (stats || []).find(s => s.team_id === g.home_team) || {};
+      const away = (stats || []).find(s => s.team_id === g.away_team) || {};
+      setTeamStats({ home, away });
+    } catch { setTeamStats(null); }
+
+    // Lesiones
+    try {
+      const { data: inj } = await supabase
+        .from("injuries")
+        .select("team_id, player, status, note")
+        .in("team_id", [g.home_team, g.away_team])
+        .order("team_id");
+      setInjuries(inj || []);
+    } catch { setInjuries([]); }
+
+    // Últimos 5
+    try {
+      const { data: recs } = await supabase
+        .from("team_recent_games")
+        .select("team_id, date, opp, is_home, result, score")
+        .in("team_id", [g.home_team, g.away_team])
+        .order("date", { ascending: false });
+      const take5 = (t) => (recs || []).filter(r => r.team_id === t).slice(0, 5);
+      setRecentForm({ home: take5(g.home_team), away: take5(g.away_team) });
+    } catch { setRecentForm({ home: [], away: [] }); }
+  }
+
+  async function addNote() {
+    if (!details || !newNote.trim() || !uid) return;
+    const row = { game_id: details.game.id, user_id: uid, note: newNote.trim() };
+    const { error, data } = await supabase.from("game_notes").insert(row).select("id,user_id,note,created_at").single();
+    if (!error && data) { setNotes((xs) => [data, ...xs]); setNewNote(""); } else { alert(error?.message || "No se pudo guardar la nota."); }
+  }
 
   /* ---- Botón de pick por equipo ---- */
   const TeamBox = ({ game, teamId }) => {
@@ -1099,11 +1156,9 @@ export default function GamesTab({ session }) {
     const fav =
       last &&
       ((teamId === game.home_team &&
-        (((last.spread_home ?? 0) < (last.spread_away ?? 0)) ||
-          (last.ml_home ?? 9999) < (last.ml_away ?? 9999))) ||
+        (((last.spread_home ?? 0) < (last.spread_away ?? 0)) || (last.ml_home ?? 9999) < (last.ml_away ?? 9999))) ||
         (teamId === game.away_team &&
-          (((last.spread_away ?? 0) < (last.spread_home ?? 0)) ||
-            (last.ml_away ?? 9999) < (last.ml_home ?? 9999))));
+          (((last.spread_away ?? 0) < (last.spread_home ?? 0)) || (last.ml_away ?? 9999) < (last.ml_home ?? 9999))));
     const pct = popPct(teamId);
     const wp = winPctForTeam(game, teamId);
     const titleTxt = `${teamId} · Win% ${wp ?? "—"} · Popularidad ${pct}%`;
@@ -1129,48 +1184,14 @@ export default function GamesTab({ session }) {
       </button>
     );
   };
+  /* ========================= Render ========================= */
+  const nextKick = nextKickoffISO;
 
-  /* ---- Lógica de pick, confirmación y helpers dentro del render ---- */
-  const canPick = (candidateGame, candidateTeam) => {
-    if (!uid) return { ok: false, reason: "NOSESSION" };
-    if ((me?.lives ?? 0) <= 0) return { ok: false, reason: "ELIMINATED" };
-    if (pickFrozen) {
-      const same = myPickThisWeek?.game_id === candidateGame.id && myPickThisWeek?.team_id === candidateTeam;
-      if (!same) return { ok: false, reason: "FROZEN" };
-    }
-    if (DateTime.fromISO(candidateGame.start_time) <= DateTime.now()) return { ok: false, reason: "LOCK" };
-    const used = (picks || []).some((p) => p.team_id === candidateTeam && p.user_id === uid);
-    if (used && !(myPickThisWeek && myPickThisWeek.team_id === candidateTeam)) return { ok: false, reason: "USED" };
-    return { ok: true };
-  };
-
-  const confirmPick = (game, teamId) => {
-    const c = canPick(game, teamId);
-    if (!c.ok) {
-      const msg =
-        c.reason === "ELIMINATED"
-          ? "Estás eliminado 😵‍💫. Puedes ver cómo van los demás, pero ya no puedes pickear."
-          : c.reason === "FROZEN"
-          ? "Tu pick ya quedó congelado porque su partido ya inició/terminó."
-          : c.reason === "LOCK"
-          ? "Este partido ya está cerrado por kickoff."
-          : c.reason === "NOSESSION"
-          ? "Iniciando sesión… intenta de nuevo en unos segundos."
-          : "Ya usaste este equipo antes.";
-      return alert(msg);
-    }
-    setPendingPick({ game, teamId });
-  };
-
-  /* ========================= RENDER ========================= */
   return (
-    <div className="max-w-6xl mx-auto p-4 md:p-6">
-      <a id="games-top" className="block h-0" />
-
-      {/* Header */}
+    <div className="max-w-6xl mx-auto p-4 md:p-6">{/* container */}
       <header className="flex items-center justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-extrabold tracking-tight">{window.LEAGUE ?? "Survivor League"}</h1>
+          <h1 className="text-3xl font-extrabold tracking-tight">{LEAGUE}</h1>
           {lastUpdated && (
             <p className="text-xs text-gray-500">
               Actualizado: {DateTime.fromISO(lastUpdated).setZone(TZ).toFormat("dd LLL HH:mm:ss")}
@@ -1189,9 +1210,7 @@ export default function GamesTab({ session }) {
               {me?.lives ?? 0}
             </span>
           </p>
-          <button className="text-sm underline" onClick={() => supabase.auth.signOut()}>
-            Salir
-          </button>
+          <button className="text-sm underline" onClick={() => supabase.auth.signOut()}>Salir</button>
         </div>
       </header>
 
@@ -1203,7 +1222,7 @@ export default function GamesTab({ session }) {
 
       {showPickAlert && (me?.lives ?? 0) > 0 && (
         <div className="mt-3 p-3 border-2 border-amber-300 rounded-xl bg-amber-50 text-amber-900 text-sm">
-          🔔 Aún no tienes pick en W{week}. El primer kickoff es en <b><Countdown iso={nextKickoffISO} /></b>.
+          🔔 Aún no tienes pick en W{week}. El primer kickoff es en <b><Countdown iso={nextKick} /></b>.
         </div>
       )}
 
@@ -1213,15 +1232,9 @@ export default function GamesTab({ session }) {
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <label className="text-xs text-gray-500">Semana</label>
-              <select
-                className="border p-1 rounded-lg"
-                value={week}
-                onChange={(e) => setWeek(Number(e.target.value))}
-              >
+              <select className="border p-1 rounded-lg" value={week} onChange={(e) => setWeek(Number(e.target.value))}>
                 {Array.from({ length: 18 }, (_, i) => i + 1).map((w) => (
-                  <option key={w} value={w}>
-                    W{w}
-                  </option>
+                  <option key={w} value={w}>W{w}</option>
                 ))}
               </select>
             </div>
@@ -1248,7 +1261,7 @@ export default function GamesTab({ session }) {
 
           {/* Estado */}
           <div className="mt-3 flex gap-1 text-xs">
-            {["ALL", "LIVE", "FINAL", "UPCOMING"].map((s) => (
+            {["ALL","LIVE","FINAL","UPCOMING"].map(s => (
               <button
                 key={s}
                 className={clsx("px-2 py-1 rounded border", statusFilter === s && "bg-black text-white")}
@@ -1262,11 +1275,7 @@ export default function GamesTab({ session }) {
           {/* Diferenciales */}
           <div className="mt-3 flex items-center gap-3 text-xs">
             <label className="inline-flex items-center gap-2">
-              <input
-                type="checkbox"
-                checked={onlyDiff}
-                onChange={(e) => setOnlyDiff(e.target.checked)}
-              />
+              <input type="checkbox" checked={onlyDiff} onChange={(e) => setOnlyDiff(e.target.checked)} />
               Solo diferenciales
             </label>
             <div className="inline-flex items-center gap-1">
@@ -1274,12 +1283,9 @@ export default function GamesTab({ session }) {
               <input
                 type="number"
                 className="border rounded px-2 py-1 w-16"
-                min={1}
-                max={49}
+                min={1} max={49}
                 value={diffCutoff}
-                onChange={(e) =>
-                  setDiffCutoff(Math.max(1, Math.min(49, Number(e.target.value) || 20)))
-                }
+                onChange={(e) => setDiffCutoff(Math.max(1, Math.min(49, Number(e.target.value) || 20)))}
               />
               <span>%</span>
             </div>
@@ -1302,14 +1308,7 @@ export default function GamesTab({ session }) {
               onClick={() =>
                 downloadCSV("standings.csv", [
                   ["player", "lives", "wins", "losses", "pushes", "margin_sum"],
-                  ...(standings || []).map((s) => [
-                    s.display_name,
-                    s.lives,
-                    s.wins,
-                    s.losses,
-                    s.pushes,
-                    s.margin_sum,
-                  ]),
+                  ...(standings || []).map((s) => [s.display_name, s.lives, s.wins, s.losses, s.pushes, s.margin_sum]),
                 ])
               }
             >
@@ -1322,9 +1321,8 @@ export default function GamesTab({ session }) {
         <div className="md:col-span-2 p-4 border rounded-2xl bg-white card">
           <h3 className="font-semibold">Resumen</h3>
           <p className="text-sm text-gray-600">
-            Elige tu pick en los partidos de abajo. Lock “rolling” por partido. Win/Loss se marca
-            automáticamente cuando el juego es FINAL. Usa los filtros para LIVE/FINAL/UPCOMING y el
-            switch de diferenciales.
+            Elige tu pick en los partidos de abajo. Lock “rolling” por partido. Win/Loss se marca automáticamente cuando
+            el juego es FINAL. Usa los filtros para LIVE/FINAL/UPCOMING y el switch de diferenciales.
           </p>
         </div>
       </section>
@@ -1353,20 +1351,12 @@ export default function GamesTab({ session }) {
             const stHome = teamStreak(g.home_team);
             const stAway = teamStreak(g.away_team);
 
-            const lpForGame = (leaguePicks || []).filter((p) => p.game_id === g.id);
-            const whoPickedHome = lpForGame
-              .filter((p) => p.team_id === g.home_team)
-              .map((p) => userNames[p.user_id] || p.user_id.slice(0, 6));
-            const whoPickedAway = lpForGame
-              .filter((p) => p.team_id === g.away_team)
-              .map((p) => userNames[p.user_id] || p.user_id.slice(0, 6));
+            const lpForGame = (leaguePicks || []).filter(p => p.game_id === g.id);
+            const whoPickedHome = lpForGame.filter(p => p.team_id === g.home_team).map(p => userNames[p.user_id] || p.user_id.slice(0,6));
+            const whoPickedAway = lpForGame.filter(p => p.team_id === g.away_team).map(p => userNames[p.user_id] || p.user_id.slice(0,6));
 
             return (
-              <div
-                id={`game-${g.id}`}
-                key={g.id}
-                className={clsx("p-4 border rounded-xl card", locked && "opacity-60")}
-              >
+              <div id={`game-${g.id}`} key={g.id} className={clsx("p-4 border rounded-xl card", locked && "opacity-60")}>
                 <div className="flex items-center justify-between">
                   <div className="text-sm flex items-center gap-2 flex-wrap">
                     <TeamChip id={g.away_team} />
@@ -1383,17 +1373,10 @@ export default function GamesTab({ session }) {
                     >
                       Stats
                     </a>
-                    <button className="underline text-gray-700" onClick={() => openDetails(g)}>
-                      Detalles
-                    </button>
-                    <button className="px-2 py-0.5 rounded border" onClick={() => copyGameLink(g)}>
-                      Copiar link
-                    </button>
+                    <button className="underline text-gray-700" onClick={() => openDetails(g)}>Detalles</button>
+                    <button className="px-2 py-0.5 rounded border" onClick={() => copyGameLink(g)}>Copiar link</button>
                     <button
-                      className={clsx(
-                        "px-2 py-0.5 rounded border",
-                        pinned.includes(g.id) && "bg-black text-white"
-                      )}
+                      className={clsx("px-2 py-0.5 rounded border", pinned.includes(g.id) && "bg-black text-white")}
                       onClick={() => togglePin(g.id)}
                       title={pinned.includes(g.id) ? "Desfijar" : "Fijar"}
                     >
@@ -1403,17 +1386,13 @@ export default function GamesTab({ session }) {
                   </div>
                 </div>
 
-                <div className="mt-3">
-                  <ScoreStrip g={g} />
-                </div>
+                <div className="mt-3"><ScoreStrip g={g} /></div>
 
                 {(m || w) && (
                   <div className="mt-2 text-xs text-gray-700 flex items-center gap-2 flex-wrap">
                     {m && (
                       <span className="badge">
-                        {m.stadium ? `${m.stadium}` : "Estadio —"}
-                        {m.city ? ` · ${m.city}` : ""}
-                        {m.tv ? ` · TV: ${m.tv}` : ""}
+                        {m.stadium ? `${m.stadium}` : "Estadio —"}{m.city ? ` · ${m.city}` : ""}{m.tv ? ` · TV: ${m.tv}` : ""}
                       </span>
                     )}
                     {w && (
@@ -1430,19 +1409,14 @@ export default function GamesTab({ session }) {
                 <div className="mt-2 text-xs text-gray-700 flex items-center gap-3 flex-wrap">
                   {spreadHome != null && (
                     <span className="badge">
-                      Spread: {g.home_team} {spreadHome > 0 ? `+${spreadHome}` : spreadHome},{" "}
-                      {g.away_team} {spreadAway > 0 ? `+${spreadAway}` : spreadAway}
+                      Spread: {g.home_team} {spreadHome > 0 ? `+${spreadHome}` : spreadHome}, {g.away_team} {spreadAway > 0 ? `+${spreadAway}` : spreadAway}
                     </span>
                   )}
                   {mlHome != null && mlAway != null && (
-                    <span className="badge">
-                      ML: {g.home_team} {mlHome}, {g.away_team} {mlAway}
-                    </span>
+                    <span className="badge">ML: {g.home_team} {mlHome}, {g.away_team} {mlAway}</span>
                   )}
                   {(wpHome != null || wpAway != null) && (
-                    <span className="badge">
-                      Win%: {g.home_team} {wpHome ?? "—"}% · {g.away_team} {wpAway ?? "—"}%
-                    </span>
+                    <span className="badge">Win%: {g.home_team} {wpHome ?? "—"}% · {g.away_team} {wpAway ?? "—"}%</span>
                   )}
                   {(() => {
                     const dHome = spreadDeltaFor(g.id, "home");
@@ -1453,21 +1427,15 @@ export default function GamesTab({ session }) {
                         {label}: {d > 0 ? "↑" : d < 0 ? "↓" : "→"} {d ? Math.abs(d) : 0}
                       </span>
                     );
-                    return (
-                      <>
-                        {dHome != null && pill(`${g.home_team}`, dHome)}
-                        {dAway != null && pill(`${g.away_team}`, dAway)}
-                      </>
-                    );
+                    return (<>{dHome != null && pill(`${g.home_team}`, dHome)}{dAway != null && pill(`${g.away_team}`, dAway)}</>);
                   })()}
                 </div>
 
                 {(tps.length || true) && (
                   <div className="mt-3 grid sm:grid-cols-2 lg:grid-cols-3 gap-2">
-                    {(tps || []).slice(0, 3).map((t, i) => (
+                    {(tps || []).slice(0,3).map((t,i) => (
                       <div key={i} className="p-2 border rounded-lg text-xs text-gray-700 bg-white">
-                        <span className="font-semibold">{t.kind ? `${t.kind}: ` : ""}</span>
-                        {t.tip}
+                        <span className="font-semibold">{t.kind ? `${t.kind}: ` : ""}</span>{t.tip}
                       </div>
                     ))}
                     <div className="p-2 border rounded-lg text-xs text-gray-700 bg-white">
@@ -1477,10 +1445,8 @@ export default function GamesTab({ session }) {
                     {h2h.length > 0 && (
                       <div className="p-2 border rounded-lg text-xs text-gray-700 bg-white">
                         <span className="font-semibold">H2H: </span>
-                        {h2h.map((r, ix) => (
-                          <span key={ix} className="mr-2">
-                            {r.when}: {r.a} {r.as}–{r.hs} {r.h} ({r.winner})
-                          </span>
+                        {h2h.map((r,ix) => (
+                          <span key={ix} className="mr-2">{r.when}: {r.a} {r.as}–{r.hs} {r.h} ({r.winner})</span>
                         ))}
                       </div>
                     )}
@@ -1491,17 +1457,11 @@ export default function GamesTab({ session }) {
                   <div className="mt-3 text-xs text-gray-700 flex gap-3 flex-wrap">
                     <div className="inline-flex items-center gap-2">
                       <span className="badge">{g.home_team}</span>
-                      <span className="text-gray-600">
-                        {whoPickedHome.slice(0, 6).join(", ")}
-                        {whoPickedHome.length > 6 ? "…" : ""}
-                      </span>
+                      <span className="text-gray-600">{whoPickedHome.slice(0,6).join(", ")}{whoPickedHome.length > 6 ? "…" : ""}</span>
                     </div>
                     <div className="inline-flex items-center gap-2">
                       <span className="badge">{g.away_team}</span>
-                      <span className="text-gray-600">
-                        {whoPickedAway.slice(0, 6).join(", ")}
-                        {whoPickedAway.length > 6 ? "…" : ""}
-                      </span>
+                      <span className="text-gray-600">{whoPickedAway.slice(0,6).join(", ")}{whoPickedAway.length > 6 ? "…" : ""}</span>
                     </div>
                   </div>
                 )}
@@ -1513,17 +1473,13 @@ export default function GamesTab({ session }) {
               </div>
             );
           })}
-
           {(!gamesFiltered || gamesFiltered.length === 0) && (
             <div className="text-sm text-gray-500">No hay partidos con este filtro/búsqueda.</div>
           )}
         </div>
       </section>
-/* ========================= GamesTab – Parte 5 (Picks, Popularidad y Standings W-L-T) ========================= */
-
       {/* Picks + popularidad */}
       <section className="mt-6 grid md-grid-cols-2 md:grid-cols-2 gap-4">
-        {/* Picks de la liga */}
         <div className="p-4 border rounded-2xl bg-white card">
           <h2 className="font-semibold">Picks de la liga (W{week})</h2>
           <div className="overflow-x-auto">
@@ -1543,64 +1499,35 @@ export default function GamesTab({ session }) {
                     .slice()
                     .sort((a, b) => (userNames[a.user_id] || "").localeCompare(userNames[b.user_id] || ""))
                     .map((p) => {
-                      const shownRes = (function () {
-                        if (!p) return "pending";
-                        if (p?.result && p.result !== "pending") return p.result;
-                        const g = gamesMap[p?.game_id];
-                        if (!g) return "pending";
-                        return computePickResultFromGame(g, p.team_id);
-                      })();
+                      const shownRes = derivedResultForPick(p);
                       return (
                         <tr key={p.id}>
                           <td>{userNames[p.user_id] || p.user_id.slice(0, 6)}</td>
+                          <td><TeamMini id={p.team_id} /></td>
                           <td>
-                            <span className="inline-flex items-center gap-1">
-                              <img
-                                src={teamsMap[p.team_id]?.logo_url || `/teams/${p.team_id}.png`}
-                                alt={p.team_id}
-                                className="h-5 w-5 object-contain"
-                                onError={(e) => (e.currentTarget.style.visibility = "hidden")}
-                              />
-                              <span className="font-mono font-semibold">{p.team_id}</span>
-                            </span>
-                          </td>
-                          <td>
-                            <span
-                              className={
-                                shownRes === "win"
-                                  ? "text-emerald-700 font-semibold"
-                                  : shownRes === "loss"
-                                  ? "text-red-600 font-semibold"
-                                  : shownRes === "push"
-                                  ? "text-gray-600"
-                                  : "text-gray-500"
-                              }
-                            >
+                            <span className={
+                              shownRes === "win" ? "text-emerald-700 font-semibold"
+                              : shownRes === "loss" ? "text-red-600 font-semibold"
+                              : shownRes === "push" ? "text-gray-600" : "text-gray-500"
+                            }>
                               {shownRes}
                             </span>
                           </td>
                           <td>{p.auto_pick ? "Sí" : "No"}</td>
                           <td className="text-xs text-gray-500">
-                            {p.updated_at
-                              ? DateTime.fromISO(p.updated_at).setZone(TZ).toFormat("dd LLL HH:mm")
-                              : "-"}
+                            {p.updated_at ? DateTime.fromISO(p.updated_at).setZone(TZ).toFormat("dd LLL HH:mm") : "-"}
                           </td>
                         </tr>
                       );
                     })
                 ) : (
-                  <tr>
-                    <td className="py-2 text-gray-500" colSpan={5}>
-                      Aún no hay picks esta semana.
-                    </td>
-                  </tr>
+                  <tr><td className="py-2 text-gray-500" colSpan={5}>Aún no hay picks esta semana.</td></tr>
                 )}
               </tbody>
             </table>
           </div>
         </div>
 
-        {/* Popularidad */}
         <div className="p-4 border rounded-2xl bg-white card">
           <h2 className="font-semibold">Popularidad de equipos</h2>
           <p className="text-xs text-gray-600">Porcentaje de jugadores que pickearon ese equipo.</p>
@@ -1610,20 +1537,11 @@ export default function GamesTab({ session }) {
                 <div key={row.team_id}>
                   <div className="flex items-center justify-between text-sm">
                     <div className="flex items-center gap-2">
-                      <img
-                        src={teamsMap[row.team_id]?.logo_url || `/teams/${row.team_id}.png`}
-                        alt={row.team_id}
-                        className="h-5 w-5 object-contain"
-                        onError={(e) => (e.currentTarget.style.visibility = "hidden")}
-                      />
-                      <span className="font-mono font-semibold">{row.team_id}</span>
-                      <span className="text-gray-500">({row.count})</span>
+                      <TeamMini id={row.team_id} /> <span className="text-gray-500">({row.count})</span>
                     </div>
                     <span className="text-gray-700 text-base font-semibold">{row.pct}%</span>
                   </div>
-                  <div className="progressbar mt-1">
-                    <div style={{ width: `${row.pct}%` }} />
-                  </div>
+                  <div className="progressbar mt-1"><div style={{ width: `${row.pct}%` }} /></div>
                 </div>
               ))
             ) : (
@@ -1632,52 +1550,6 @@ export default function GamesTab({ session }) {
           </div>
         </div>
       </section>
-
-      {/* ===== Standings (W-L-T) de la liga ===== */}
-      <section className="mt-6">
-        <div className="p-4 border rounded-2xl bg-white card">
-          <h2 className="font-semibold">Standings de la liga (W-L-T)</h2>
-          <p className="text-xs text-gray-600">Cómputo con todos los picks resueltos de la temporada.</p>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm mt-3 table-minimal">
-              <thead>
-                <tr>
-                  <th>Jugador</th>
-                  <th className="text-right">W</th>
-                  <th className="text-right">L</th>
-                  <th className="text-right">T</th>
-                  <th className="text-right">Win %</th>
-                </tr>
-              </thead>
-              <tbody>
-                {(playerStandings || []).length ? (
-                  playerStandings.map((row) => {
-                    const name = userNames[row.user_id] || row.user_id.slice(0, 6);
-                    const total = (row.w || 0) + (row.l || 0) + (row.t || 0);
-                    const wpct = total ? Math.round((row.w * 1000) / total) / 10 : 0;
-                    return (
-                      <tr key={row.user_id}>
-                        <td className="whitespace-nowrap">{name}</td>
-                        <td className="text-right font-mono">{row.w}</td>
-                        <td className="text-right font-mono">{row.l}</td>
-                        <td className="text-right font-mono">{row.t}</td>
-                        <td className="text-right font-mono">{wpct}%</td>
-                      </tr>
-                    );
-                  })
-                ) : (
-                  <tr>
-                    <td className="py-2 text-gray-500" colSpan={5}>
-                      Aún no hay standings calculados.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </section>
-	  /* ========================= GamesTab – Parte 6 (Historial de tus picks) ========================= */
 
       {/* Historial de usuario */}
       <section className="mt-6">
@@ -1697,352 +1569,98 @@ export default function GamesTab({ session }) {
                   .filter((p) => p.season === SEASON)
                   .sort((a, b) => a.week - b.week)
                   .map((p) => {
-                    const res = (() => {
-                      if (p?.result && p.result !== "pending") return p.result;
-                      const g = gamesMap[p?.game_id]; 
-                      if (!g) return "pending";
-                      return computePickResultFromGame(g, p.team_id);
-                    })();
+                    const shownRes = derivedResultForPick(p);
                     return (
                       <tr key={p.id}>
                         <td>{p.week}</td>
+                        <td><TeamMini id={p.team_id} /></td>
                         <td>
-                          <span className="inline-flex items-center gap-1">
-                            <img
-                              src={teamsMap[p.team_id]?.logo_url || `/teams/${p.team_id}.png`}
-                              alt={p.team_id}
-                              className="h-5 w-5 object-contain"
-                              onError={(e) => (e.currentTarget.style.visibility = "hidden")}
-                            />
-                            <span className="font-mono font-semibold">{p.team_id}</span>
-                          </span>
-                        </td>
-                        <td>
-                          <span
-                            className={
-                              res === "win"
-                                ? "text-emerald-700 font-semibold"
-                                : res === "loss"
-                                ? "text-red-600 font-semibold"
-                                : res === "push"
-                                ? "text-gray-600"
-                                : "text-gray-500"
-                            }
-                          >
-                            {res}
+                          <span className={
+                            shownRes === "win" ? "text-emerald-700 font-semibold"
+                            : shownRes === "loss" ? "text-red-600 font-semibold"
+                            : shownRes === "push" ? "text-gray-600" : "text-gray-500"
+                          }>
+                            {shownRes}
                           </span>
                         </td>
                       </tr>
                     );
                   })}
                 {(!picks || picks.length === 0) && (
-                  <tr>
-                    <td className="py-2 text-gray-500" colSpan={3}>
-                      Sin picks aún.
-                    </td>
-                  </tr>
+                  <tr><td className="py-2 text-gray-500" colSpan={3}>Sin picks aún.</td></tr>
                 )}
               </tbody>
             </table>
           </div>
         </div>
       </section>
-	  /* ========================= GamesTab – Parte 7 (detalles, notas, settlement, banners y efectos) ========================= */
 
-  /* ---- Derivar resultado visible de un pick ---- */
-  function derivedResultForPick(pick) {
-    if (!pick) return "pending";
-    if (pick?.result && pick.result !== "pending") return pick.result;
-    const g = gamesMap[pick?.game_id];
-    if (!g) return "pending";
-    return computePickResultFromGame(g, pick.team_id);
-  }
+      {/* Modal pick */}
+      {pendingPick && (
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50">
+          <div className="w-full max-w-sm bg-white rounded-2xl p-5 border card">
+            <h3 className="font-semibold text-lg">Confirmar pick</h3>
+            <p className="mt-2 text-sm">¿Confirmas tu pick de <b>{pendingPick.teamId}</b> en W{week}?</p>
+            <div className="mt-4 flex gap-2">
+              <button className="px-4 py-2 rounded border" onClick={() => setPendingPick(null)}>Cancelar</button>
+              <button className="px-4 py-2 rounded bg-black text-white" onClick={doPick}>Confirmar</button>
+            </div>
+          </div>
+        </div>
+      )}
 
-  /* ---- Keys de localStorage para banners/vidas ---- */
-  const bannerKey = (w, u) => `resultShown-W${w}-${u}`;
-  const livesKey  = (w, u) => `livesApplied-W${w}-${u}`;
+      {/* Banner resultado */}
+      {resultBanner && (
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-[60]">
+          <div className="w-full max-w-sm bg-white rounded-2xl p-5 border card text-center">
+            <h3 className="font-semibold text-lg">
+              {resultBanner.type === "win" ? "¡Victoria!" : resultBanner.type === "loss" ? "Derrota" : "Push"}
+            </h3>
+            <p className="mt-2 text-sm">{resultBanner.msg}</p>
+            <button className="mt-4 px-4 py-2 rounded bg-black text-white" onClick={() => setResultBanner(null)}>Cerrar</button>
+          </div>
+        </div>
+      )}
 
-  /* ---- Aplicar vidas en derrota ---- */
-  async function applyLivesIfNeeded(outcome) {
-    if (outcome !== "loss" || !uid) return;
-    const lk = livesKey(week, uid);
-    if (localStorage.getItem(lk)) return;
-    try {
-      const { data: profNow } = await supabase
-        .from("profiles")
-        .select("lives")
-        .eq("id", uid)
-        .single();
-      const currentLives = profNow?.lives ?? me?.lives ?? 0;
-      const newLives = Math.max(0, currentLives - 1);
-      if (newLives !== currentLives) {
-        await supabase.from("profiles").update({ lives: newLives }).eq("id", uid);
-        setMe((m) => ({ ...m, lives: newLives }));
-      }
-    } catch (e) {
-      console.warn("applyLivesIfNeeded error:", e?.message);
-    } finally {
-      localStorage.setItem(lk, "1");
-    }
-  }
-
-  /* ---- Banner de resultado ---- */
-  function funnyMsg(res) {
-    if (res === "win")  return "¡Ganaste esta semana! 🕺";
-    if (res === "loss") return "Perdiste esta semana 😬…";
-    return "Push… ni fu ni fa.";
-  }
-  async function onMyPickResolved(res) {
-    setResultBanner({ type: res, msg: funnyMsg(res) });
-    if (res === "loss") await applyLivesIfNeeded(res);
-  }
-
-  /* ---- Settlement de picks (usuario y liga) cuando hay finales ---- */
-  async function settleMyPicksIfNeeded(currentWeek, gamesArr, myPicksArr) {
-    const finals = {};
-    (gamesArr || []).forEach((g) => { if (hasGameEnded(g)) finals[g.id] = g; });
-
-    const updates = [];
-    let myResolvedResult = null;
-
-    (myPicksArr || []).forEach((p) => {
-      if (p.week !== currentWeek) return;
-      const g = finals[p.game_id];
-      if (!g) return;
-      const res = computePickResultFromGame(g, p.team_id);
-      if ((!p.result || p.result === "pending") && res !== "pending") {
-        updates.push({ id: p.id, result: res });
-        if (p.user_id === uid) myResolvedResult = res;
-      }
-    });
-
-    if (updates.length) {
-      for (const row of updates) {
-        const { error } = await supabase
-          .from("picks")
-          .update({ result: row.result })
-          .eq("id", row.id);
-        if (error) console.warn("settleMyPicksIfNeeded error:", error.message);
-      }
-    }
-
-    if (myResolvedResult && uid) {
-      const key = bannerKey(currentWeek, uid);
-      if (!localStorage.getItem(key)) {
-        await onMyPickResolved(myResolvedResult);
-        localStorage.setItem(key, "1");
-      }
-    }
-  }
-
-  async function settleLeaguePicksIfNeeded(currentWeek, gamesArr, leaguePicksArr) {
-    const finals = {};
-    (gamesArr || []).forEach((g) => { if (hasGameEnded(g)) finals[g.id] = g; });
-
-    const updates = [];
-    (leaguePicksArr || []).forEach((p) => {
-      if (p.week !== currentWeek) return;
-      if (p.result && p.result !== "pending") return;
-      const g = finals[p.game_id];
-      if (!g) return;
-      const res = computePickResultFromGame(g, p.team_id);
-      if (res !== "pending") updates.push({ id: p.id, result: res });
-    });
-
-    if (updates.length) {
-      for (const row of updates) {
-        const { error } = await supabase
-          .from("picks")
-          .update({ result: row.result })
-          .eq("id", row.id);
-        if (error) console.warn("settleLeaguePicksIfNeeded error:", error.message);
-      }
-    }
-  }
-
-  /* ---- Efectos: settlement + cron + banner y auto-refresh en vivo ---- */
-  useEffect(() => {
-    if (!games?.length) return;
-    if (picks?.length) settleMyPicksIfNeeded(week, games, picks);
-    if (leaguePicks?.length) settleLeaguePicksIfNeeded(week, games, leaguePicks);
-
-    (async () => {
-      try {
-        const url = `${SITE}/api/control?action=settleWeek&week=${week}&token=${encodeURIComponent(CRON_TOKEN)}`;
-        await fetch(url);
-      } catch {}
-    })();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [games, picks, leaguePicks, week, uid]);
-
-  useEffect(() => {
-    if (!myPickThisWeek || !uid) return;
-    const res = derivedResultForPick(myPickThisWeek);
-    if (res === "pending") return;
-    const bk = bannerKey(week, uid);
-    if (!localStorage.getItem(bk)) {
-      setResultBanner({ type: res, msg: funnyMsg(res) });
-      localStorage.setItem(bk, "1");
-    }
-    if (res === "loss") applyLivesIfNeeded(res);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [myPickThisWeek, gamesMap, week, uid]);
-
-  // Auto-refresh si hay juegos en vivo
-  useEffect(() => {
-    if (!games?.length) return;
-    const anyLive = (games || []).some((g) => isLiveStatus(g.status));
-    if (!anyLive) return;
-    const id = setInterval(() => { loadGames(week); }, 25_000);
-    return () => clearInterval(id);
-  }, [games, week]);
-
-  /* ---- Carga de Detalles (modal tipo ESPN) ---- */
-  async function openDetails(g) {
-    const { last, prev } = oddsPairs[g.id] || {};
-    const popHome = popularity.find((p) => p.team_id === g.home_team)?.pct ?? 0;
-    const popAway = popularity.find((p) => p.team_id === g.away_team)?.pct ?? 0;
-    setDetails({ game: g, odds: { last, prev }, popHome, popAway });
-
-    // Historial de odds
-    const { data: oh } = await supabase
-      .from("odds_history")
-      .select("fetched_at, spread_home, spread_away, ml_home, ml_away")
-      .eq("game_id", g.id)
-      .order("fetched_at", { ascending: true })
-      .limit(200);
-    setOddsHistory(oh || []);
-
-    // Líderes
-    const { data: gl } = await supabase
-      .from("game_leaders")
-      .select("side, player, stat, value")
-      .eq("game_id", g.id)
-      .order("side")
-      .order("stat");
-    setLeaders(gl || []);
-
-    // Notas
-    const { data: ns } = await supabase
-      .from("game_notes")
-      .select("id, user_id, note, created_at")
-      .eq("game_id", g.id)
-      .order("created_at", { ascending: false })
-      .limit(100);
-    setNotes(ns || []);
-
-    // Betting splits
-    try {
-      const { data: bs } = await supabase
-        .from("betting_splits")
-        .select("tickets_home, tickets_away, money_home, money_away, updated_at")
-        .eq("game_id", g.id)
-        .single();
-      setBetSplits(bs || null);
-    } catch {
-      setBetSplits(null);
-    }
-
-    // Team stats temporada
-    try {
-      const { data: stats } = await supabase
-        .from("season_team_stats")
-        .select(
-          "team_id, ppg, ypg, pass_ypg, rush_ypg, opp_ppg, opp_ypg, third_down, red_zone, to_diff, sacks"
-        )
-        .in("team_id", [g.home_team, g.away_team]);
-      const home = (stats || []).find((s) => s.team_id === g.home_team) || {};
-      const away = (stats || []).find((s) => s.team_id === g.away_team) || {};
-      setTeamStats({ home, away });
-    } catch {
-      setTeamStats(null);
-    }
-
-    // Lesiones
-    try {
-      const { data: inj } = await supabase
-        .from("injuries")
-        .select("team_id, player, status, note")
-        .in("team_id", [g.home_team, g.away_team])
-        .order("team_id");
-      setInjuries(inj || []);
-    } catch {
-      setInjuries([]);
-    }
-
-    // Últimos 5
-    try {
-      const { data: recs } = await supabase
-        .from("team_recent_games")
-        .select("team_id, date, opp, is_home, result, score")
-        .in("team_id", [g.home_team, g.away_team])
-        .order("date", { ascending: false });
-      const take5 = (t) => (recs || []).filter((r) => r.team_id === t).slice(0, 5);
-      setRecentForm({ home: take5(g.home_team), away: take5(g.away_team) });
-    } catch {
-      setRecentForm({ home: [], away: [] });
-    }
-
-    setDetailsTab("resumen");
-  }
-
-  async function addNote() {
-    if (!details || !newNote.trim() || !uid) return;
-    const row = {
-      game_id: details.game.id,
-      user_id: uid,
-      note: newNote.trim(),
-    };
-    const { error, data } = await supabase
-      .from("game_notes")
-      .insert(row)
-      .select("id, user_id, note, created_at")
-      .single();
-    if (!error && data) {
-      setNotes((xs) => [data, ...xs]);
-      setNewNote("");
-    } else {
-      alert(error?.message || "No se pudo guardar la nota.");
-    }
-  }
-/* ========================= GamesTab – Parte 8 (Modales + cierre) ========================= */
-
-      {/* ==================== Modal Detalles de Juego (mobile-first) ==================== */}
+      {!myPickThisWeek && nextKick && (me?.lives ?? 0) > 0 && (
+        <div className="fixed bottom-4 right-4 px-4 py-2 rounded-xl bg-black text-white text-sm shadow-lg">
+          Recuerda elegir: kickoff en <Countdown iso={nextKick} />
+        </div>
+      )}
+            {/* Modal Detalles de Juego */}
       {details && (
         <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-[70]">
-          <div className="w-full max-w-6xl bg-white rounded-2xl p-0 md:p-5 border card overflow-hidden">
-            {/* Header sticky */}
-            <div className="sticky top-0 z-10 bg-white/95 backdrop-blur px-4 py-3 md:px-0 md:py-0 border-b md:border-none">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <h3 className="font-semibold text-lg md:text-xl">
-                    {details.game.away_team} @ {details.game.home_team}
-                  </h3>
-                  <p className="text-xs md:text-sm text-gray-600">
-                    {DateTime.fromISO(details.game.start_time).setZone(TZ).toFormat("EEE dd LLL HH:mm")}
-                  </p>
-                </div>
-                <div className="flex gap-2">
-                  <a
-                    href={`https://www.espn.com/nfl/game/_/gameId/${details.game.id}`}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="px-3 py-2 rounded-lg border text-xs md:text-sm hover:bg-gray-50"
-                  >
-                    Ver en ESPN
-                  </a>
-                  <button
-                    className="px-3 py-2 rounded-lg border text-xs md:text-sm bg-black text-white"
-                    onClick={() => setDetails(null)}
-                  >
-                    Cerrar
-                  </button>
-                </div>
+          <div className="w-full max-w-6xl bg-white rounded-2xl p-5 border card overflow-y-auto max-h-[90vh]">
+            {/* Header */}
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h3 className="font-semibold text-xl">
+                  {details.game.away_team} @ {details.game.home_team}
+                </h3>
+                <p className="text-sm text-gray-600">
+                  {DateTime.fromISO(details.game.start_time).setZone(TZ).toFormat("EEE dd LLL HH:mm")}
+                </p>
+              </div>
+              <div className="flex gap-2">
+                <a
+                  href={`https://www.espn.com/nfl/game/_/gameId/${details.game.id}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="px-3 py-1 rounded border text-sm"
+                >
+                  Ver en ESPN
+                </a>
+                <button
+                  className="px-3 py-1 rounded border text-sm"
+                  onClick={() => setDetails(null)}
+                >
+                  Cerrar
+                </button>
               </div>
             </div>
 
             {/* GRID principal */}
-            <div className="mt-4 grid grid-cols-1 lg:grid-cols-3 gap-4 px-4 md:px-0 pb-4 overflow-y-auto max-h-[85vh]">
+            <div className="mt-4 grid grid-cols-1 lg:grid-cols-3 gap-4">
               {/* Columna izquierda */}
               <div className="space-y-4">
                 {/* Probabilidades & Popularidad */}
@@ -2053,25 +1671,16 @@ export default function GamesTab({ session }) {
                     const spreadHome = last?.spread_home ?? null;
                     const wpHome = winProbFromSpread(spreadHome);
                     const wpAway = winProbFromSpread(-spreadHome) ?? (wpHome != null ? 100 - wpHome : null);
-
-                    // Notar que usamos un IIFE para poder definir Row sin declarar const "suelto" en JSX
                     const Row = ({ label, pct, pop }) => (
-                      <div className="mb-3">
+                      <div className="mb-2">
                         <div className="flex items-center justify-between text-sm">
                           <span className="font-mono">{label}</span>
-                          <span className="text-gray-500">
-                            Pick pop: <b>{pop}%</b>
-                          </span>
+                          <span className="text-gray-500">Pick pop: <b>{pop}%</b></span>
                         </div>
-                        <div className="progressbar mt-1">
-                          <div style={{ width: `${pct ?? 0}%` }} />
-                        </div>
-                        <div className="text-right text-xs text-gray-600">
-                          {pct != null ? `${pct}%` : "—"}
-                        </div>
+                        <div className="progressbar mt-1"><div style={{ width: `${pct ?? 0}%` }} /></div>
+                        <div className="text-right text-xs text-gray-600">{pct != null ? `${pct}%` : "—"}</div>
                       </div>
                     );
-
                     return (
                       <>
                         <Row label={details.game.home_team} pct={wpHome} pop={details.popHome ?? 0} />
@@ -2123,14 +1732,14 @@ export default function GamesTab({ session }) {
                   })()}
 
                   <div className="mt-3 text-xs text-gray-500">Histórico:</div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-2">
+                  <div className="grid grid-cols-2 gap-3 mt-2">
                     <div>
                       <div className="text-xs font-semibold mb-1">Spread Home</div>
-                      <Sparkline series={(oddsHistory || []).map((r) => r.spread_home).filter((v) => v != null)} />
+                      <Sparkline series={(oddsHistory || []).map(r => r.spread_home).filter(v => v != null)} />
                     </div>
                     <div>
                       <div className="text-xs font-semibold mb-1">Moneyline Home</div>
-                      <Sparkline series={(oddsHistory || []).map((r) => r.ml_home).filter((v) => v != null)} />
+                      <Sparkline series={(oddsHistory || []).map(r => r.ml_home).filter(v => v != null)} />
                     </div>
                   </div>
                 </div>
@@ -2139,27 +1748,21 @@ export default function GamesTab({ session }) {
                 <div className="p-4 border rounded-xl bg-white">
                   <div className="text-sm font-semibold mb-3">Últimos 5</div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
-                    {["home", "away"].map((side) => {
-                      const rows = recentForm?.[side] || [];
+                    {["home","away"].map(side => {
+                      const rows = (recentForm?.[side] || []);
                       const label = side === "home" ? details.game.home_team : details.game.away_team;
                       return (
                         <div key={side}>
                           <div className="font-semibold mb-1">{label}</div>
                           <div className="space-y-1">
-                            {rows.length ? (
-                              rows.map((r, i) => (
-                                <div key={i} className="flex items-center justify-between gap-2">
-                                  <span className="text-gray-600">
-                                    {DateTime.fromISO(r.date).setZone(TZ).toFormat("dd LLL")}
-                                  </span>
-                                  <span className="font-mono">{r.result}</span>
-                                  <span className="text-gray-700 truncate">{r.opp}</span>
-                                  <span className="font-mono">{r.score}</span>
-                                </div>
-                              ))
-                            ) : (
-                              <div className="text-xs text-gray-500">Sin datos.</div>
-                            )}
+                            {rows.length ? rows.map((r, i) => (
+                              <div key={i} className="flex items-center justify-between">
+                                <span className="text-gray-600">{DateTime.fromISO(r.date).setZone(TZ).toFormat("dd LLL")}</span>
+                                <span className="font-mono">{r.result}</span>
+                                <span className="text-gray-700">{r.opp}</span>
+                                <span className="font-mono">{r.score}</span>
+                              </div>
+                            )) : <div className="text-xs text-gray-500">Sin datos.</div>}
                           </div>
                         </div>
                       );
@@ -2174,8 +1777,8 @@ export default function GamesTab({ session }) {
                 <div className="p-4 border rounded-2xl bg-white">
                   <div className="text-sm font-semibold mb-3">Líderes</div>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    {["home", "away"].map((side) => {
-                      const rows = (leaders || []).filter((x) => x.side === side);
+                    {["home","away"].map(side => {
+                      const rows = (leaders || []).filter(x => x.side === side);
                       const label = side === "home" ? details.game.home_team : details.game.away_team;
                       return (
                         <div key={side}>
@@ -2184,16 +1787,12 @@ export default function GamesTab({ session }) {
                             <ul className="text-sm space-y-1">
                               {rows.map((r, i) => (
                                 <li key={i} className="flex justify-between">
-                                  <span className="text-gray-700">
-                                    {r.player} · {r.stat}
-                                  </span>
+                                  <span className="text-gray-700">{r.player} · {r.stat}</span>
                                   <span className="font-mono">{r.value}</span>
                                 </li>
                               ))}
                             </ul>
-                          ) : (
-                            <p className="text-xs text-gray-500">Sin datos de líderes.</p>
-                          )}
+                          ) : <p className="text-xs text-gray-500">Sin datos de líderes.</p>}
                         </div>
                       );
                     })}
@@ -2213,17 +1812,10 @@ export default function GamesTab({ session }) {
                     </thead>
                     <tbody>
                       {[
-                        ["PPG", "ppg"],
-                        ["Yds/G", "ypg"],
-                        ["Pass Y/G", "pass_ypg"],
-                        ["Rush Y/G", "rush_ypg"],
-                        ["Opp PPG", "opp_ppg"],
-                        ["Opp Y/G", "opp_ypg"],
-                        ["3rd down %", "third_down"],
-                        ["Red zone %", "red_zone"],
-                        ["TO Diff", "to_diff"],
-                        ["Sacks", "sacks"],
-                      ].map(([label, key]) => (
+                        ["PPG","ppg"],["Yds/G","ypg"],["Pass Y/G","pass_ypg"],["Rush Y/G","rush_ypg"],
+                        ["Opp PPG","opp_ppg"],["Opp Y/G","opp_ypg"],["3rd down %","third_down"],
+                        ["Red zone %","red_zone"],["TO Diff","to_diff"],["Sacks","sacks"],
+                      ].map(([label,key]) => (
                         <tr key={key}>
                           <td className="py-1 text-gray-600">{label}</td>
                           <td className="py-1 font-mono">{teamStats?.home?.[key] ?? "—"}</td>
@@ -2232,9 +1824,7 @@ export default function GamesTab({ session }) {
                       ))}
                     </tbody>
                   </table>
-                  <p className="mt-2 text-xs text-gray-500">
-                    Fuente: <code>season_team_stats</code>.
-                  </p>
+                  <p className="mt-2 text-xs text-gray-500">Fuente: <code>season_team_stats</code>.</p>
                 </div>
               </div>
 
@@ -2278,30 +1868,24 @@ export default function GamesTab({ session }) {
                       return <div style={{ width: `${pctH}%` }} title={`${details.game.home_team} ${pctH}%`} />;
                     })()}
                   </div>
-                  <p className="mt-2 text-xs text-gray-500">
-                    Fuente: <code>betting_splits</code>.
-                  </p>
+                  <p className="mt-2 text-xs text-gray-500">Fuente: <code>betting_splits</code>.</p>
                 </div>
 
                 {/* Lesiones */}
                 <div className="p-4 border rounded-2xl bg-white">
                   <div className="text-sm font-semibold mb-3">Lesionados</div>
-                  {["home", "away"].map((side) => {
+                  {["home","away"].map(side => {
                     const team = side === "home" ? details.game.home_team : details.game.away_team;
-                    const rows = (injuries || []).filter((i) => i.team_id === team);
+                    const rows = (injuries || []).filter(i => i.team_id === team);
                     return (
                       <div key={side} className="mb-3">
                         <div className="font-semibold text-xs mb-1">{team}</div>
-                        {rows.length ? (
-                          rows.slice(0, 5).map((r, i) => (
-                            <div key={i} className="text-sm flex items-center justify-between">
-                              <span className="truncate">{r.player}</span>
-                              <span className="text-gray-600">{r.status}</span>
-                            </div>
-                          ))
-                        ) : (
-                          <p className="text-xs text-gray-500">Sin datos.</p>
-                        )}
+                        {rows.length ? rows.slice(0,5).map((r,i) => (
+                          <div key={i} className="text-sm flex items-center justify-between">
+                            <span>{r.player}</span>
+                            <span className="text-gray-600">{r.status}</span>
+                          </div>
+                        )) : <p className="text-xs text-gray-500">Sin datos.</p>}
                       </div>
                     );
                   })}
@@ -2310,100 +1894,39 @@ export default function GamesTab({ session }) {
             </div>
 
             {/* Comentarios */}
-            <div className="px-4 md:px-0 pb-4">
-              <div className="p-4 border-t md:border rounded-none md:rounded-xl bg-white">
-                <div className="text-sm font-semibold mb-2">Comentarios del juego</div>
-                <div className="flex gap-2">
-                  <input
-                    className="border rounded-lg p-2 w-full"
-                    placeholder="Escribe una nota (visible para la liga)…"
-                    value={newNote}
-                    onChange={(e) => setNewNote(e.target.value)}
-                  />
-                  <button className="px-3 py-2 rounded bg-black text-white text-sm" onClick={addNote}>
-                    Guardar
-                  </button>
-                </div>
-                <div className="mt-3 space-y-2 max-h-64 overflow-auto">
-                  {(notes || []).map((n) => (
-                    <div key={n.id} className="p-2 border rounded-lg">
-                      <div className="text-xs text-gray-500">
-                        {userNames[n.user_id] || n.user_id.slice(0, 6)} ·{" "}
-                        {DateTime.fromISO(n.created_at).setZone(TZ).toFormat("dd LLL HH:mm")}
-                      </div>
-                      <div className="text-sm mt-1">{n.note}</div>
+            <div className="mt-4 p-4 border rounded-xl bg-white">
+              <div className="text-sm font-semibold mb-2">Comentarios del juego</div>
+              <div className="flex gap-2">
+                <input
+                  className="border rounded-lg p-2 w-full"
+                  placeholder="Escribe una nota (visible para la liga)…"
+                  value={newNote}
+                  onChange={(e) => setNewNote(e.target.value)}
+                />
+                <button className="px-3 py-2 rounded bg-black text-white text-sm" onClick={addNote}>
+                  Guardar
+                </button>
+              </div>
+              <div className="mt-3 space-y-2 max-h-64 overflow-auto">
+                {(notes || []).map((n) => (
+                  <div key={n.id} className="p-2 border rounded-lg">
+                    <div className="text-xs text-gray-500">
+                      {userNames[n.user_id] || n.user_id.slice(0, 6)} ·{" "}
+                      {DateTime.fromISO(n.created_at).setZone(TZ).toFormat("dd LLL HH:mm")}
                     </div>
-                  ))}
-                  {(!notes || notes.length === 0) && (
-                    <div className="text-xs text-gray-500">Sin comentarios.</div>
-                  )}
-                </div>
+                    <div className="text-sm mt-1">{n.note}</div>
+                  </div>
+                ))}
+                {(!notes || notes.length === 0) && <div className="text-xs text-gray-500">Sin comentarios.</div>}
               </div>
             </div>
           </div>
         </div>
       )}
 
-      {/* ==================== Modal de confirmación de pick ==================== */}
-      {pendingPick && (
-        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50">
-          <div className="w-full max-w-sm bg-white rounded-2xl p-5 border card">
-            <h3 className="font-semibold text-lg">Confirmar pick</h3>
-            <p className="mt-2 text-sm">
-              ¿Confirmas tu pick de <b>{pendingPick.teamId}</b> en W{week}?
-            </p>
-            <div className="mt-4 flex gap-2">
-              <button className="px-4 py-2 rounded border" onClick={() => setPendingPick(null)}>
-                Cancelar
-              </button>
-              <button className="px-4 py-2 rounded bg-black text-white" onClick={doPick}>
-                Confirmar
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ==================== Banner resultado (Win/Loss/Push) ==================== */}
-      {resultBanner && (
-        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-[60]">
-          <div className="w-full max-w-sm bg-white rounded-2xl p-5 border card text-center">
-            <h3 className="font-semibold text-lg">
-              {resultBanner.type === "win" ? "¡Victoria!" : resultBanner.type === "loss" ? "Derrota" : "Push"}
-            </h3>
-            <p className="mt-2 text-sm">{resultBanner.msg}</p>
-            <button className="mt-4 px-4 py-2 rounded bg-black text-white" onClick={() => setResultBanner(null)}>
-              Cerrar
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* ==================== Toast (recordatorio de pick) ==================== */}
-      {!myPickThisWeek && nextKickoffISO && (me?.lives ?? 0) > 0 && (
-        <div className="fixed bottom-4 right-4 left-4 md:left-auto px-4 py-2 rounded-xl bg-black text-white text-sm shadow-lg flex items-center justify-between gap-3">
-          <span>
-            Recuerda elegir: kickoff en <Countdown iso={nextKickoffISO} />
-          </span>
-          <button
-            className="hidden md:inline px-2 py-1 rounded bg-white text-black text-xs"
-            onClick={() => {
-              const el = document.querySelector("#games-top");
-              if (el) el.scrollIntoView({ behavior: "smooth" });
-            }}
-          >
-            Ir a partidos
-          </button>
-        </div>
-      )}
-    </div> {/* container (max-w-6xl) */}
+    </div>
   ); // end return
 } // end GamesTab
-
-
-
-
-
 
 	  
 
