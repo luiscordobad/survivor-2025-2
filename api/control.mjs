@@ -2,18 +2,39 @@
 // Endpoint de control del juego: autopick (favorito más fuerte disponible)
 // y liquidación de semana (marcar win/loss/push y descontar vidas).
 //
-// El frontend (src/App.jsx) ya llama a estas acciones:
-//   /api/control?action=settleWeek&week=N&token=...
-//   /api/control?action=autopick&week=N&token=...
-//   /api/control?action=autopickOne&week=N&user_id=...&token=...
+// El frontend (src/App.jsx) llama a estas acciones:
+//   /api/control?action=settleWeek&week=N                         (con sesión de usuario)
+//   /api/control?action=autopickOne&week=N&user_id=<yo>            (con sesión de usuario)
+//   /api/control?action=autopick&week=N&token=CRON_TOKEN           (solo cron/admin)
+//
+// Autorización: el CRON_TOKEN nunca debe viajar al navegador (Vite lo
+// embebería en el bundle público), así que solo el cron server-to-server
+// lo usa. Las llamadas desde el navegador se autentican con el JWT de
+// Supabase del propio usuario (header Authorization: Bearer ...).
 import { createClient } from '@supabase/supabase-js';
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.VITE_SUPABASE_URL;
-const SERVICE_KEY  = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_SERVICE_KEY;
+const SERVICE_KEY  = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_ROLE || process.env.VITE_SUPABASE_SERVICE_KEY;
 const CRON_TOKEN   = process.env.CRON_TOKEN || process.env.VITE_CRON_TOKEN;
 const SEASON       = Number(process.env.SEASON || '2026');
 
+// Qué tan cerca del kickoff hay que estar para que el autopick "de emergencia"
+// pueda tomar un juego. Evita que el cron le asigne a alguien el equipo del
+// juego del jueves con días de anticipación, cuando todavía puede elegir a mano
+// cualquier otro juego de la semana (domingo/lunes).
+const AUTOPICK_WINDOW_MINUTES = Number(process.env.AUTOPICK_WINDOW_MINUTES || '90');
+
 const sb = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
+
+/** Resuelve el uid del usuario autenticado a partir del JWT de Supabase, si viene. */
+async function getAuthedUserId(req) {
+  const header = req.headers['authorization'] || req.headers['Authorization'];
+  if (!header?.startsWith('Bearer ')) return null;
+  const jwt = header.slice(7);
+  const { data, error } = await sb.auth.getUser(jwt);
+  if (error || !data?.user) return null;
+  return data.user.id;
+}
 
 /** Evalúa (win/loss/push) todos los picks pendientes de juegos ya finalizados en la semana. */
 async function settleWeek(week) {
@@ -45,7 +66,12 @@ async function settleWeek(week) {
   return { evaluated };
 }
 
-/** Elige automáticamente el favorito más fuerte disponible (no usado, juego no iniciado). */
+/**
+ * Autopick "de emergencia": solo actúa sobre juegos que están a punto de
+ * cerrar (dentro de AUTOPICK_WINDOW_MINUTES). Si todavía quedan juegos más
+ * tarde en la semana, el usuario conserva la libertad de elegir a mano y no
+ * se le fuerza un pick con días de anticipación.
+ */
 async function autopickForUser(userId, week) {
   const { data: existing, error: exErr } = await sb
     .from('picks')
@@ -75,15 +101,17 @@ async function autopickForUser(userId, week) {
   if (usedErr) throw usedErr;
   const usedTeams = new Set((used || []).map((u) => u.team_id));
 
-  const nowIso = new Date().toISOString();
+  const now = new Date();
+  const cutoff = new Date(now.getTime() + AUTOPICK_WINDOW_MINUTES * 60_000);
   const { data: games, error: gErr } = await sb
     .from('games')
     .select('id, home_team, away_team, start_time')
     .eq('season', SEASON)
     .eq('week', week)
-    .gt('start_time', nowIso);
+    .gt('start_time', now.toISOString())
+    .lte('start_time', cutoff.toISOString());
   if (gErr) throw gErr;
-  if (!games?.length) return { skipped: true, reason: 'no_upcoming_games' };
+  if (!games?.length) return { skipped: true, reason: 'no_games_locking_soon' };
 
   const gameIds = games.map((g) => g.id);
   const { data: odds, error: oErr } = await sb
@@ -127,22 +155,36 @@ async function autopickForUser(userId, week) {
 export default async function handler(req, res) {
   try {
     const { token, action, week, user_id } = req.query;
-    if (!token || token !== CRON_TOKEN) return res.status(401).json({ ok: false, error: 'bad token' });
+    const isCron = !!CRON_TOKEN && token === CRON_TOKEN;
+    const authedUserId = isCron ? null : await getAuthedUserId(req);
+    if (!isCron && !authedUserId) {
+      return res.status(401).json({ ok: false, error: 'unauthorized' });
+    }
 
     const wk = Number(week || '1');
 
     if (action === 'settleWeek') {
+      // Seguro para cualquier caller autenticado: no apunta a nadie en
+      // particular y solo confirma resultados ya decididos por los marcadores.
       const r = await settleWeek(wk);
       return res.json({ ok: true, action, season: SEASON, week: wk, ...r });
     }
 
     if (action === 'autopickOne') {
-      if (!user_id) return res.status(400).json({ ok: false, error: 'missing user_id' });
-      const r = await autopickForUser(user_id, wk);
-      return res.json({ ok: true, action, season: SEASON, week: wk, user_id, ...r });
+      const targetUser = user_id || authedUserId;
+      if (!targetUser) return res.status(400).json({ ok: false, error: 'missing user_id' });
+      if (!isCron && targetUser !== authedUserId) {
+        return res.status(403).json({ ok: false, error: 'forbidden: solo puedes autopickear tu propio usuario' });
+      }
+      const r = await autopickForUser(targetUser, wk);
+      return res.json({ ok: true, action, season: SEASON, week: wk, user_id: targetUser, ...r });
     }
 
     if (action === 'autopick') {
+      if (!isCron) {
+        const { data: prof } = await sb.from('profiles').select('is_admin').eq('id', authedUserId).maybeSingle();
+        if (!prof?.is_admin) return res.status(403).json({ ok: false, error: 'forbidden: solo admin o cron' });
+      }
       const { data: players, error } = await sb.from('profiles').select('id').eq('season', SEASON);
       if (error) throw error;
       const results = [];
