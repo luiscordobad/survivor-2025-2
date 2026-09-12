@@ -2,6 +2,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { DateTime } from "luxon";
 import { supabase } from "./lib/supabaseClient";
+import { ensureProfile } from "./lib/league";
 import Rules from "./Rules";
 
 
@@ -9,8 +10,8 @@ import Rules from "./Rules";
 const TZ = import.meta.env.VITE_TZ || "America/Mexico_City";
 const SITE = import.meta.env.VITE_SITE_URL || "";
 const CRON_TOKEN = import.meta.env.VITE_CRON_TOKEN || "";
-const LEAGUE = import.meta.env.VITE_LEAGUE_NAME || "Maiztros Survivor 2025";
-const SEASON = 2025;
+const LEAGUE = import.meta.env.VITE_LEAGUE_NAME || "Maiztros Survivor 2026";
+const SEASON = Number(import.meta.env.VITE_SEASON || 2026);
 
 /* ========================= Utils ========================= */
 const clsx = (...xs) => xs.filter(Boolean).join(" ");
@@ -664,14 +665,7 @@ function GamesTab({ session }) {
   const initAll = async () => {
     if (!uid) return;
     const email = session.user.email;
-    let { data: prof } = await supabase.from("profiles").select("*").eq("email", email).single();
-    if (!prof) {
-      await supabase.from("profiles").insert({
-        id: uid, email, display_name: email.split("@")[0], lives: 2,
-      });
-      const r = await supabase.from("profiles").select("*").eq("email", email).single();
-      prof = r.data;
-    }
+    const prof = await ensureProfile(uid, email);
     setMe(prof);
 
     await loadTeams();

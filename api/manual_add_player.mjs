@@ -3,7 +3,8 @@ import { createClient } from '@supabase/supabase-js';
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.VITE_SUPABASE_URL;
 const SERVICE_KEY  = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_SERVICE_KEY;
-const SEASON       = 2025;
+const SEASON       = Number(process.env.SEASON || '2026');
+const CRON_TOKEN   = process.env.CRON_TOKEN || process.env.VITE_CRON_TOKEN;
 
 const admin = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
 
@@ -24,6 +25,9 @@ async function findUserByEmail(email) {
 export default async function handler(req, res) {
   const out = { steps: [] };
   try {
+    if (!CRON_TOKEN || req.query.token !== CRON_TOKEN) {
+      return res.status(401).json({ ok: false, error: 'bad token' });
+    }
     const displayName = req.query.name   || 'pablito';
     const email       = req.query.email  || 'pablito+manual@maiztros.local';
     const pwd         = req.query.pwd    || 'Temp1234!';

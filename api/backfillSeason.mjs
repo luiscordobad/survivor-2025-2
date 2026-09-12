@@ -122,8 +122,9 @@ export default async function handler(req, res) {
     const playoffs = url.searchParams.get("playoffs") === "true";
 
     if (token !== CRON_TOKEN) return res.status(401).json({ ok: false, error: "Bad token" });
-    if (!season || season < 2010 || season > 2025)
-      return res.status(400).json({ ok: false, error: "season inválido (2010–2025)" });
+    const maxSeason = new Date().getFullYear() + 1;
+    if (!season || season < 2010 || season > maxSeason)
+      return res.status(400).json({ ok: false, error: `season inválido (2010–${maxSeason})` });
 
     let total = 0;
 

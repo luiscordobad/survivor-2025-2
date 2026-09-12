@@ -7,7 +7,7 @@ export default function Rules() {
       <section className="mt-4 space-y-2">
         <h2 className="text-xl font-semibold">Formato</h2>
         <ul className="list-disc ml-6 text-sm leading-6">
-          <li>Temporada NFL 2025 completa (Semanas 1–18 + Playoffs).</li>
+          <li>Temporada NFL 2026 completa (Semanas 1–18 + Playoffs).</li>
           <li>Ganas si tu equipo gana. Empate = sobrevives.</li>
           <li>No puedes repetir equipo en toda la temporada.</li>
           <li>Tienes <b>2 vidas</b>. No hay rebuy.</li>
