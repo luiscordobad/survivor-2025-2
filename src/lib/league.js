@@ -1,31 +1,52 @@
 // src/lib/league.js
 import { supabase } from './supabaseClient';
 
+const SEASON = Number(import.meta.env.VITE_SEASON || 2026);
+
 /**
- * Asegura que el usuario esté inscrito en la liga 2025.
- * - Crea fila en profiles si no existe (frontend ya lo hace por si acaso)
- * - Asegura fila en standings (liga) si no existe
+ * Devuelve el perfil del usuario, creándolo si es la primera vez que entra,
+ * y haciendo el "rollover" de temporada si sigue marcado con una temporada
+ * anterior (reinicia vidas a 2 y limpia eliminated_at). Así el arranque de
+ * cada temporada nueva (2027, 2028, ...) es automático y no requiere tocar
+ * la base de datos a mano otra vez.
  */
-export async function ensureLeagueMembership(userId) {
-  if (!userId) return;
-  // standings mínima: user_id, display_name, lives, wins, losses, pushes, margin_sum
-  const { data: st } = await supabase
-    .from('standings')
-    .select('user_id')
-    .eq('user_id', userId)
-    .maybeSingle?.() ?? { data: null };
+export async function ensureProfile(userId, email) {
+  if (!userId) return null;
 
-  if (!st) {
-    // intenta tomar display_name de profile
-    const { data: prof } = await supabase
-      .from('profiles').select('display_name').eq('id', userId).single();
+  let { data: prof, error } = await supabase
+    .from('profiles')
+    .select('*')
+    .eq('id', userId)
+    .maybeSingle();
+  if (error) throw error;
 
-    await supabase.from('standings').insert([{
-      user_id: userId,
-      display_name: prof?.display_name || 'Jugador',
-      lives: 2, wins: 0, losses: 0, pushes: 0, margin_sum: 0
-    }]);
+  if (!prof) {
+    const insertRow = {
+      id: userId,
+      email,
+      display_name: email.split('@')[0],
+      lives: 2,
+      season: SEASON,
+    };
+    const { data: created, error: insErr } = await supabase
+      .from('profiles')
+      .insert(insertRow)
+      .select('*')
+      .single();
+    if (insErr) throw insErr;
+    return created;
   }
+
+  if ((prof.season ?? SEASON) < SEASON) {
+    const { data: updated, error: updErr } = await supabase
+      .from('profiles')
+      .update({ season: SEASON, lives: 2, eliminated_at: null })
+      .eq('id', userId)
+      .select('*')
+      .single();
+    if (updErr) throw updErr;
+    return updated;
+  }
+
+  return prof;
 }
-
-

@@ -1,6 +1,8 @@
 // /api/syncWeather.mjs
 import { createClient } from '@supabase/supabase-js';
 
+const SEASON = Number(process.env.SEASON || '2026');
+
 export default async function handler(req, res) {
   try {
     const url = new URL(req.url, `https://${req.headers.host}`);
@@ -22,6 +24,7 @@ export default async function handler(req, res) {
     const { data: games } = await supabase
       .from('games')
       .select('id, week, venue_city')
+      .eq('season', SEASON)
       .eq('week', week);
 
     if (!games?.length) return res.json({ ok:true, inserted:0, msg:'No games' });

@@ -1,6 +1,8 @@
 import fetch from 'node-fetch';
 import { DateTime } from 'luxon';
 import { supa } from './_supabase.mjs';
+
+const SEASON = Number(process.env.SEASON || '2026');
 function guard(req, res) {
   const url = new URL(req.url, `https://${req.headers.host}`);
   const token = url.searchParams.get('token') || req.headers['x-cron-token'];
@@ -17,15 +19,15 @@ export default async function handler(req, res) {
   try {
     const now = DateTime.utc();
     const until = now.plus({ hours: hoursBefore + 1 });
-    const { data: games } = await supa.from('games').select('*').gte('start_time', now.toISO()).lte('start_time', until.toISO()).eq('season', 2025).eq('status', 'scheduled');
+    const { data: games } = await supa.from('games').select('*').gte('start_time', now.toISO()).lte('start_time', until.toISO()).eq('season', SEASON).eq('status', 'scheduled');
     if (!games?.length) return res.status(200).json({ ok: true, msg: 'no games soon' });
     const weeks = [...new Set(games.map(g => g.week))];
-    const { data: members } = await supa.from('league_members').select('user_id');
+    const { data: members } = await supa.from('profiles').select('id').eq('season', SEASON);
     for (const w of weeks) {
       for (const m of members || []) {
-        const { data: pick } = await supa.from('picks').select('id').eq('user_id', m.user_id).eq('week', w).maybeSingle();
+        const { data: pick } = await supa.from('picks').select('id').eq('user_id', m.id).eq('week', w).eq('season', SEASON).maybeSingle();
         if (pick) continue;
-        const { data: prof } = await supa.from('profiles').select('email, display_name').eq('id', m.user_id).maybeSingle();
+        const { data: prof } = await supa.from('profiles').select('email, display_name').eq('id', m.id).maybeSingle();
         if (!prof?.email) continue;
         await sendEmail(prof.email, `Recordatorio Survivor W${w}`, `Hola ${prof.display_name},\n\nTienes pendiente tu pick para la Semana ${w}. Entra a la app y elige antes del kickoff.\n\nSi no eliges, haremos autopick del favorito más fuerte disponible.\n`);
       }

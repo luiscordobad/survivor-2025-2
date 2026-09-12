@@ -4,6 +4,8 @@
 
 import { createClient } from '@supabase/supabase-js';
 
+const SEASON = Number(process.env.SEASON || '2026');
+
 const TEAM_ALIAS = {
   ARI: "Arizona Cardinals",
   ATL: "Atlanta Falcons",
@@ -67,6 +69,7 @@ export default async function handler(req, res) {
     const { data: games } = await supabase
       .from('games')
       .select('id, week, home_team, away_team, start_time')
+      .eq('season', SEASON)
       .eq('week', week);
 
     if (!games?.length) {

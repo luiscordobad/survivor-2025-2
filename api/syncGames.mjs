@@ -4,7 +4,7 @@ import { createClient } from '@supabase/supabase-js';
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.VITE_SUPABASE_URL;
 const SERVICE_KEY  = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_SERVICE_KEY;
 const CRON_TOKEN   = process.env.CRON_TOKEN || process.env.VITE_CRON_TOKEN;
-const SEASON       = Number(process.env.SEASON || '2025');
+const SEASON       = Number(process.env.SEASON || '2026');
 
 const sb = createClient(SUPABASE_URL, SERVICE_KEY);
 
@@ -54,8 +54,8 @@ async function syncGamesWeek(week) {
 
   // 2) Si no hay fechas locales, usa un set de días “base” (ajústalo según necesites)
   if (ymds.length === 0) {
-    // Para W1 2025 (ajústalo si quieres otras semanas semilla)
-    ymds = ['20250904','20250905','20250906','20250907','20250908']; // Thu..Mon apertura 2025
+    // Para W1 2026 (ajústalo si quieres otras semanas semilla)
+    ymds = ['20260910','20260911','20260912','20260913','20260914']; // Thu..Mon apertura 2026
   }
 
   let upserts = 0;

@@ -1,6 +1,8 @@
 // api/notifyReminders.mjs
 import { createClient } from '@supabase/supabase-js';
 
+const SEASON = Number(process.env.SEASON || '2026');
+
 export default async function handler(req, res) {
   try {
     const url = new URL(req.url, `https://${req.headers.host}`);
@@ -17,7 +19,7 @@ export default async function handler(req, res) {
     // siguiente juego
     const nowISO = new Date().toISOString();
     const { data: nextGs } = await supabase
-      .from('games').select('*').gt('start_time', nowISO).order('start_time').limit(1);
+      .from('games').select('*').eq('season', SEASON).gt('start_time', nowISO).order('start_time').limit(1);
     const next = nextGs?.[0];
     if (!next) return res.json({ ok:true, msg:'No hay próximos juegos' });
 
@@ -29,7 +31,7 @@ export default async function handler(req, res) {
     // jugadores sin pick
     const { data: st } = await supabase.from('standings').select('user_id');
     const allIds = st?.map(x=>x.user_id) || [];
-    const { data: pks } = await supabase.from('picks').select('user_id').eq('week', week);
+    const { data: pks } = await supabase.from('picks').select('user_id').eq('season', SEASON).eq('week', week);
     const already = new Set((pks||[]).map(x=>x.user_id));
     const pending = allIds.filter(id=>!already.has(id));
     if (!pending.length) return res.json({ ok:true, msg:'Todos tienen pick' });

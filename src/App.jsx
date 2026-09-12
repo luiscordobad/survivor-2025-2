@@ -2,15 +2,15 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { DateTime } from "luxon";
 import { supabase } from "./lib/supabaseClient";
+import { ensureProfile } from "./lib/league";
 import Rules from "./Rules";
 
 
 /* ========================= Config ========================= */
 const TZ = import.meta.env.VITE_TZ || "America/Mexico_City";
 const SITE = import.meta.env.VITE_SITE_URL || "";
-const CRON_TOKEN = import.meta.env.VITE_CRON_TOKEN || "";
-const LEAGUE = import.meta.env.VITE_LEAGUE_NAME || "Maiztros Survivor 2025";
-const SEASON = 2025;
+const LEAGUE = import.meta.env.VITE_LEAGUE_NAME || "Maiztros Survivor 2026";
+const SEASON = Number(import.meta.env.VITE_SEASON || 2026);
 
 /* ========================= Utils ========================= */
 const clsx = (...xs) => xs.filter(Boolean).join(" ");
@@ -392,17 +392,16 @@ export default function AppRoot() {
   );
 }
 
-/* -------- Autopick buttons (restaurar) -------- */
-function AutoPickButtons({ week, session }) {
+/* -------- Autopick buttons -------- */
+function AutoPickButtons({ week, session, isAdmin }) {
   const uid = session?.user?.id || null;
+  const authHeaders = () => ({ Authorization: `Bearer ${session?.access_token || ""}` });
 
   const autopickMe = async () => {
     if (!uid) return alert("Iniciando sesión… intenta en unos segundos.");
     try {
-      const url = `${SITE}/api/control?action=autopickOne&week=${week}&user_id=${encodeURIComponent(
-        uid
-      )}&token=${encodeURIComponent(CRON_TOKEN)}`;
-      const r = await fetch(url);
+      const url = `${SITE}/api/control?action=autopickOne&week=${week}&user_id=${encodeURIComponent(uid)}`;
+      const r = await fetch(url, { headers: authHeaders() });
       const j = await r.json().catch(() => ({}));
       if (!r.ok || j.ok === false) throw new Error(j.error || "Error autopick");
       alert("Autopick aplicado para ti.");
@@ -413,10 +412,8 @@ function AutoPickButtons({ week, session }) {
 
   const autopickLeague = async () => {
     try {
-      const url = `${SITE}/api/control?action=autopick&week=${week}&token=${encodeURIComponent(
-        CRON_TOKEN
-      )}`;
-      const r = await fetch(url);
+      const url = `${SITE}/api/control?action=autopick&week=${week}`;
+      const r = await fetch(url, { headers: authHeaders() });
       const j = await r.json().catch(() => ({}));
       if (!r.ok || j.ok === false)
         throw new Error(j.error || "Error autopick liga");
@@ -431,9 +428,11 @@ function AutoPickButtons({ week, session }) {
       <button className="text-xs px-3 py-1 rounded border" onClick={autopickMe}>
         Autopick para mí
       </button>
-      <button className="text-xs px-3 py-1 rounded border" onClick={autopickLeague}>
-        Autopick (liga)
-      </button>
+      {isAdmin && (
+        <button className="text-xs px-3 py-1 rounded border" onClick={autopickLeague}>
+          Autopick (liga)
+        </button>
+      )}
     </>
   );
 }
@@ -664,14 +663,7 @@ function GamesTab({ session }) {
   const initAll = async () => {
     if (!uid) return;
     const email = session.user.email;
-    let { data: prof } = await supabase.from("profiles").select("*").eq("email", email).single();
-    if (!prof) {
-      await supabase.from("profiles").insert({
-        id: uid, email, display_name: email.split("@")[0], lives: 2,
-      });
-      const r = await supabase.from("profiles").select("*").eq("email", email).single();
-      prof = r.data;
-    }
+    const prof = await ensureProfile(uid, email);
     setMe(prof);
 
     await loadTeams();
@@ -853,8 +845,8 @@ function GamesTab({ session }) {
     if (leaguePicks?.length) settleLeaguePicksIfNeeded(week, games, leaguePicks);
     (async () => {
       try {
-        const url = `${SITE}/api/control?action=settleWeek&week=${week}&token=${encodeURIComponent(CRON_TOKEN)}`;
-        await fetch(url);
+        const url = `${SITE}/api/control?action=settleWeek&week=${week}`;
+        await fetch(url, { headers: { Authorization: `Bearer ${session?.access_token || ""}` } });
       } catch {}
     })();
   }, [games, picks, leaguePicks, week, uid]);
@@ -1337,7 +1329,7 @@ function GamesTab({ session }) {
             >
               Exportar standings (CSV)
             </button>
-            <AutoPickButtons week={week} session={session} />
+            <AutoPickButtons week={week} session={session} isAdmin={!!me?.is_admin} />
           </div>
         </div>
 
