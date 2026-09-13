@@ -11,6 +11,8 @@ const TZ = import.meta.env.VITE_TZ || "America/Mexico_City";
 const SITE = import.meta.env.VITE_SITE_URL || "";
 const LEAGUE = import.meta.env.VITE_LEAGUE_NAME || "Maiztros Survivor 2026";
 const SEASON = Number(import.meta.env.VITE_SEASON || 2026);
+const VAPID_PUBLIC_KEY = import.meta.env.VITE_VAPID_PUBLIC_KEY || "";
+const AVATAR_CHOICES = ["🏈", "🦁", "🐺", "🐻", "🦅", "🐯", "🦍", "🐊", "🦈", "🐗", "🔥", "⚡", "💀", "🎯", "🏆", "🃏"];
 
 /* ========================= Utils ========================= */
 const clsx = (...xs) => xs.filter(Boolean).join(" ");
@@ -32,6 +34,320 @@ function Countdown({ iso }) {
     return () => clearInterval(id);
   }, [iso]);
   return <span>{left}</span>;
+}
+
+function Skel({ className = "" }) {
+  return <div className={clsx("skel", className)} />;
+}
+
+function GameCardSkeleton({ count = 4 }) {
+  return (
+    <>
+      {Array.from({ length: count }, (_, i) => (
+        <div key={i} className="p-4 border rounded-2xl bg-white card">
+          <div className="flex items-center justify-between">
+            <Skel className="h-3 w-24" />
+            <Skel className="h-3 w-16" />
+          </div>
+          <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="flex items-center gap-3">
+              <Skel className="h-10 w-10 rounded-full" />
+              <Skel className="h-4 w-28" />
+            </div>
+            <div className="flex items-center gap-3">
+              <Skel className="h-10 w-10 rounded-full" />
+              <Skel className="h-4 w-28" />
+            </div>
+          </div>
+        </div>
+      ))}
+    </>
+  );
+}
+
+function TableSkeleton({ rows = 6, cols = 5 }) {
+  return (
+    <div className="p-4 border rounded-2xl bg-white card">
+      <Skel className="h-4 w-40 mb-4" />
+      <div className="space-y-2">
+        {Array.from({ length: rows }, (_, r) => (
+          <div key={r} className="flex items-center gap-3">
+            {Array.from({ length: cols }, (_, c) => (
+              <Skel key={c} className="h-3 flex-1" />
+            ))}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ListSkeleton({ rows = 5 }) {
+  return (
+    <div className="space-y-3">
+      {Array.from({ length: rows }, (_, i) => (
+        <div key={i} className="p-4 border rounded-2xl bg-white card">
+          <Skel className="h-4 w-2/3 mb-2" />
+          <Skel className="h-3 w-1/3" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* ========================= Gráfica: vidas de la liga por semana ========================= */
+function LivesChart({ data }) {
+  if (!data?.length) return null;
+  const W = 640, H = 200, padL = 28, padR = 12, padT = 20, padB = 24;
+  const innerW = W - padL - padR;
+  const innerH = H - padT - padB;
+  const maxAlive = Math.max(1, ...data.map((d) => d.alive));
+  const barW = innerW / data.length;
+
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-auto" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Jugadores vivos por semana">
+      <line x1={padL} y1={padT} x2={padL} y2={H - padB} stroke="#262d3a" strokeWidth="1" />
+      <line x1={padL} y1={H - padB} x2={W - padR} y2={H - padB} stroke="#262d3a" strokeWidth="1" />
+      {data.map((d, i) => {
+        const h = (d.alive / maxAlive) * innerH;
+        const x = padL + i * barW;
+        const y = H - padB - h;
+        return (
+          <g key={d.week}>
+            <rect x={x + barW * 0.15} y={y} width={barW * 0.7} height={Math.max(h, 1)} rx="3" fill="#22c55e" />
+            <text x={x + barW / 2} y={y - 4} fontSize="10" fill="#eef1f6" textAnchor="middle">{d.alive}</text>
+            <text x={x + barW / 2} y={H - padB + 14} fontSize="9" fill="#8b93a7" textAnchor="middle">W{d.week}</text>
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
+/* ========================= PWA: instalar app ========================= */
+function isStandaloneNow() {
+  return (
+    window.matchMedia?.("(display-mode: standalone)")?.matches ||
+    window.navigator.standalone === true
+  );
+}
+function isIOSDevice() {
+  return /iphone|ipad|ipod/i.test(navigator.userAgent) ||
+    (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+}
+
+function usePwaInstall() {
+  const [deferredPrompt, setDeferredPrompt] = useState(null);
+  const [installed, setInstalled] = useState(isStandaloneNow());
+  const isIOS = useMemo(isIOSDevice, []);
+
+  useEffect(() => {
+    const onBeforeInstall = (e) => {
+      e.preventDefault();
+      setDeferredPrompt(e);
+    };
+    const onInstalled = () => {
+      setInstalled(true);
+      setDeferredPrompt(null);
+    };
+    window.addEventListener("beforeinstallprompt", onBeforeInstall);
+    window.addEventListener("appinstalled", onInstalled);
+    return () => {
+      window.removeEventListener("beforeinstallprompt", onBeforeInstall);
+      window.removeEventListener("appinstalled", onInstalled);
+    };
+  }, []);
+
+  const promptInstall = async () => {
+    if (!deferredPrompt) return false;
+    deferredPrompt.prompt();
+    const { outcome } = await deferredPrompt.userChoice.catch(() => ({ outcome: "dismissed" }));
+    setDeferredPrompt(null);
+    return outcome === "accepted";
+  };
+
+  return {
+    installed,
+    isIOS,
+    canPromptNative: !!deferredPrompt,
+    promptInstall,
+    // en iOS Safari nunca hay beforeinstallprompt: mostramos instrucciones manuales
+    showIOSHint: isIOS && !installed,
+  };
+}
+
+function InstallAppCard() {
+  const pwa = usePwaInstall();
+  if (pwa.installed) {
+    return (
+      <div className="p-4 border rounded-2xl bg-white card text-sm">
+        <p>✅ La app ya está instalada en este dispositivo.</p>
+      </div>
+    );
+  }
+  return (
+    <div className="p-4 border rounded-2xl bg-white card text-sm space-y-2">
+      <h3 className="font-semibold">📲 Agregar a pantalla de inicio</h3>
+      {pwa.canPromptNative ? (
+        <>
+          <p className="text-gray-600">Instálala como app: acceso directo, pantalla completa y carga más rápida.</p>
+          <button className="btn btn-primary mt-1" onClick={pwa.promptInstall}>Instalar app</button>
+        </>
+      ) : pwa.showIOSHint ? (
+        <p className="text-gray-600">
+          En iPhone/iPad: toca el botón <b>Compartir</b> (□ con flecha ↑) en Safari y luego{" "}
+          <b>"Agregar a pantalla de inicio"</b>.
+        </p>
+      ) : (
+        <p className="text-gray-600">
+          Desde el menú de tu navegador busca <b>"Instalar app"</b> o <b>"Agregar a pantalla de inicio"</b>.
+        </p>
+      )}
+    </div>
+  );
+}
+
+function InstallBanner() {
+  const pwa = usePwaInstall();
+  const [dismissed, setDismissed] = useState(() => {
+    try { return localStorage.getItem("pwaInstallDismissed") === "1"; } catch { return false; }
+  });
+  const dismiss = () => {
+    setDismissed(true);
+    try { localStorage.setItem("pwaInstallDismissed", "1"); } catch {}
+  };
+  if (pwa.installed || dismissed) return null;
+  if (!pwa.canPromptNative && !pwa.showIOSHint) return null;
+
+  return (
+    <div className="border-b" style={{ background: "var(--bg-elev)", borderColor: "var(--border)" }}>
+      <div className="max-w-6xl mx-auto px-4 py-2 flex items-center justify-between gap-3 text-sm">
+        <span>
+          📲{" "}
+          {pwa.canPromptNative
+            ? "Instala la app para acceso rápido."
+            : "Agrégala a tu pantalla de inicio: Compartir → \"Agregar a pantalla de inicio\"."}
+        </span>
+        <div className="flex items-center gap-2 shrink-0">
+          {pwa.canPromptNative && (
+            <button className="btn btn-primary !py-1 !px-2 text-xs" onClick={pwa.promptInstall}>Instalar</button>
+          )}
+          <button className="text-xs underline" onClick={dismiss}>Ahora no</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ========================= Notificaciones push ========================= */
+function urlBase64ToUint8Array(base64String) {
+  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const raw = atob(base64);
+  return Uint8Array.from([...raw].map((c) => c.charCodeAt(0)));
+}
+
+function usePushNotifications(session) {
+  const uid = session?.user?.id || null;
+  const supported = typeof window !== "undefined" && "serviceWorker" in navigator && "PushManager" in window && !!VAPID_PUBLIC_KEY;
+  const [subscribed, setSubscribed] = useState(false);
+  const [checking, setChecking] = useState(true);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (!supported) { setChecking(false); return; }
+    navigator.serviceWorker.ready
+      .then((reg) => reg.pushManager.getSubscription())
+      .then((sub) => setSubscribed(!!sub))
+      .catch(() => {})
+      .finally(() => setChecking(false));
+  }, [supported]);
+
+  const subscribe = async () => {
+    if (!supported || !uid) return;
+    setBusy(true);
+    try {
+      if (Notification.permission === "denied") {
+        alert(
+          "Los avisos están bloqueados para este sitio en tu navegador (por eso no aparece ningún permiso al hacer clic).\n\n" +
+          "Haz clic en el ícono junto a la URL (candado o el ícono de ajustes ⓘ) → \"Configuración del sitio\"/\"Permisos\" → busca \"Notificaciones\" → cámbialo a \"Permitir\". Luego recarga la página e inténtalo de nuevo."
+        );
+        return;
+      }
+      const perm = await Notification.requestPermission();
+      if (perm !== "granted") { alert("Permiso de notificaciones no concedido."); return; }
+      const reg = await navigator.serviceWorker.ready;
+      const sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
+      });
+      const json = sub.toJSON();
+      const { error } = await supabase.from("push_subscriptions").insert({
+        user_id: uid,
+        endpoint: json.endpoint,
+        p256dh: json.keys.p256dh,
+        auth: json.keys.auth,
+      });
+      if (error && error.code !== "23505") throw error; // 23505 = ya existía (endpoint unique)
+      setSubscribed(true);
+    } catch (e) {
+      alert(e.message || "No se pudo activar notificaciones.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const unsubscribe = async () => {
+    setBusy(true);
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      const sub = await reg.pushManager.getSubscription();
+      if (sub) {
+        await supabase.from("push_subscriptions").delete().eq("endpoint", sub.endpoint);
+        await sub.unsubscribe();
+      }
+      setSubscribed(false);
+    } catch (e) {
+      alert(e.message || "No se pudo desactivar.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return { supported, subscribed, checking, busy, subscribe, unsubscribe };
+}
+
+function PushNotificationsCard({ session }) {
+  const push = usePushNotifications(session);
+  if (!push.supported) {
+    return (
+      <div className="p-4 border rounded-2xl bg-white card text-sm text-gray-500">
+        Tu navegador no soporta notificaciones push (en iPhone/iPad: agrega primero la app a pantalla de inicio, ábrela desde ahí e intenta de nuevo).
+      </div>
+    );
+  }
+  return (
+    <div className="p-4 border rounded-2xl bg-white card text-sm space-y-2">
+      <h3 className="font-semibold">🔔 Notificaciones push</h3>
+      {push.checking ? (
+        <Skel className="h-8 w-40" />
+      ) : push.subscribed ? (
+        <>
+          <p className="text-gray-600">Activadas en este dispositivo.</p>
+          <button className="btn" onClick={push.unsubscribe} disabled={push.busy}>
+            {push.busy ? "…" : "Desactivar"}
+          </button>
+        </>
+      ) : (
+        <>
+          <p className="text-gray-600">Recibe un aviso directo en tu celular/compu cuando falte poco para que cierre tu pick, y en cuanto se sepa si ganaste, perdiste o quedaste eliminado.</p>
+          <button className="btn btn-primary" onClick={push.subscribe} disabled={push.busy}>
+            {push.busy ? "Activando…" : "Activar notificaciones"}
+          </button>
+        </>
+      )}
+    </div>
+  );
 }
 
 function downloadCSV(filename, rows) {
@@ -339,24 +655,24 @@ function Login() {
 export default function AppRoot() {
   const session = useSession();
 
-  // Kill-switch de Service Worker para evitar pantalla blanca por caché vieja
+  // Service worker real (cache-first para assets, network-first para
+  // navegación) en vez del kill-switch anterior. sw.js sube su propia
+  // versión de caché en cada release para no repetir el bug de pantalla
+  // blanca por caché vieja.
   useEffect(() => {
     if ("serviceWorker" in navigator) {
-      navigator.serviceWorker
-        .getRegistrations?.()
-        .then((regs) => regs.forEach((r) => r.unregister()))
-        .catch(() => {});
+      navigator.serviceWorker.register("/sw.js").catch(() => {});
     }
   }, []);
 
-  const [view, setView] = useState("game"); // game | standings | assistant | news | rules
+  const [view, setView] = useState("game"); // game | league | standings | settings | rules
   if (!session) return <Login />;
 
   const NAV_ITEMS = [
     ["game", "Partidos", "🏈"],
+    ["league", "Liga", "🏅"],
     ["standings", "Standings", "🏆"],
-    ["assistant", "Asistente", "🤖"],
-    ["news", "Noticias", "📰"],
+    ["settings", "Ajustes", "⚙️"],
     ["rules", "Reglas", "📋"],
   ];
 
@@ -380,6 +696,8 @@ export default function AppRoot() {
         </div>
       </div>
 
+      <InstallBanner />
+
       {/* Bottom nav: solo mobile */}
       <nav className="bottom-nav md:hidden">
         {NAV_ITEMS.map(([key, label, icon]) => (
@@ -395,13 +713,13 @@ export default function AppRoot() {
       </nav>
 
       {view === "game" ? (
-        <GamesTab session={session} />
+        <GamesTab session={session} onNavigate={setView} />
+      ) : view === "league" ? (
+        <LeagueTab session={session} />
       ) : view === "standings" ? (
         <StandingsTab />
-      ) : view === "assistant" ? (
-        <AssistantTab session={session} />
-      ) : view === "news" ? (
-        <NewsTab />
+      ) : view === "settings" ? (
+        <SettingsTab session={session} />
       ) : (
         <Rules />
       )}
@@ -461,7 +779,7 @@ function AutoPickButtons({ week, session, isAdmin }) {
 /* ========================= PARTIDOS ========================= */
 /* ========================= PARTIDOS ========================= */
 /* ========================= PARTIDOS (GamesTab) ========================= */
-function GamesTab({ session }) {
+function GamesTab({ session, onNavigate }) {
   const uid = session?.user?.id || null;
 
   // ---- Estado base ----
@@ -477,6 +795,9 @@ function GamesTab({ session }) {
   const [userNames, setUserNames] = useState({});
   const [popularity, setPopularity] = useState([]);
   const [pendingPick, setPendingPick] = useState(null);
+  const [pickSavedToast, setPickSavedToast] = useState(null);
+  const [playerModalId, setPlayerModalId] = useState(null);
+  const [avatarMap, setAvatarMap] = useState({});
   const [lastUpdated, setLastUpdated] = useState(null);
 
   const [allGamesSeason, setAllGamesSeason] = useState([]);
@@ -675,8 +996,7 @@ function GamesTab({ session }) {
 
   const initAll = async () => {
     if (!uid) return;
-    const email = session.user.email;
-    const prof = await ensureProfile(uid, email);
+    const prof = await ensureProfile();
     setMe(prof);
 
     await loadTeams();
@@ -686,6 +1006,8 @@ function GamesTab({ session }) {
     setStandings(st || []);
     await loadLeaguePicks(week);
     await loadSeasonData();
+    const { data: profs } = await supabase.from("profiles").select("id, avatar_emoji");
+    setAvatarMap(Object.fromEntries((profs || []).map((p) => [p.id, p.avatar_emoji || "🏈"])));
     setLastUpdated(new Date().toISOString());
   };
 
@@ -784,7 +1106,14 @@ function GamesTab({ session }) {
     await loadMyPicks(); await loadLeaguePicks(week); await loadSeasonData();
     const { data: st } = await supabase.from("standings").select("*"); setStandings(st || []);
     setPendingPick(null); setLastUpdated(new Date().toISOString());
+    setPickSavedToast(`Pick guardado: ${teamId} en W${week}`);
   };
+
+  useEffect(() => {
+    if (!pickSavedToast) return;
+    const id = setTimeout(() => setPickSavedToast(null), 3500);
+    return () => clearTimeout(id);
+  }, [pickSavedToast]);
 
   function derivedResultForPick(pick) {
     if (!pick) return "pending";
@@ -972,6 +1301,17 @@ function GamesTab({ session }) {
     return streak ? `${type}${streak}` : "—";
   }
 
+  function teamRecord(teamId) {
+    let w = 0, l = 0, t = 0;
+    (allGamesSeason || []).forEach((g) => {
+      if (g.home_team !== teamId && g.away_team !== teamId) return;
+      if (!hasGameEnded(g)) return;
+      const res = computePickResultFromGame(g, teamId);
+      if (res === "win") w++; else if (res === "loss") l++; else if (res === "push") t++;
+    });
+    return t ? `${w}-${l}-${t}` : `${w}-${l}`;
+  }
+
   function lastMatchupsSummary(homeId, awayId, maxN = 5) {
     const relevant = (allGamesSeason || [])
       .filter(x =>
@@ -1118,7 +1458,9 @@ function GamesTab({ session }) {
 
   /* ---- Botón de pick por equipo ---- */
   const TeamBox = ({ game, teamId }) => {
-    const disabled = !canPick(game, teamId).ok;
+    const check = canPick(game, teamId);
+    const disabled = !check.ok;
+    const alreadyUsed = check.reason === "USED";
     const selected = myPickThisWeek?.game_id === game.id && myPickThisWeek?.team_id === teamId;
     const { last } = oddsPairs[game.id] || {};
     const fav =
@@ -1130,24 +1472,52 @@ function GamesTab({ session }) {
     const pct = popPct(teamId);
     const wp = winPctForTeam(game, teamId);
     const titleTxt = `${teamId} · Win% ${wp ?? "—"} · Popularidad ${pct}%`;
+    const isHome = teamId === game.home_team;
+
+    const isFinal = hasGameEnded(game);
+    const isWinner =
+      isFinal && game.home_score != null && game.away_score != null && game.home_score !== game.away_score &&
+      teamId === (game.home_score > game.away_score ? game.home_team : game.away_team);
+    const record = teamRecord(teamId);
+    const streak = teamStreak(teamId);
+
+    // .card fija border-color: var(--border) en styles.css *después* de las
+    // utilidades de Tailwind en el bundle final -- misma especificidad, gana
+    // la que carga después, así que un border-emerald-500 de Tailwind nunca
+    // se ve encima de .card (mismo bug que ya pasó una vez con .pick-cell).
+    // Se fuerza con estilo inline, que siempre gana sobre cualquier clase.
+    const highlightColor = isWinner || selected ? "#22c55e" : null;
 
     return (
       <button
-        title={titleTxt}
+        title={alreadyUsed ? `${teamId} · ya lo usaste esta temporada` : titleTxt}
         onClick={() => confirmPick(game, teamId)}
         disabled={disabled}
+        style={highlightColor ? { borderColor: highlightColor } : undefined}
         className={clsx(
-          "w-full text-left rounded-xl border transition px-4 py-3",
-          selected ? "border-emerald-500 bg-emerald-50 card" : "border-gray-200 hover:bg-gray-50 card",
+          "w-full text-left rounded-xl border-2 transition-all px-4 py-3 active:scale-[0.98]",
+          selected ? "bg-emerald-50 card"
+            : alreadyUsed ? "border-gray-200 card"
+            : "border-gray-200 hover:bg-gray-50 card",
           disabled && "opacity-50 cursor-not-allowed"
         )}
       >
         <div className="flex items-center justify-between">
-          <TeamMini id={teamId} />
+          <span className={alreadyUsed ? "line-through decoration-2" : ""}>
+            <TeamMini id={teamId} />
+          </span>
           <div className="flex items-center gap-2">
-            {fav && <span className="badge badge-warn">Fav</span>}
-            {pct < 15 && <span className="badge">DIF</span>}
+            {alreadyUsed && <span className="badge badge-danger">🔒 Ya usado</span>}
+            {!alreadyUsed && fav && <span className="badge badge-warn">Fav</span>}
+            {!alreadyUsed && pct < 15 && <span className="badge">DIF</span>}
           </div>
+        </div>
+        <div className="mt-1.5 flex items-center gap-2 text-xs text-gray-500">
+          {isHome && <span className="badge">LOCAL</span>}
+          <span>{record} · {streak}</span>
+        </div>
+        <div className="progressbar mt-2" title={`${pct}% de la liga pickeó ${teamId}`}>
+          <div style={{ width: `${pct}%` }} />
         </div>
       </button>
     );
@@ -1200,6 +1570,159 @@ function GamesTab({ session }) {
     return lines.join("\n");
   }
 
+  async function canvasToShareOrDownload(canvas, filename, shareTitle, shareText) {
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
+    if (!blob) return alert("No se pudo generar la imagen.");
+    const file = new File([blob], filename, { type: "image/png" });
+
+    if (navigator.canShare?.({ files: [file] })) {
+      try {
+        await navigator.share({ files: [file], title: shareTitle, text: shareText });
+        return;
+      } catch {
+        // usuario canceló el share sheet; caemos a descargar
+      }
+    }
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = filename; a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+  }
+
+  async function shareStandingsStory() {
+    const rows = (standingsSorted || []).slice(0, 12);
+    if (!rows.length) return alert("Todavía no hay standings para exportar.");
+
+    const W = 540, H = 960;
+    const canvas = document.createElement("canvas");
+    canvas.width = W * 2; canvas.height = H * 2;
+    const ctx = canvas.getContext("2d");
+    ctx.scale(2, 2);
+
+    ctx.fillStyle = "#0a0d14";
+    ctx.fillRect(0, 0, W, H);
+
+    // Top: branding (deja espacio arriba tipo "safe zone" de stories)
+    ctx.textAlign = "center";
+    ctx.fillStyle = "#22c55e";
+    ctx.font = "bold 20px -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif";
+    ctx.fillText("🏈 " + LEAGUE.toUpperCase(), W / 2, 130);
+    ctx.fillStyle = "#eef1f6";
+    ctx.font = "bold 40px -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif";
+    ctx.fillText("STANDINGS", W / 2, 178);
+    ctx.fillStyle = "#8b93a7";
+    ctx.font = "16px -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif";
+    ctx.fillText(`Semana ${week}`, W / 2, 206);
+    ctx.textAlign = "left";
+
+    const rowH = 58;
+    const listTop = 250;
+    rows.forEach((s, i) => {
+      const y = listTop + i * rowH;
+      const alive = (s.lives ?? 0) > 0;
+      ctx.fillStyle = i % 2 === 0 ? "#12161f" : "#0f131b";
+      ctx.beginPath();
+      ctx.roundRect ? ctx.roundRect(28, y, W - 56, rowH - 8, 10) : ctx.rect(28, y, W - 56, rowH - 8);
+      ctx.fill();
+
+      ctx.fillStyle = alive ? "#8b93a7" : "#6b7686";
+      ctx.font = "bold 17px -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif";
+      ctx.fillText(`#${i + 1}`, 44, y + 33);
+
+      ctx.fillStyle = alive ? "#eef1f6" : "#6b7686";
+      ctx.font = "600 19px -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif";
+      const name = `${avatarMap[s.user_id] || "🏈"} ${(s.display_name || s.user_id.slice(0, 6)).slice(0, 16)}`;
+      ctx.fillText(name, 90, y + 33);
+
+      ctx.textAlign = "right";
+      ctx.fillStyle = "#a7afc0";
+      ctx.font = "15px -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif";
+      ctx.fillText(`${s.wins ?? 0}-${s.losses ?? 0}${s.pushes ? `-${s.pushes}` : ""}`, W - 110, y + 33);
+
+      ctx.fillStyle = alive ? "#4ade80" : "#fb7185";
+      ctx.font = "bold 17px -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif";
+      ctx.fillText(alive ? `${s.lives ?? 0}❤️` : "☠️", W - 44, y + 33);
+      ctx.textAlign = "left";
+    });
+
+    ctx.textAlign = "center";
+    ctx.fillStyle = "#8b93a7";
+    ctx.font = "14px -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif";
+    ctx.fillText(`${LEAGUE} · survivor`, W / 2, H - 90);
+    ctx.textAlign = "left";
+
+    await canvasToShareOrDownload(canvas, `standings-story-w${week}.png`, `${LEAGUE} — Standings`, `Standings semana ${week}`);
+  }
+
+  async function shareStandingsImage() {
+    const rows = standingsSorted || [];
+    if (!rows.length) return alert("Todavía no hay standings para exportar.");
+
+    const W = 720;
+    const rowH = 56;
+    const headerH = 110;
+    const footerH = 46;
+    const H = headerH + rows.length * rowH + footerH;
+
+    const canvas = document.createElement("canvas");
+    canvas.width = W * 2; canvas.height = H * 2; // @2x para que se vea nítido
+    const ctx = canvas.getContext("2d");
+    ctx.scale(2, 2);
+
+    // Fondo
+    ctx.fillStyle = "#0a0d14";
+    ctx.fillRect(0, 0, W, H);
+
+    // Header
+    ctx.fillStyle = "#22c55e";
+    ctx.fillRect(0, 0, W, 70);
+    ctx.fillStyle = "#04150a";
+    ctx.font = "bold 26px -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif";
+    ctx.fillText(`🏈 ${LEAGUE}`, 24, 44);
+    ctx.fillStyle = "#eef1f6";
+    ctx.font = "14px -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif";
+    ctx.fillText(`Standings · Semana ${week} · ${new Date().toLocaleDateString("es-MX")}`, 24, 94);
+
+    // Filas
+    rows.forEach((s, i) => {
+      const y = headerH + i * rowH;
+      const alive = (s.lives ?? 0) > 0;
+      ctx.fillStyle = i % 2 === 0 ? "#12161f" : "#0f131b";
+      ctx.fillRect(16, y, W - 32, rowH - 8);
+
+      ctx.fillStyle = alive ? "#8b93a7" : "#6b7686";
+      ctx.font = "bold 16px -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif";
+      ctx.fillText(`#${i + 1}`, 32, y + 32);
+
+      ctx.fillStyle = alive ? "#eef1f6" : "#6b7686";
+      ctx.font = "600 18px -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif";
+      const name = `${avatarMap[s.user_id] || "🏈"} ${(s.display_name || s.user_id.slice(0, 6)).slice(0, 22)}`;
+      ctx.fillText(name, 84, y + 32);
+      if (!alive) {
+        const w = ctx.measureText(name).width;
+        ctx.strokeStyle = "#6b7686"; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.moveTo(84, y + 27); ctx.lineTo(84 + w, y + 27); ctx.stroke();
+      }
+
+      ctx.textAlign = "right";
+      ctx.fillStyle = "#a7afc0";
+      ctx.font = "15px -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif";
+      ctx.fillText(`${s.wins ?? 0}-${s.losses ?? 0}${s.pushes ? `-${s.pushes}` : ""}`, W - 130, y + 32);
+
+      ctx.fillStyle = alive ? "#4ade80" : "#fb7185";
+      ctx.font = "bold 16px -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif";
+      ctx.fillText(alive ? `${s.lives ?? 0}❤️` : "☠️", W - 32, y + 32);
+      ctx.textAlign = "left";
+    });
+
+    // Footer
+    ctx.fillStyle = "#8b93a7";
+    ctx.font = "12px -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif";
+    ctx.fillText(`${LEAGUE} · survivor`, 24, H - 18);
+
+    await canvasToShareOrDownload(canvas, `standings-w${week}.png`, `${LEAGUE} — Standings`, `Standings semana ${week}`);
+  }
+
   async function shareWeek() {
     const text = buildWeekShareText();
     if (navigator.share) {
@@ -1218,12 +1741,6 @@ function GamesTab({ session }) {
     }
   }
 
-  const survivorWeeks = useMemo(() => {
-    const maxWithPicks = (allPicksSeason || []).reduce((m, p) => Math.max(m, p.week || 0), 0);
-    const upTo = Math.max(week, maxWithPicks, 1);
-    return Array.from({ length: upTo }, (_, i) => i + 1);
-  }, [allPicksSeason, week]);
-
   /* ========================= Render ========================= */
   const nextKick = nextKickoffISO;
 
@@ -1239,19 +1756,42 @@ function GamesTab({ session }) {
             </p>
           )}
         </div>
-        <div className="flex items-center flex-wrap gap-3">
-          <p className="text-sm text-gray-700">
-            Hola, <b>{me?.display_name}</b> · Vidas:{" "}
+        <div className="flex items-center flex-wrap gap-2">
+          <div
+            className="flex items-center gap-2 pl-1.5 pr-3 py-1.5 rounded-full border text-sm"
+            style={{ borderColor: "var(--border)", background: "var(--bg-elev)" }}
+          >
+            <span
+              className="w-7 h-7 flex items-center justify-center rounded-full text-sm shrink-0"
+              style={{ background: "var(--bg-elev-2)" }}
+              aria-hidden="true"
+            >
+              {me?.avatar_emoji || "🏈"}
+            </span>
+            <span className="font-medium truncate max-w-[9rem]">{me?.display_name}</span>
             <span
               className={clsx(
-                "inline-block px-2 py-0.5 rounded",
+                "inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold shrink-0",
                 (me?.lives ?? 0) > 0 ? "bg-emerald-100 text-emerald-800" : "bg-rose-100 text-rose-800"
               )}
+              title={`${me?.lives ?? 0} vida${(me?.lives ?? 0) === 1 ? "" : "s"}`}
             >
-              {me?.lives ?? 0}
+              {(me?.lives ?? 0) > 0 ? "❤️" : "💀"} {me?.lives ?? 0}
             </span>
-          </p>
-          <button className="text-sm underline" onClick={() => supabase.auth.signOut()}>Salir</button>
+          </div>
+          <button
+            className="w-9 h-9 flex items-center justify-center rounded-full border hover:bg-gray-50 shrink-0"
+            style={{ borderColor: "var(--border)", color: "var(--fg-muted)" }}
+            onClick={() => supabase.auth.signOut()}
+            title="Cerrar sesión"
+            aria-label="Cerrar sesión"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+              <polyline points="16 17 21 12 16 7" />
+              <line x1="21" y1="12" x2="9" y2="12" />
+            </svg>
+          </button>
         </div>
       </header>
 
@@ -1358,6 +1898,12 @@ function GamesTab({ session }) {
             <button className="text-xs px-3 py-1 rounded border col-span-2" onClick={shareWeek}>
               📤 Compartir resumen de la semana
             </button>
+            <button className="text-xs px-3 py-1 rounded border col-span-2" onClick={shareStandingsImage}>
+              🖼️ Exportar standings (imagen)
+            </button>
+            <button className="text-xs px-3 py-1 rounded border col-span-2" onClick={shareStandingsStory}>
+              📱 Exportar historia (9:16)
+            </button>
             <AutoPickButtons week={week} session={session} isAdmin={!!me?.is_admin} />
           </div>
         </div>
@@ -1375,7 +1921,8 @@ function GamesTab({ session }) {
       <section className="mt-4 p-4 border rounded-2xl bg-white card">
         <h2 className="font-semibold mb-3">Partidos W{week}</h2>
         <div className="space-y-3">
-          {gamesFiltered.map((g) => {
+          {!lastUpdated && <GameCardSkeleton count={4} />}
+          {!!lastUpdated && gamesFiltered.map((g) => {
             const locked = DateTime.fromISO(g.start_time) <= DateTime.now();
             const local = DateTime.fromISO(g.start_time).setZone(TZ).toFormat("EEE dd LLL HH:mm");
             const { last } = oddsPairs[g.id] || {};
@@ -1383,17 +1930,10 @@ function GamesTab({ session }) {
             const spreadAway = last?.spread_away ?? null;
             const mlHome = last?.ml_home ?? null;
             const mlAway = last?.ml_away ?? null;
-            const wpHome = winProbFromSpread(spreadHome) ?? null;
-            const wpAway = winProbFromSpread(-spreadHome) ?? (wpHome != null ? 100 - wpHome : null);
 
             const badge = timeBadge(g);
             const w = weatherMap[g.id];
             const m = metaMap[g.id];
-            const tps = tipsMap[g.id] || [];
-
-            const h2h = lastMatchupsSummary(g.home_team, g.away_team, 3);
-            const stHome = teamStreak(g.home_team);
-            const stAway = teamStreak(g.away_team);
 
             const lpForGame = (leaguePicks || []).filter(p => p.game_id === g.id);
             const whoPickedHome = lpForGame.filter(p => p.team_id === g.home_team).map(p => userNames[p.user_id] || p.user_id.slice(0,6));
@@ -1451,9 +1991,6 @@ function GamesTab({ session }) {
                   {mlHome != null && mlAway != null && (
                     <span className="badge">ML: {g.home_team} {mlHome}, {g.away_team} {mlAway}</span>
                   )}
-                  {(wpHome != null || wpAway != null) && (
-                    <span className="badge">Win%: {g.home_team} {wpHome ?? "—"}% · {g.away_team} {wpAway ?? "—"}%</span>
-                  )}
                   {(() => {
                     const dHome = spreadDeltaFor(g.id, "home");
                     const dAway = spreadDeltaFor(g.id, "away");
@@ -1466,28 +2003,6 @@ function GamesTab({ session }) {
                     return (<>{dHome != null && pill(`${g.home_team}`, dHome)}{dAway != null && pill(`${g.away_team}`, dAway)}</>);
                   })()}
                 </div>
-
-                {(tps.length || true) && (
-                  <div className="mt-3 grid sm:grid-cols-2 lg:grid-cols-3 gap-2">
-                    {(tps || []).slice(0,3).map((t,i) => (
-                      <div key={i} className="p-2 border rounded-lg text-xs text-gray-700 bg-white">
-                        <span className="font-semibold">{t.kind ? `${t.kind}: ` : ""}</span>{t.tip}
-                      </div>
-                    ))}
-                    <div className="p-2 border rounded-lg text-xs text-gray-700 bg-white">
-                      <span className="font-semibold">Racha: </span>
-                      {g.home_team} {stHome}, {g.away_team} {stAway}
-                    </div>
-                    {h2h.length > 0 && (
-                      <div className="p-2 border rounded-lg text-xs text-gray-700 bg-white">
-                        <span className="font-semibold">H2H: </span>
-                        {h2h.map((r,ix) => (
-                          <span key={ix} className="mr-2">{r.when}: {r.a} {r.as}–{r.hs} {r.h} ({r.winner})</span>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )}
 
                 {lpForGame.length > 0 && (
                   <div className="mt-3 text-xs text-gray-700 flex gap-3 flex-wrap">
@@ -1509,7 +2024,7 @@ function GamesTab({ session }) {
               </div>
             );
           })}
-          {(!gamesFiltered || gamesFiltered.length === 0) && (
+          {!!lastUpdated && (!gamesFiltered || gamesFiltered.length === 0) && (
             <div className="text-sm text-gray-500">No hay partidos con este filtro/búsqueda.</div>
           )}
         </div>
@@ -1526,8 +2041,8 @@ function GamesTab({ session }) {
                   <th>Jugador</th>
                   <th>Equipo</th>
                   <th>Resultado</th>
-                  <th>Auto</th>
-                  <th>Actualizado</th>
+                  <th className="hidden sm:table-cell">Auto</th>
+                  <th className="hidden sm:table-cell">Actualizado</th>
                 </tr>
               </thead>
               <tbody>
@@ -1539,7 +2054,11 @@ function GamesTab({ session }) {
                       const shownRes = derivedResultForPick(p);
                       return (
                         <tr key={p.id}>
-                          <td>{userNames[p.user_id] || p.user_id.slice(0, 6)}</td>
+                          <td>
+                            <button className="hover:underline text-left" onClick={() => setPlayerModalId(p.user_id)}>
+                              {avatarMap[p.user_id] || "🏈"} {userNames[p.user_id] || p.user_id.slice(0, 6)}
+                            </button>
+                          </td>
                           <td><TeamMini id={p.team_id} /></td>
                           <td>
                             <span className={
@@ -1550,8 +2069,8 @@ function GamesTab({ session }) {
                               {shownRes}
                             </span>
                           </td>
-                          <td>{p.auto_pick ? "Sí" : "No"}</td>
-                          <td className="text-xs text-gray-500">
+                          <td className="hidden sm:table-cell">{p.auto_pick ? "Sí" : "No"}</td>
+                          <td className="hidden sm:table-cell text-xs text-gray-500">
                             {p.updated_at ? DateTime.fromISO(p.updated_at).setZone(TZ).toFormat("dd LLL HH:mm") : "-"}
                           </td>
                         </tr>
@@ -1588,127 +2107,13 @@ function GamesTab({ session }) {
         </div>
       </section>
 
-      {/* ===== Grid de sobrevivencia: quién sigue vivo, semana a semana ===== */}
-      <section className="mt-6 p-4 border rounded-2xl bg-white card">
-        <div className="flex items-center justify-between flex-wrap gap-2">
-          <h2 className="font-semibold">Grid de sobrevivencia</h2>
-          <div className="flex items-center gap-3 text-xs text-gray-500">
-            <span className="inline-flex items-center gap-1"><span className="inline-block w-2.5 h-2.5 rounded-sm" style={{ background: "#4ade80" }} />Ganó</span>
-            <span className="inline-flex items-center gap-1"><span className="inline-block w-2.5 h-2.5 rounded-sm" style={{ background: "#fb7185" }} />Perdió</span>
-            <span className="inline-flex items-center gap-1"><span className="inline-block w-2.5 h-2.5 rounded-sm" style={{ background: "#fbbf24" }} />Push</span>
-          </div>
+      {/* ===== Ver más en Liga ===== */}
+      <section className="mt-6 p-4 border rounded-2xl bg-white card flex items-center justify-between flex-wrap gap-3">
+        <div>
+          <h2 className="font-semibold">📊 Estadísticas de la temporada</h2>
+          <p className="text-xs text-gray-600">Grid de sobrevivencia, favoritos de cada semana, vidas de la liga y tu historial completo.</p>
         </div>
-
-        <div className="overflow-x-auto mt-3">
-          <table className="text-sm table-minimal border-separate border-spacing-y-1">
-            <thead>
-              <tr>
-                <th className="sticky left-0 bg-white z-10 pr-3">Jugador</th>
-                <th className="text-center">Vidas</th>
-                {survivorWeeks.map((w) => (
-                  <th key={w} className="text-center px-1">W{w}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {(standingsSorted || []).map((s) => {
-                const isMe = s.user_id === uid;
-                const alive = (s.lives ?? 0) > 0;
-                const picksList = picksByUser.get(s.user_id) || [];
-                const byWeek = {};
-                picksList.forEach((p) => { byWeek[p.week] = p; });
-                return (
-                  <tr key={s.user_id}>
-                    <td className="sticky left-0 bg-white whitespace-nowrap pr-3">
-                      <div className="flex items-center gap-2">
-                        <span className={!alive ? "line-through text-gray-500" : ""}>
-                          {s.display_name || s.user_id.slice(0, 6)}
-                        </span>
-                        {isMe && <span className="badge">Tú</span>}
-                        {!alive && <span className="badge badge-danger">Eliminado</span>}
-                      </div>
-                    </td>
-                    <td className="text-center">
-                      <span className={clsx("badge", !alive && "badge-danger")}>{s.lives ?? 0}</span>
-                    </td>
-                    {survivorWeeks.map((w) => {
-                      const p = byWeek[w];
-                      if (!p) {
-                        return (
-                          <td key={w} className="text-center">
-                            <span className="pick-cell pick-cell-empty">—</span>
-                          </td>
-                        );
-                      }
-                      const g = allGamesMap[p.game_id];
-                      const res = p.result && p.result !== "pending"
-                        ? p.result
-                        : (g ? computePickResultFromGame(g, p.team_id) : "pending");
-                      const cellCls =
-                        res === "win" ? "pick-cell-win" :
-                        res === "loss" ? "pick-cell-loss" :
-                        res === "push" ? "pick-cell-push" : "pick-cell-pending";
-                      return (
-                        <td key={w} className="text-center">
-                          <span className={clsx("pick-cell", cellCls)} title={`${p.team_id} · ${res}`}>
-                            {p.team_id}
-                          </span>
-                        </td>
-                      );
-                    })}
-                  </tr>
-                );
-              })}
-              {(!standingsSorted || standingsSorted.length === 0) && (
-                <tr><td className="py-2 text-gray-500" colSpan={2 + survivorWeeks.length}>Sin datos aún.</td></tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      {/* ===== Historial de usuario ===== */}
-      <section className="mt-6">
-        <div className="p-4 border rounded-2xl bg-white card">
-          <h2 className="font-semibold">Historial de tus picks</h2>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm mt-3 table-minimal">
-              <thead>
-                <tr>
-                  <th>W</th>
-                  <th>Equipo</th>
-                  <th>Resultado</th>
-                </tr>
-              </thead>
-              <tbody>
-                {(picks || [])
-                  .filter((p) => p.season === SEASON)
-                  .sort((a, b) => a.week - b.week)
-                  .map((p) => {
-                    const shownRes = derivedResultForPick(p);
-                    return (
-                      <tr key={p.id}>
-                        <td>{p.week}</td>
-                        <td><TeamMini id={p.team_id} /></td>
-                        <td>
-                          <span className={
-                            shownRes === "win" ? "text-emerald-700 font-semibold"
-                            : shownRes === "loss" ? "text-red-600 font-semibold"
-                            : shownRes === "push" ? "text-gray-600" : "text-gray-500"
-                          }>
-                            {shownRes}
-                          </span>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                {(!picks || picks.length === 0) && (
-                  <tr><td className="py-2 text-gray-500" colSpan={3}>Sin picks aún.</td></tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
+        <button className="btn btn-primary" onClick={() => onNavigate?.("league")}>Ver Liga →</button>
       </section>
 
       {/* ===== Modal pick ===== */}
@@ -1725,6 +2130,57 @@ function GamesTab({ session }) {
         </div>
       )}
 
+      {/* ===== Ficha de jugador ===== */}
+      {playerModalId && (() => {
+        const s = (standingsSorted || []).find((x) => x.user_id === playerModalId);
+        const picksList = picksByUser.get(playerModalId) || [];
+        const alive = (s?.lives ?? 0) > 0;
+        return (
+          <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50" onClick={() => setPlayerModalId(null)}>
+            <div className="w-full max-w-sm bg-white rounded-2xl p-5 border card max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <h3 className="font-semibold text-lg">{avatarMap[playerModalId] || "🏈"} {s?.display_name || playerModalId.slice(0, 6)}</h3>
+                  <div className="mt-1 flex items-center gap-2 text-xs">
+                    <span className={clsx("badge", !alive && "badge-danger")}>
+                      {alive ? `${s?.lives ?? 0} vida${(s?.lives ?? 0) === 1 ? "" : "s"}` : "Eliminado"}
+                    </span>
+                    <span className="badge">{s?.wins ?? 0}-{s?.losses ?? 0}{s?.pushes ? `-${s.pushes}` : ""}</span>
+                  </div>
+                </div>
+                <button className="text-sm underline" onClick={() => setPlayerModalId(null)}>Cerrar</button>
+              </div>
+
+              <h4 className="mt-4 text-xs font-semibold text-gray-500 uppercase">Historial de picks</h4>
+              {picksList.length ? (
+                <table className="w-full text-sm mt-2 table-minimal">
+                  <thead><tr><th>Semana</th><th>Equipo</th><th>Resultado</th></tr></thead>
+                  <tbody>
+                    {picksList.map((p) => {
+                      const g = allGamesMap[p.game_id];
+                      const res = p.result && p.result !== "pending" ? p.result : (g ? computePickResultFromGame(g, p.team_id) : "pending");
+                      return (
+                        <tr key={p.week}>
+                          <td>W{p.week}</td>
+                          <td><TeamMini id={p.team_id} /></td>
+                          <td className={
+                            res === "win" ? "text-emerald-700 font-semibold"
+                            : res === "loss" ? "text-red-600 font-semibold"
+                            : res === "push" ? "text-gray-600" : "text-gray-500"
+                          }>{res}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              ) : (
+                <p className="text-sm text-gray-500 mt-2">Sin picks todavía.</p>
+              )}
+            </div>
+          </div>
+        );
+      })()}
+
       {/* ===== Banner resultado ===== */}
       {resultBanner && (
         <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-[60]">
@@ -1738,9 +2194,18 @@ function GamesTab({ session }) {
         </div>
       )}
 
+      {/* ===== Toast confirmación de pick ===== */}
+      {pickSavedToast && (
+        <div className="fixed bottom-20 md:bottom-4 right-4 left-4 md:left-auto px-4 py-2.5 rounded-xl text-sm shadow-lg z-[80] flex items-center gap-2"
+          style={{ background: "var(--accent)", color: "var(--accent-fg)" }}>
+          <span>✅</span>
+          <span className="font-medium">{pickSavedToast}</span>
+        </div>
+      )}
+
       {/* ===== Toast recordatorio ===== */}
-      {!myPickThisWeek && nextKick && (me?.lives ?? 0) > 0 && (
-        <div className="fixed bottom-4 right-4 px-4 py-2 rounded-xl bg-black text-white text-sm shadow-lg">
+      {!pickSavedToast && !myPickThisWeek && nextKick && (me?.lives ?? 0) > 0 && (
+        <div className="fixed bottom-20 md:bottom-4 right-4 px-4 py-2 rounded-xl bg-black text-white text-sm shadow-lg">
           Recuerda elegir: kickoff en <Countdown iso={nextKick} />
         </div>
       )}
@@ -1943,6 +2408,449 @@ function GamesTab({ session }) {
 } // end GamesTab
 
 
+/* ========================= Liga: estadísticas de temporada ========================= */
+function LeagueTab({ session }) {
+  const uid = session?.user?.id || null;
+  const [loaded, setLoaded] = useState(false);
+  const [teamsMap, setTeamsMap] = useState({});
+  const [allGamesSeason, setAllGamesSeason] = useState([]);
+  const [allPicksSeason, setAllPicksSeason] = useState([]);
+  const [standings, setStandings] = useState([]);
+  const [avatarMap, setAvatarMap] = useState({});
+  const [startingLivesCfg, setStartingLivesCfg] = useState(2);
+  const [playerModalId, setPlayerModalId] = useState(null);
+
+  useEffect(() => {
+    (async () => {
+      const [{ data: ts }, { data: gs }, { data: pk }, { data: st }, { data: profs }, { data: cfg }] = await Promise.all([
+        supabase.from("teams").select("id,logo_url,name"),
+        supabase.from("games").select("*").eq("season", SEASON),
+        supabase.from("picks").select("id,user_id,team_id,game_id,week,season,result").eq("season", SEASON),
+        supabase.from("standings").select("*"),
+        supabase.from("profiles").select("id, avatar_emoji"),
+        supabase.from("app_config").select("value").eq("key", "starting_lives").maybeSingle(),
+      ]);
+      const tm = {}; (ts || []).forEach((t) => (tm[t.id] = t));
+      setTeamsMap(tm);
+      setAllGamesSeason(gs || []);
+      setAllPicksSeason(pk || []);
+      setStandings(st || []);
+      setAvatarMap(Object.fromEntries((profs || []).map((p) => [p.id, p.avatar_emoji || "🏈"])));
+      setStartingLivesCfg(Number(cfg?.value ?? 2) || 2);
+      setLoaded(true);
+    })();
+  }, []);
+
+  const TeamMini = ({ id }) => {
+    const logo = teamsMap[id]?.logo_url || `/teams/${id}.png`;
+    return (
+      <span className="inline-flex items-center gap-1">
+        <img src={logo} alt={id} className="h-5 w-5 object-contain" onError={(e) => (e.currentTarget.style.visibility = "hidden")} />
+        <span className="font-mono font-semibold">{id}</span>
+      </span>
+    );
+  };
+
+  const allGamesMap = useMemo(() => {
+    const m = {}; (allGamesSeason || []).forEach((g) => (m[g.id] = g)); return m;
+  }, [allGamesSeason]);
+
+  const standingsSorted = useMemo(() => {
+    return (standings || []).slice().sort((a, b) =>
+      (b.wins || 0) - (a.wins || 0) ||
+      (a.losses || 0) - (b.losses || 0) ||
+      (b.pushes || 0) - (a.pushes || 0) ||
+      (b.margin_sum || 0) - (a.margin_sum || 0)
+    );
+  }, [standings]);
+
+  const picksByUser = useMemo(() => {
+    const map = new Map();
+    (allPicksSeason || []).forEach((p) => {
+      if (!map.has(p.user_id)) map.set(p.user_id, []);
+      map.get(p.user_id).push({ week: p.week, team_id: p.team_id, result: p.result, game_id: p.game_id });
+    });
+    for (const [, arr] of map) arr.sort((a, b) => a.week - b.week);
+    return map;
+  }, [allPicksSeason]);
+
+  const survivorWeeks = useMemo(() => {
+    const maxWithPicks = (allPicksSeason || []).reduce((m, p) => Math.max(m, p.week || 0), 0);
+    return Array.from({ length: Math.max(maxWithPicks, 1) }, (_, i) => i + 1);
+  }, [allPicksSeason]);
+
+  const weeklyFavorites = useMemo(() => {
+    const byWeek = new Map();
+    (allPicksSeason || []).forEach((p) => {
+      if (!byWeek.has(p.week)) byWeek.set(p.week, new Map());
+      const m = byWeek.get(p.week);
+      m.set(p.team_id, (m.get(p.team_id) || 0) + 1);
+    });
+    const totalPlayers = (standingsSorted || []).length || 1;
+    const rows = [];
+    for (const [wk, counts] of byWeek.entries()) {
+      let top = null;
+      for (const [team_id, count] of counts.entries()) {
+        if (!top || count > top.count) top = { team_id, count };
+      }
+      if (!top || top.count < 2) continue;
+      const pct = Math.round((top.count * 100) / totalPlayers);
+      const samplePick = (allPicksSeason || []).find((p) => p.week === wk && p.team_id === top.team_id);
+      const g = samplePick ? allGamesMap[samplePick.game_id] : null;
+      const res = samplePick?.result && samplePick.result !== "pending"
+        ? samplePick.result
+        : (g ? computePickResultFromGame(g, top.team_id) : "pending");
+      rows.push({ week: wk, team_id: top.team_id, count: top.count, pct, res });
+    }
+    return rows.sort((a, b) => b.week - a.week);
+  }, [allPicksSeason, standingsSorted, allGamesMap]);
+
+  const livesByWeek = useMemo(() => {
+    const allUserIds = new Set([
+      ...(standingsSorted || []).map((s) => s.user_id),
+      ...picksByUser.keys(),
+    ]);
+    return survivorWeeks.map((w) => {
+      let alive = 0;
+      allUserIds.forEach((uid2) => {
+        let lives = startingLivesCfg;
+        (picksByUser.get(uid2) || []).forEach((p) => {
+          if (p.week > w) return;
+          const g = allGamesMap[p.game_id];
+          const res = p.result && p.result !== "pending" ? p.result : (g ? computePickResultFromGame(g, p.team_id) : "pending");
+          if (res === "loss") lives -= 1;
+        });
+        if (lives > 0) alive++;
+      });
+      return { week: w, alive };
+    });
+  }, [survivorWeeks, standingsSorted, picksByUser, allGamesMap, startingLivesCfg]);
+
+  const myPicks = picksByUser.get(uid) || [];
+
+  async function canvasToShareOrDownload(canvas, filename, shareTitle, shareText) {
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
+    if (!blob) return alert("No se pudo generar la imagen.");
+    const file = new File([blob], filename, { type: "image/png" });
+    if (navigator.canShare?.({ files: [file] })) {
+      try {
+        await navigator.share({ files: [file], title: shareTitle, text: shareText });
+        return;
+      } catch {
+        // usuario canceló el share sheet; caemos a descargar
+      }
+    }
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = filename; a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+  }
+
+  async function shareStandingsImage() {
+    const rows = standingsSorted || [];
+    if (!rows.length) return alert("Todavía no hay standings para exportar.");
+    const W = 720, rowH = 56, headerH = 110, footerH = 46;
+    const H = headerH + rows.length * rowH + footerH;
+    const canvas = document.createElement("canvas");
+    canvas.width = W * 2; canvas.height = H * 2;
+    const ctx = canvas.getContext("2d");
+    ctx.scale(2, 2);
+    ctx.fillStyle = "#0a0d14"; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = "#22c55e"; ctx.fillRect(0, 0, W, 70);
+    ctx.fillStyle = "#04150a";
+    ctx.font = "bold 26px -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif";
+    ctx.fillText(`🏈 ${LEAGUE}`, 24, 44);
+    ctx.fillStyle = "#eef1f6";
+    ctx.font = "14px -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif";
+    ctx.fillText(`Standings · ${new Date().toLocaleDateString("es-MX")}`, 24, 94);
+    rows.forEach((s, i) => {
+      const y = headerH + i * rowH;
+      const alive = (s.lives ?? 0) > 0;
+      ctx.fillStyle = i % 2 === 0 ? "#12161f" : "#0f131b";
+      ctx.fillRect(16, y, W - 32, rowH - 8);
+      ctx.fillStyle = alive ? "#8b93a7" : "#6b7686";
+      ctx.font = "bold 16px -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif";
+      ctx.fillText(`#${i + 1}`, 32, y + 32);
+      ctx.fillStyle = alive ? "#eef1f6" : "#6b7686";
+      ctx.font = "600 18px -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif";
+      const name = `${avatarMap[s.user_id] || "🏈"} ${(s.display_name || s.user_id.slice(0, 6)).slice(0, 22)}`;
+      ctx.fillText(name, 84, y + 32);
+      if (!alive) {
+        const w = ctx.measureText(name).width;
+        ctx.strokeStyle = "#6b7686"; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.moveTo(84, y + 27); ctx.lineTo(84 + w, y + 27); ctx.stroke();
+      }
+      ctx.textAlign = "right";
+      ctx.fillStyle = "#a7afc0";
+      ctx.font = "15px -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif";
+      ctx.fillText(`${s.wins ?? 0}-${s.losses ?? 0}${s.pushes ? `-${s.pushes}` : ""}`, W - 130, y + 32);
+      ctx.fillStyle = alive ? "#4ade80" : "#fb7185";
+      ctx.font = "bold 16px -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif";
+      ctx.fillText(alive ? `${s.lives ?? 0}❤️` : "☠️", W - 32, y + 32);
+      ctx.textAlign = "left";
+    });
+    ctx.fillStyle = "#8b93a7";
+    ctx.font = "12px -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif";
+    ctx.fillText(`${LEAGUE} · survivor`, 24, H - 18);
+    await canvasToShareOrDownload(canvas, "standings.png", `${LEAGUE} — Standings`, "Standings de la liga");
+  }
+
+  async function shareStandingsStory() {
+    const rows = (standingsSorted || []).slice(0, 12);
+    if (!rows.length) return alert("Todavía no hay standings para exportar.");
+    const W = 540, H = 960;
+    const canvas = document.createElement("canvas");
+    canvas.width = W * 2; canvas.height = H * 2;
+    const ctx = canvas.getContext("2d");
+    ctx.scale(2, 2);
+    ctx.fillStyle = "#0a0d14"; ctx.fillRect(0, 0, W, H);
+    ctx.textAlign = "center";
+    ctx.fillStyle = "#22c55e";
+    ctx.font = "bold 20px -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif";
+    ctx.fillText("🏈 " + LEAGUE.toUpperCase(), W / 2, 130);
+    ctx.fillStyle = "#eef1f6";
+    ctx.font = "bold 40px -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif";
+    ctx.fillText("STANDINGS", W / 2, 178);
+    ctx.textAlign = "left";
+    const rowH = 58, listTop = 220;
+    rows.forEach((s, i) => {
+      const y = listTop + i * rowH;
+      const alive = (s.lives ?? 0) > 0;
+      ctx.fillStyle = i % 2 === 0 ? "#12161f" : "#0f131b";
+      ctx.beginPath();
+      ctx.roundRect ? ctx.roundRect(28, y, W - 56, rowH - 8, 10) : ctx.rect(28, y, W - 56, rowH - 8);
+      ctx.fill();
+      ctx.fillStyle = alive ? "#8b93a7" : "#6b7686";
+      ctx.font = "bold 17px -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif";
+      ctx.fillText(`#${i + 1}`, 44, y + 33);
+      ctx.fillStyle = alive ? "#eef1f6" : "#6b7686";
+      ctx.font = "600 19px -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif";
+      const name = `${avatarMap[s.user_id] || "🏈"} ${(s.display_name || s.user_id.slice(0, 6)).slice(0, 16)}`;
+      ctx.fillText(name, 90, y + 33);
+      ctx.textAlign = "right";
+      ctx.fillStyle = "#a7afc0";
+      ctx.font = "15px -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif";
+      ctx.fillText(`${s.wins ?? 0}-${s.losses ?? 0}${s.pushes ? `-${s.pushes}` : ""}`, W - 110, y + 33);
+      ctx.fillStyle = alive ? "#4ade80" : "#fb7185";
+      ctx.font = "bold 17px -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif";
+      ctx.fillText(alive ? `${s.lives ?? 0}❤️` : "☠️", W - 44, y + 33);
+      ctx.textAlign = "left";
+    });
+    ctx.textAlign = "center";
+    ctx.fillStyle = "#8b93a7";
+    ctx.font = "14px -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif";
+    ctx.fillText(`${LEAGUE} · survivor`, W / 2, H - 90);
+    ctx.textAlign = "left";
+    await canvasToShareOrDownload(canvas, "standings-story.png", `${LEAGUE} — Standings`, "Standings de la liga");
+  }
+
+  if (!loaded) {
+    return (
+      <div className="max-w-6xl mx-auto p-4 md:p-6 space-y-4">
+        <h1 className="text-2xl font-extrabold">Liga</h1>
+        <TableSkeleton rows={6} cols={6} />
+      </div>
+    );
+  }
+
+  return (
+    <div className="max-w-6xl mx-auto p-4 md:p-6">
+      <header className="flex items-center justify-between flex-wrap gap-3">
+        <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">Liga</h1>
+        <div className="flex items-center gap-2">
+          <button className="text-xs px-3 py-1 rounded border" onClick={shareStandingsImage}>🖼️ Imagen</button>
+          <button className="text-xs px-3 py-1 rounded border" onClick={shareStandingsStory}>📱 Historia (9:16)</button>
+        </div>
+      </header>
+      <p className="text-sm text-gray-500 mt-1">Cómo va la temporada completa: quién sigue vivo, favoritos de cada semana y tu historial.</p>
+
+      {/* ===== Grid de sobrevivencia ===== */}
+      <section className="mt-4 p-4 border rounded-2xl bg-white card">
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <h2 className="font-semibold">Grid de sobrevivencia</h2>
+          <div className="flex items-center gap-3 text-xs text-gray-500">
+            <span className="inline-flex items-center gap-1"><span className="inline-block w-2.5 h-2.5 rounded-sm" style={{ background: "#4ade80" }} />Ganó</span>
+            <span className="inline-flex items-center gap-1"><span className="inline-block w-2.5 h-2.5 rounded-sm" style={{ background: "#fb7185" }} />Perdió</span>
+            <span className="inline-flex items-center gap-1"><span className="inline-block w-2.5 h-2.5 rounded-sm" style={{ background: "#fbbf24" }} />Push</span>
+          </div>
+        </div>
+        <div className="overflow-x-auto mt-3">
+          <table className="text-sm table-minimal border-separate border-spacing-y-1">
+            <thead>
+              <tr>
+                <th className="sticky left-0 bg-white z-10 pr-3">Jugador</th>
+                <th className="text-center">Vidas</th>
+                {survivorWeeks.map((w) => (<th key={w} className="text-center px-1">W{w}</th>))}
+              </tr>
+            </thead>
+            <tbody>
+              {(standingsSorted || []).map((s) => {
+                const isMe = s.user_id === uid;
+                const alive = (s.lives ?? 0) > 0;
+                const picksList = picksByUser.get(s.user_id) || [];
+                const byWeek = {};
+                picksList.forEach((p) => { byWeek[p.week] = p; });
+                return (
+                  <tr key={s.user_id}>
+                    <td className="sticky left-0 bg-white whitespace-nowrap pr-3">
+                      <div className="flex items-center gap-2">
+                        <button
+                          className={clsx("hover:underline", !alive && "line-through text-gray-500")}
+                          onClick={() => setPlayerModalId(s.user_id)}
+                        >
+                          {avatarMap[s.user_id] || "🏈"} {s.display_name || s.user_id.slice(0, 6)}
+                        </button>
+                        {isMe && <span className="badge">Tú</span>}
+                        {!alive && <span className="badge badge-danger">Eliminado</span>}
+                      </div>
+                    </td>
+                    <td className="text-center">
+                      <span className={clsx("badge", !alive && "badge-danger")}>{s.lives ?? 0}</span>
+                    </td>
+                    {survivorWeeks.map((w) => {
+                      const p = byWeek[w];
+                      if (!p) {
+                        return <td key={w} className="text-center"><span className="pick-cell pick-cell-empty">—</span></td>;
+                      }
+                      const g = allGamesMap[p.game_id];
+                      const res = p.result && p.result !== "pending" ? p.result : (g ? computePickResultFromGame(g, p.team_id) : "pending");
+                      const cellCls = res === "win" ? "pick-cell-win" : res === "loss" ? "pick-cell-loss" : res === "push" ? "pick-cell-push" : "pick-cell-pending";
+                      return (
+                        <td key={w} className="text-center">
+                          <span className={clsx("pick-cell", cellCls)} title={`${p.team_id} · ${res}`}>{p.team_id}</span>
+                        </td>
+                      );
+                    })}
+                  </tr>
+                );
+              })}
+              {(!standingsSorted || standingsSorted.length === 0) && (
+                <tr><td className="py-2 text-gray-500" colSpan={2 + survivorWeeks.length}>Sin datos aún.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      {/* ===== Vidas de la liga por semana ===== */}
+      {livesByWeek.some((d) => d.alive > 0) && (
+        <section className="mt-6 p-4 border rounded-2xl bg-white card">
+          <h2 className="font-semibold">❤️ Vidas de la liga por semana</h2>
+          <p className="text-xs text-gray-600">Cuántos jugadores seguían vivos al final de cada semana.</p>
+          <div className="mt-3"><LivesChart data={livesByWeek} /></div>
+        </section>
+      )}
+
+      {/* ===== Favorito de la semana ===== */}
+      {weeklyFavorites.length > 0 && (
+        <section className="mt-6 p-4 border rounded-2xl bg-white card">
+          <h2 className="font-semibold">🔥 Favorito de la semana</h2>
+          <p className="text-xs text-gray-600">El equipo más pickeado por la liga cada semana, y si les salió bien.</p>
+          <div className="mt-3 overflow-x-auto">
+            <table className="w-full text-sm table-minimal">
+              <thead><tr><th>Semana</th><th>Equipo</th><th>% de la liga</th><th>Resultado</th></tr></thead>
+              <tbody>
+                {weeklyFavorites.map((r) => (
+                  <tr key={r.week}>
+                    <td>W{r.week}</td>
+                    <td><TeamMini id={r.team_id} /> <span className="text-gray-500">({r.count})</span></td>
+                    <td>{r.pct}%</td>
+                    <td>
+                      {r.res === "win" ? <span className="text-emerald-700 font-semibold">✅ Ganó</span>
+                        : r.res === "loss" ? <span className="text-red-600 font-semibold">❌ Perdió</span>
+                        : r.res === "push" ? <span className="text-gray-600">➖ Push</span>
+                        : <span className="text-gray-500">⏳ Pendiente</span>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
+
+      {/* ===== Historial de tus picks ===== */}
+      <section className="mt-6 p-4 border rounded-2xl bg-white card">
+        <h2 className="font-semibold">Historial de tus picks</h2>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm mt-3 table-minimal">
+            <thead><tr><th>W</th><th>Equipo</th><th>Resultado</th></tr></thead>
+            <tbody>
+              {myPicks.map((p) => {
+                const g = allGamesMap[p.game_id];
+                const res = p.result && p.result !== "pending" ? p.result : (g ? computePickResultFromGame(g, p.team_id) : "pending");
+                return (
+                  <tr key={p.week}>
+                    <td>{p.week}</td>
+                    <td><TeamMini id={p.team_id} /></td>
+                    <td className={
+                      res === "win" ? "text-emerald-700 font-semibold"
+                      : res === "loss" ? "text-red-600 font-semibold"
+                      : res === "push" ? "text-gray-600" : "text-gray-500"
+                    }>{res}</td>
+                  </tr>
+                );
+              })}
+              {!myPicks.length && (
+                <tr><td className="py-2 text-gray-500" colSpan={3}>Sin picks aún.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      {/* ===== Ficha de jugador ===== */}
+      {playerModalId && (() => {
+        const s = (standingsSorted || []).find((x) => x.user_id === playerModalId);
+        const picksList = picksByUser.get(playerModalId) || [];
+        const alive = (s?.lives ?? 0) > 0;
+        return (
+          <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50" onClick={() => setPlayerModalId(null)}>
+            <div className="w-full max-w-sm bg-white rounded-2xl p-5 border card max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <h3 className="font-semibold text-lg">{avatarMap[playerModalId] || "🏈"} {s?.display_name || playerModalId.slice(0, 6)}</h3>
+                  <div className="mt-1 flex items-center gap-2 text-xs">
+                    <span className={clsx("badge", !alive && "badge-danger")}>
+                      {alive ? `${s?.lives ?? 0} vida${(s?.lives ?? 0) === 1 ? "" : "s"}` : "Eliminado"}
+                    </span>
+                    <span className="badge">{s?.wins ?? 0}-{s?.losses ?? 0}{s?.pushes ? `-${s.pushes}` : ""}</span>
+                  </div>
+                </div>
+                <button className="text-sm underline" onClick={() => setPlayerModalId(null)}>Cerrar</button>
+              </div>
+              <h4 className="mt-4 text-xs font-semibold text-gray-500 uppercase">Historial de picks</h4>
+              {picksList.length ? (
+                <table className="w-full text-sm mt-2 table-minimal">
+                  <thead><tr><th>Semana</th><th>Equipo</th><th>Resultado</th></tr></thead>
+                  <tbody>
+                    {picksList.map((p) => {
+                      const g = allGamesMap[p.game_id];
+                      const res = p.result && p.result !== "pending" ? p.result : (g ? computePickResultFromGame(g, p.team_id) : "pending");
+                      return (
+                        <tr key={p.week}>
+                          <td>W{p.week}</td>
+                          <td><TeamMini id={p.team_id} /></td>
+                          <td className={
+                            res === "win" ? "text-emerald-700 font-semibold"
+                            : res === "loss" ? "text-red-600 font-semibold"
+                            : res === "push" ? "text-gray-600" : "text-gray-500"
+                          }>{res}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              ) : (
+                <p className="text-sm text-gray-500 mt-2">Sin picks todavía.</p>
+              )}
+            </div>
+          </div>
+        );
+      })()}
+    </div>
+  );
+}
 
 
 	  
@@ -2076,6 +2984,9 @@ function StandingsTab() {
     return `T${n}`;
   }
 
+  // En mobile solo se ven las columnas esenciales (Equipo/W/L/T/%) para que
+  // la tabla quepa sin scroll horizontal; PF/PC/Loc./Vis./Rach. aparecen
+  // desde sm hacia arriba.
   const colHeader = (
     <thead>
       <tr>
@@ -2084,11 +2995,11 @@ function StandingsTab() {
         <th>L</th>
         <th>T</th>
         <th>%</th>
-        <th>PF</th>
-        <th>PC</th>
-        <th>Loc.</th>
-        <th>Vis.</th>
-        <th>Rach.</th>
+        <th className="hidden sm:table-cell">PF</th>
+        <th className="hidden sm:table-cell">PC</th>
+        <th className="hidden sm:table-cell">Loc.</th>
+        <th className="hidden sm:table-cell">Vis.</th>
+        <th className="hidden sm:table-cell">Rach.</th>
       </tr>
     </thead>
   );
@@ -2107,11 +3018,11 @@ function StandingsTab() {
                 <td className="text-red-600 font-medium">{r.l}</td>
                 <td className="text-gray-600">{r.t}</td>
                 <td className="font-mono">{pctStr(r.w, r.l, r.t)}</td>
-                <td>{r.pf}</td>
-                <td>{r.pa}</td>
-                <td>{`${r.home_w}-${r.home_l}${r.home_t ? `-${r.home_t}` : ""}`}</td>
-                <td>{`${r.away_w}-${r.away_l}${r.away_t ? `-${r.away_t}` : ""}`}</td>
-                <td>{streakStr(r)}</td>
+                <td className="hidden sm:table-cell">{r.pf}</td>
+                <td className="hidden sm:table-cell">{r.pa}</td>
+                <td className="hidden sm:table-cell">{`${r.home_w}-${r.home_l}${r.home_t ? `-${r.home_t}` : ""}`}</td>
+                <td className="hidden sm:table-cell">{`${r.away_w}-${r.away_l}${r.away_t ? `-${r.away_t}` : ""}`}</td>
+                <td className="hidden sm:table-cell">{streakStr(r)}</td>
               </tr>
             ))}
             {!list.length && (
@@ -2128,7 +3039,10 @@ function StandingsTab() {
     return (
       <div className="max-w-6xl mx-auto p-4 md:p-6">
         <h1 className="text-2xl font-extrabold mb-3">Standings NFL</h1>
-        <p className="text-sm text-gray-500">Cargando…</p>
+        <div className="grid md:grid-cols-2 gap-4">
+          <TableSkeleton rows={8} cols={6} />
+          <TableSkeleton rows={8} cols={6} />
+        </div>
       </div>
     );
   }
@@ -2157,453 +3071,497 @@ function StandingsTab() {
 }
 
 
-/* ========================= Asistente de Picks ========================= */
-/* ========================= Asistente de Picks ========================= */
-function AssistantTab({ session }) {
+/* ========================= Ajustes ========================= */
+function SettingsTab({ session }) {
   const uid = session?.user?.id || null;
-
-  const [week, setWeek] = useState(() => Number(localStorage.getItem("week")) || 1);
   const [me, setMe] = useState(null);
+  const [displayName, setDisplayName] = useState("");
+  const [notifyEmail, setNotifyEmail] = useState(true);
+  const [avatarEmoji, setAvatarEmoji] = useState("🏈");
+  const [saving, setSaving] = useState(false);
+  const [savedMsg, setSavedMsg] = useState("");
 
-  const [teamsMap, setTeamsMap] = useState({});
-  const [games, setGames] = useState([]);
-  const [oddsPairs, setOddsPairs] = useState({});
-  const [leaguePicks, setLeaguePicks] = useState([]);
-  const [myPick, setMyPick] = useState(null);
+  const [players, setPlayers] = useState(null);
+  const [playersLoading, setPlayersLoading] = useState(false);
+  const [busyId, setBusyId] = useState(null);
 
-  const [pendingPick, setPendingPick] = useState(null);
+  const [buyIn, setBuyIn] = useState(0);
+  const [buyInInput, setBuyInInput] = useState("0");
+  const [buyInSaving, setBuyInSaving] = useState(false);
+  const [paidStats, setPaidStats] = useState({ paid: 0, total: 0 });
 
-  // ---------- Carga de datos ----------
+  const [startingLives, setStartingLives] = useState(2);
+  const [startingLivesInput, setStartingLivesInput] = useState("2");
+  const [startingLivesSaving, setStartingLivesSaving] = useState(false);
+
+  const [summaryWeek, setSummaryWeek] = useState(() => Number(localStorage.getItem("week")) || 1);
+  const [missingPicks, setMissingPicks] = useState(null);
+  const [missingLoading, setMissingLoading] = useState(false);
+
   useEffect(() => {
+    if (!uid) return;
     (async () => {
-      const email = session?.user?.email;
-      if (!email || !uid) return;
-
-      const { data: prof } = await supabase.from("profiles").select("*").eq("id", uid).single();
-      setMe(prof || null);
-
-      const { data: ts } = await supabase.from("teams").select("id,name,logo_url");
-      const map = {}; (ts || []).forEach((t) => (map[t.id] = t));
-      setTeamsMap(map);
-
-      await loadGamesA(week);
-
-      const { data: myPicks } = await supabase
-        .from("picks")
-        .select("*")
-        .eq("user_id", uid)
-        .eq("season", SEASON)
-        .eq("week", week)
-        .limit(1);
-      setMyPick(myPicks?.[0] || null);
-
-      await loadLeaguePicksA(week);
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [uid, week]);
-
-  const loadGamesA = async (w) => {
-    const { data: gs } = await supabase
-      .from("games")
-      .select("*")
-      .eq("season", SEASON)
-      .eq("week", w)
-      .order("start_time");
-    setGames(gs || []);
-    const ids = (gs || []).map((g) => g.id);
-    if (!ids.length) { setOddsPairs({}); return; }
-    const { data } = await supabase
-      .from("odds")
-      .select("game_id, spread_home, spread_away, ml_home, ml_away, fetched_at")
-      .in("game_id", ids)
-      .order("fetched_at", { ascending: false });
-    const by = {};
-    for (const row of data || []) {
-      if (!by[row.game_id]) by[row.game_id] = { last: row, prev: null };
-      else if (!by[row.game_id].prev) by[row.game_id].prev = row;
-    }
-    setOddsPairs(by);
-  };
-
-  const loadLeaguePicksA = async (w) => {
-    const { data: pks } = await supabase
-      .from("picks")
-      .select("user_id, team_id")
-      .eq("season", SEASON)
-      .eq("week", w);
-    setLeaguePicks(pks || []);
-  };
-
-  // ---------- Helpers ----------
-  const gamesMap = useMemo(() => {
-    const m = {}; (games || []).forEach((g) => (m[g.id] = g)); return m;
-  }, [games]);
-
-  const mySeasonTeams = useMemo(() => {
-    return new Set((leaguePicks || []).filter(p => p.user_id === uid).map(p => p.team_id));
-  }, [leaguePicks, uid]);
-
-  function popPct(teamId) {
-    // Popularidad = % de jugadores que pickearon ese equipo esta semana
-    const counts = {};
-    (leaguePicks || []).forEach((p) => { if (p.team_id) counts[p.team_id] = (counts[p.team_id] || 0) + 1; });
-    let totalPlayers = 0;
-    // aproximación: jugadores que han pickeado o total de perfiles si disponible
-    totalPlayers = new Set((leaguePicks || []).map(p=>p.user_id)).size;
-    if (!totalPlayers) return 0;
-    const count = counts[teamId] || 0;
-    return Math.round((count * 100) / totalPlayers);
-  }
-
-  const pickFrozen = useMemo(() => {
-    if (!myPick) return false;
-    const g = gamesMap[myPick.game_id];
-    if (!g) return false;
-    if (myPick.result && myPick.result !== "pending") return true;
-    return DateTime.fromISO(g.start_time) <= DateTime.now() || hasGameEnded(g);
-  }, [myPick, gamesMap]);
-
-  const canPick = (game, teamId) => {
-    if (!uid) return { ok: false, reason: "NOSESSION" };
-    if ((me?.lives ?? 0) <= 0) return { ok: false, reason: "ELIMINATED" };
-    if (pickFrozen) {
-      const same = myPick?.game_id === game.id && myPick?.team_id === teamId;
-      if (!same) return { ok: false, reason: "FROZEN" };
-    }
-    if (DateTime.fromISO(game.start_time) <= DateTime.now()) return { ok: false, reason: "LOCK" };
-    return { ok: true };
-  };
-
-  // Puntuar todas las opciones (equipo por juego)
-  const scored = useMemo(() => {
-    const rows = [];
-    (games || []).forEach((g) => {
-      const { last } = oddsPairs[g.id] || {};
-      const spreadH = last?.spread_home ?? null;
-      const mlH = last?.ml_home ?? null;
-      const mlA = last?.ml_away ?? null;
-
-      const wpHome = winProbFromSpread(spreadH);                  // ~prob ganar home
-      const wpAway = wpHome != null ? Math.max(0, 100 - wpHome) : null;
-
-      const addRow = (teamId, wp, fav) => {
-        const pct = popPct(teamId);
-        const used = mySeasonTeams.has(teamId);
-        const locked = DateTime.fromISO(g.start_time) <= DateTime.now();
-        rows.push({
-          game: g,
-          teamId,
-          wp: wp ?? null,
-          fav,
-          pop: pct,
-          used,
-          locked,
-          diffScore: (wp != null ? wp : 0) - pct,       // alto => buen valor diferencial
-          safetyScore: (wp != null ? wp : 0) - (pct / 4)  // prioriza win% pero castiga mucha popularidad
-        });
-      };
-
-      const favHome = (mlH != null && mlA != null) ? mlH < mlA : (spreadH != null ? spreadH < 0 : false);
-      addRow(g.home_team, wpHome, favHome);
-
-      const favAway = (mlH != null && mlA != null) ? mlA < mlH : (spreadH != null ? spreadH > 0 : false);
-      addRow(g.away_team, wpAway, favAway);
-    });
-    return rows;
-  }, [games, oddsPairs, leaguePicks, mySeasonTeams]);
-
-  // Listas finales
-  const safePicks = useMemo(() => {
-    // Criterio: win% >= 60, no usado, no locked, orden por safetyScore, tomar top 3
-    return scored
-      .filter(r => !r.locked && !r.used && (r.wp ?? 0) >= 60)
-      .sort((a,b) => (b.safetyScore - a.safetyScore) || (b.wp - a.wp))
-      .slice(0, 3);
-  }, [scored]);
-
-  const differentialPicks = useMemo(() => {
-    // Criterio: pop <= 25, win% >= 50 (o >=48 si hay pocos), no usado, no locked
-    let list = scored
-      .filter(r => !r.locked && !r.used && ((r.wp ?? 0) >= 50) && r.pop <= 25)
-      .sort((a,b)=> (b.diffScore - a.diffScore) || (b.wp - a.wp))
-      .slice(0, 6);
-    if (list.length < 5) {
-      // rellena con opciones de buen valor aunque pop hasta 35 o wp >=48
-      const extra = scored
-        .filter(r => !r.locked && !r.used && ((r.wp ?? 0) >= 48) && r.pop <= 35)
-        .sort((a,b)=> (b.diffScore - a.diffScore) || (b.wp - a.wp));
-      const set = new Set(list.map(x=>`${x.game.id}_${x.teamId}`));
-      for (const r of extra) { if (set.size >= 6) break; if (!set.has(`${r.game.id}_${r.teamId}`)) { list.push(r); set.add(`${r.game.id}_${r.teamId}`);} }
-    }
-    return list.slice(0,6);
-  }, [scored]);
-
-  const trapPicks = useMemo(() => {
-    // Criterio: favorito muy popular (>=35%) con win% no tan alto (<=58) => posibles "trampas"
-    return scored
-      .filter(r => r.fav && (r.wp ?? 0) <= 58 && r.pop >= 35)
-      .sort((a,b)=> (b.pop - a.pop) || ((a.wp ?? 0) - (b.wp ?? 0)))
-      .slice(0, 3);
-  }, [scored]);
-
-  // ---------- UI ----------
-  const TeamMini = ({ id }) => {
-    const logo = teamsMap[id]?.logo_url || `/teams/${id}.png`;
-    return (
-      <span className="inline-flex items-center gap-1">
-        <img src={logo} alt={id} className="h-5 w-5 object-contain" onError={(e)=> (e.currentTarget.style.visibility = "hidden")} />
-        <span className="font-mono font-semibold">{id}</span>
-      </span>
-    );
-  };
-
-  const CardRow = ({ rec }) => {
-    if (!rec) return null;
-    const disqUsed = mySeasonTeams.has(rec.teamId);
-    const lock = DateTime.fromISO(rec.game.start_time) <= DateTime.now();
-    const c = canPick(rec.game, rec.teamId);
-    const disabled = !c.ok || disqUsed || lock;
-
-    return (
-      <div className="p-3 border rounded-xl bg-white card">
-        <div className="flex items-center justify-between gap-3">
-          <div className="text-sm">
-            <div className="font-semibold flex items-center gap-2">
-              <TeamMini id={rec.teamId} />
-              <span className="text-xs text-gray-500">
-                vs {rec.game.home_team === rec.teamId ? rec.game.away_team : rec.game.home_team}
-              </span>
-            </div>
-            <div className="text-xs text-gray-600 mt-1">
-              Win% ~ {rec.wp ?? "—"}% · Popularidad {rec.pop}% {disqUsed ? "· (ya usado)" : ""} {lock ? "· (bloqueado)" : ""}
-            </div>
-          </div>
-          <button
-            className={clsx("px-3 py-1 rounded border text-sm", disabled ? "opacity-50 cursor-not-allowed" : "bg-black text-white")}
-            disabled={disabled}
-            onClick={() => setPendingPick({ game: rec.game, teamId: rec.teamId })}
-          >
-            Pickear
-          </button>
-        </div>
-      </div>
-    );
-  };
-
-  const doPick = async () => {
-    if (!pendingPick || !uid) return;
-    const { game, teamId } = pendingPick;
-    try {
-      if (myPick) {
-        const { error } = await supabase.from("picks")
-          .update({ team_id: teamId, game_id: game.id, updated_at: new Date().toISOString() })
-          .eq("id", myPick.id);
-        if (error) throw error;
-      } else {
-        const { error } = await supabase.from("picks").insert({
-          user_id: uid, game_id: game.id, team_id: teamId, week, season: SEASON,
-        });
-        if (error) throw error;
+      const { data } = await supabase.from("profiles").select("*").eq("id", uid).maybeSingle();
+      if (data) {
+        setMe(data);
+        setDisplayName(data.display_name || "");
+        setNotifyEmail(data.notify_email !== false);
+        setAvatarEmoji(data.avatar_emoji || "🏈");
       }
-      const { data: myPicks } = await supabase
-        .from("picks").select("*")
-        .eq("user_id", uid).eq("season", SEASON).eq("week", week).limit(1);
-      setMyPick(myPicks?.[0] || null);
-      await loadLeaguePicksA(week);
-      await loadGamesA(week);
-      setPendingPick(null);
-      alert("Pick guardado ✔️");
+    })();
+    (async () => {
+      const { data } = await supabase.from("app_config").select("value").eq("key", "buy_in").maybeSingle();
+      const v = Number(data?.value ?? 0) || 0;
+      setBuyIn(v);
+      setBuyInInput(String(v));
+    })();
+    (async () => {
+      const { data } = await supabase.from("app_config").select("value").eq("key", "starting_lives").maybeSingle();
+      const v = Number(data?.value ?? 2) || 2;
+      setStartingLives(v);
+      setStartingLivesInput(String(v));
+    })();
+    loadPaidStats();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [uid]);
+
+  const loadPaidStats = async () => {
+    const { count: total } = await supabase
+      .from("profiles").select("*", { count: "exact", head: true }).eq("season", SEASON);
+    const { count: paid } = await supabase
+      .from("profiles").select("*", { count: "exact", head: true }).eq("season", SEASON).eq("paid", true);
+    setPaidStats({ paid: paid || 0, total: total || 0 });
+  };
+
+  const saveAccount = async () => {
+    if (!uid) return;
+    setSaving(true);
+    setSavedMsg("");
+    const { error } = await supabase
+      .from("profiles")
+      .update({ display_name: displayName.trim() || me?.display_name, notify_email: notifyEmail, avatar_emoji: avatarEmoji })
+      .eq("id", uid);
+    setSaving(false);
+    setSavedMsg(error ? `Error: ${error.message}` : "Guardado ✅");
+  };
+
+  const loadPlayers = async () => {
+    setPlayersLoading(true);
+    const { data } = await supabase
+      .from("profiles")
+      .select("id,email,display_name,lives,eliminated_at,is_admin,season,paid,avatar_emoji")
+      .eq("season", SEASON)
+      .order("display_name", { ascending: true });
+    setPlayers(data || []);
+    setPlayersLoading(false);
+  };
+
+  const loadMissingPicks = async (wk) => {
+    setMissingLoading(true);
+    try {
+      const { data: active } = await supabase
+        .from("profiles")
+        .select("id,display_name,avatar_emoji")
+        .eq("season", SEASON)
+        .is("eliminated_at", null);
+      const { data: picked } = await supabase
+        .from("picks")
+        .select("user_id")
+        .eq("season", SEASON)
+        .eq("week", wk);
+      const pickedIds = new Set((picked || []).map((p) => p.user_id));
+      setMissingPicks((active || []).filter((p) => !pickedIds.has(p.id)));
+    } finally {
+      setMissingLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (me?.is_admin) { loadPlayers(); loadMissingPicks(summaryWeek); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [me?.is_admin]);
+
+  useEffect(() => {
+    if (me?.is_admin) loadMissingPicks(summaryWeek);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [summaryWeek]);
+
+  const authHeaders = () => ({
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${session?.access_token || ""}`,
+  });
+
+  const adminAction = async (patch) => {
+    const r = await fetch(`${SITE}/api/control?action=adminUpdatePlayer`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify(patch),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || j.ok === false) throw new Error(j.error || "Error");
+  };
+
+  const adjustLives = async (p, delta) => {
+    setBusyId(p.id);
+    try {
+      const newLives = Math.max(0, (p.lives ?? 0) + delta);
+      await adminAction({ user_id: p.id, lives: newLives });
+      await loadPlayers();
     } catch (e) {
       alert(e.message);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const toggleEliminated = async (p) => {
+    setBusyId(p.id);
+    try {
+      await adminAction({ user_id: p.id, eliminated: !p.eliminated_at });
+      await loadPlayers();
+    } catch (e) {
+      alert(e.message);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const togglePaid = async (p) => {
+    setBusyId(p.id);
+    try {
+      await adminAction({ user_id: p.id, paid: !p.paid });
+      await loadPlayers();
+      await loadPaidStats();
+    } catch (e) {
+      alert(e.message);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const saveBuyIn = async () => {
+    setBuyInSaving(true);
+    try {
+      const v = Math.max(0, Number(buyInInput) || 0);
+      const r = await fetch(`${SITE}/api/control?action=adminSetConfig`, {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify({ key: "buy_in", value: v }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || j.ok === false) throw new Error(j.error || "Error");
+      setBuyIn(v);
+    } catch (e) {
+      alert(e.message);
+    } finally {
+      setBuyInSaving(false);
+    }
+  };
+
+  const saveStartingLives = async () => {
+    setStartingLivesSaving(true);
+    try {
+      const v = Math.max(1, Math.trunc(Number(startingLivesInput) || 2));
+      const r = await fetch(`${SITE}/api/control?action=adminSetConfig`, {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify({ key: "starting_lives", value: v }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || j.ok === false) throw new Error(j.error || "Error");
+      setStartingLives(v);
+    } catch (e) {
+      alert(e.message);
+    } finally {
+      setStartingLivesSaving(false);
     }
   };
 
   return (
-    <div className="max-w-4xl mx-auto p-4 md:p-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-extrabold">Asistente</h1>
-        <div className="flex items-center gap-2">
-          <label className="text-xs text-gray-500">Semana</label>
-          <select className="select" value={week} onChange={(e)=> setWeek(Number(e.target.value))}>
-            {Array.from({ length: 18 }, (_, i) => i + 1).map((w) => (<option key={w} value={w}>W{w}</option>))}
-          </select>
+    <div className="max-w-4xl mx-auto p-4 md:p-6 space-y-6">
+      <h1 className="text-2xl font-extrabold">Ajustes</h1>
+
+      <div>
+        <h2 className="font-semibold mb-2">Mi cuenta</h2>
+        <div className="p-4 border rounded-2xl bg-white card space-y-3">
+          <div className="text-sm text-gray-500">{me?.email}</div>
+          <label className="block text-sm">
+            <span className="text-xs text-gray-500">Nombre para mostrar</span>
+            <input className="input w-full mt-1" value={displayName} onChange={(e) => setDisplayName(e.target.value)} />
+          </label>
+          <div>
+            <span className="text-xs text-gray-500">Avatar</span>
+            <div className="mt-1 flex flex-wrap gap-1.5">
+              {AVATAR_CHOICES.map((emo) => (
+                <button
+                  key={emo}
+                  type="button"
+                  onClick={() => setAvatarEmoji(emo)}
+                  className={clsx(
+                    "w-10 h-10 flex items-center justify-center rounded-lg border text-xl",
+                    emo === avatarEmoji ? "border-emerald-500" : "border-gray-200"
+                  )}
+                  style={emo === avatarEmoji ? { background: "rgba(34,197,94,.15)" } : undefined}
+                >
+                  {emo}
+                </button>
+              ))}
+            </div>
+          </div>
+          <label className="inline-flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={notifyEmail} onChange={(e) => setNotifyEmail(e.target.checked)} />
+            Recibir recordatorios por correo cuando me falte hacer pick
+          </label>
+          <div className="flex items-center gap-3">
+            <button className="btn btn-primary" onClick={saveAccount} disabled={saving}>
+              {saving ? "Guardando…" : "Guardar"}
+            </button>
+            {savedMsg && <span className="text-sm text-gray-500">{savedMsg}</span>}
+          </div>
         </div>
       </div>
 
-      {(me?.lives ?? 0) <= 0 && (
-        <div className="mt-3 p-3 border-2 border-rose-300 rounded-xl bg-rose-50 text-rose-900 text-sm">
-          Estás <b>eliminado</b> 😵‍💫 — puedes seguir viendo recomendaciones, pero ya no puedes pickear.
+      <div>
+        <h2 className="font-semibold mb-2">App</h2>
+        <div className="space-y-3">
+          <InstallAppCard />
+          <PushNotificationsCard session={session} />
+        </div>
+      </div>
+
+      <div>
+        <h2 className="font-semibold mb-2">📋 Reglas de la liga</h2>
+        <div className="p-4 border rounded-2xl bg-white card space-y-2 text-sm">
+          <p>Vidas iniciales: <b>{startingLives}</b> (se reinician así al arrancar cada temporada nueva).</p>
+          {me?.is_admin && (
+            <div className="flex flex-wrap items-center gap-2 pt-1">
+              <label className="text-xs text-gray-500">Vidas iniciales</label>
+              <input
+                className="input w-20"
+                type="number"
+                min="1"
+                value={startingLivesInput}
+                onChange={(e) => setStartingLivesInput(e.target.value)}
+              />
+              <button className="btn btn-primary !py-1 !px-3 text-xs" onClick={saveStartingLives} disabled={startingLivesSaving}>
+                {startingLivesSaving ? "Guardando…" : "Guardar"}
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div>
+        <h2 className="font-semibold mb-2">💰 Bote de la liga</h2>
+        <div className="p-4 border rounded-2xl bg-white card space-y-2 text-sm">
+          {buyIn > 0 ? (
+            <>
+              <p>Cuota de entrada: <b>${buyIn.toLocaleString("es-MX")}</b> por jugador.</p>
+              <p>
+                Han pagado <b>{paidStats.paid}</b> de {paidStats.total} ·{" "}
+                bote acumulado: <b>${(buyIn * paidStats.paid).toLocaleString("es-MX")}</b>
+              </p>
+              {!me?.is_admin && (
+                <p className="text-xs text-gray-500">
+                  {me?.paid ? "✅ Ya apareces como pagado." : "Avísale al admin cuando hagas tu pago para que te marque como pagado."}
+                </p>
+              )}
+            </>
+          ) : (
+            <p className="text-gray-500">{me?.is_admin ? "Todavía no defines una cuota de entrada." : "El admin no ha definido una cuota de entrada."}</p>
+          )}
+          {me?.is_admin && (
+            <div className="flex flex-wrap items-center gap-2 pt-1">
+              <label className="text-xs text-gray-500">Cuota por jugador</label>
+              <input
+                className="input w-28"
+                type="number"
+                min="0"
+                value={buyInInput}
+                onChange={(e) => setBuyInInput(e.target.value)}
+              />
+              <button className="btn btn-primary !py-1 !px-3 text-xs" onClick={saveBuyIn} disabled={buyInSaving}>
+                {buyInSaving ? "Guardando…" : "Guardar"}
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {me?.is_admin && (
+        <div className="pt-2 mt-2 border-t" style={{ borderColor: "var(--border)" }}>
+          <h2 className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-3">Administración de la liga</h2>
         </div>
       )}
 
-      <div className="mt-4 grid gap-4">
-        {/* Seguras (top 3) */}
-        <div className="p-4 border rounded-2xl bg-white card">
-          <h3 className="font-semibold mb-2">Recomendaciones seguras</h3>
-          {safePicks.length ? (
-            <div className="space-y-2">
-              {safePicks.map((r, i) => (<CardRow key={`safe-${i}`} rec={r} />))}
+      {me?.is_admin && (
+        <div>
+          <h2 className="font-semibold mb-2">📋 Resumen admin</h2>
+          <div className="p-4 border rounded-2xl bg-white card space-y-4 text-sm">
+            <div className="flex flex-wrap items-center gap-2">
+              <label className="text-xs text-gray-500">Semana</label>
+              <select className="select" value={summaryWeek} onChange={(e) => setSummaryWeek(Number(e.target.value))}>
+                {Array.from({ length: 18 }, (_, i) => i + 1).map((w) => (
+                  <option key={w} value={w}>W{w}</option>
+                ))}
+              </select>
             </div>
-          ) : (
-            <p className="text-sm text-gray-500">Aún no hay datos suficientes.</p>
-          )}
-        </div>
 
-        {/* Diferenciales (5-6) */}
-        <div className="p-4 border rounded-2xl bg-white card">
-          <h3 className="font-semibold mb-2">Recomendaciones diferenciales</h3>
-          {differentialPicks.length ? (
-            <div className="space-y-2">
-              {differentialPicks.map((r, i) => (<CardRow key={`diff-${i}`} rec={r} />))}
-            </div>
-          ) : (
-            <p className="text-sm text-gray-500">Sin diferenciales claros por ahora.</p>
-          )}
-        </div>
-
-        {/* Trampas (2-3) */}
-        <div className="p-4 border rounded-2xl bg-white card">
-          <h3 className="font-semibold mb-2">Candidatos trampa (para evitar)</h3>
-          {trapPicks.length ? (
-            <div className="space-y-2">
-              {trapPicks.map((r, i) => (
-                <div key={`trap-${i}`} className="p-3 border rounded-xl bg-white">
-                  <div className="flex items-center justify-between text-sm">
-                    <div className="flex items-center gap-2">
-                      <TeamMini id={r.teamId} />
-                      <span className="text-xs text-gray-500">
-                        vs {r.game.home_team === r.teamId ? r.game.away_team : r.game.home_team}
-                      </span>
-                    </div>
-                    <div className="text-xs text-gray-600">
-                      Fav · Win% ~ {r.wp ?? "—"}% · Pop {r.pop}%
-                    </div>
-                  </div>
+            <div>
+              <h3 className="font-semibold text-xs uppercase text-gray-500 mb-1.5">Sin pick en W{summaryWeek}</h3>
+              {missingLoading ? (
+                <Skel className="h-6 w-48" />
+              ) : missingPicks?.length ? (
+                <div className="flex flex-wrap gap-1.5">
+                  {missingPicks.map((p) => (
+                    <span key={p.id} className="badge badge-warn">{p.avatar_emoji || "🏈"} {p.display_name}</span>
+                  ))}
                 </div>
-              ))}
+              ) : (
+                <p className="text-gray-500">✅ Todos los jugadores activos ya tienen pick esta semana.</p>
+              )}
             </div>
-          ) : (
-            <p className="text-sm text-gray-500">Nada alarmante por ahora.</p>
-          )}
-        </div>
-      </div>
 
-      {/* Modal confirmar pick */}
-      {pendingPick && (
-        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50">
-          <div className="w-full max-w-sm bg-white rounded-2xl p-5 border card">
-            <h3 className="font-semibold text-lg">Confirmar pick</h3>
-            <p className="mt-2 text-sm">¿Confirmas tu pick de <b>{pendingPick.teamId}</b> en W{week}?</p>
-            <div className="mt-4 flex gap-2">
-              <button className="px-4 py-2 rounded border" onClick={() => setPendingPick(null)}>Cancelar</button>
-              <button className="px-4 py-2 rounded bg-black text-white" onClick={doPick}>Confirmar</button>
+            <div>
+              <h3 className="font-semibold text-xs uppercase text-gray-500 mb-1.5">Pago pendiente</h3>
+              {playersLoading ? (
+                <Skel className="h-6 w-48" />
+              ) : (players || []).some((p) => !p.paid) ? (
+                <div className="flex flex-wrap gap-1.5">
+                  {(players || []).filter((p) => !p.paid).map((p) => (
+                    <span key={p.id} className="badge badge-danger">{p.avatar_emoji || "🏈"} {p.display_name}</span>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-gray-500">✅ Todos han pagado.</p>
+              )}
             </div>
           </div>
         </div>
       )}
-    </div>
-  );
-}
 
+      {me?.is_admin && (
+        <div>
+          <h2 className="font-semibold mb-2">Jugadores (temporada {SEASON})</h2>
 
-/* ========================= Noticias ========================= */
-function NewsTab() {
-  const [items, setItems] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [err, setErr] = useState(null);
-
-  // ---- helpers locales (sin imports nuevos)
-  const RSS_FEEDS = [
-    { source: "ESPN NFL", url: "https://api.rss2json.com/v1/api.json?rss_url=https://www.espn.com/espn/rss/nfl/news" },
-    { source: "NFL.com", url: "https://api.rss2json.com/v1/api.json?rss_url=https://www.nfl.com/rss/rsslanding?searchString=home" },
-    { source: "The Athletic (NFL)", url: "https://api.rss2json.com/v1/api.json?rss_url=https://theathletic.com/league/nfl/feed/" },
-  ];
-
-  function parseRssJson(json, fallbackSource) {
-    if (!json || !json.items) return [];
-    return (json.items || []).map((it) => ({
-      id: it.guid || it.link || it.pubDate || Math.random().toString(36).slice(2),
-      title: it.title || "",
-      url: it.link || it.url || "#",
-      source: (json.feed && json.feed.title) || fallbackSource || "News",
-      published_at: it.pubDate || it.pubdate || it.date || null,
-      summary: it.description || it.content || "",
-    }));
-  }
-
-  useEffect(() => {
-    (async () => {
-      setLoading(true);
-      setErr(null);
-
-      // 1) Intento Supabase
-      let rows = [];
-      try {
-        const { data, error } = await supabase
-          .from("news")
-          .select("id,title,url,source,published_at,summary,team_id")
-          .order("published_at", { ascending: false })
-          .limit(30);
-        if (error) throw error;
-        rows = data || [];
-      } catch {
-        // tabla puede no existir o no hay permisos
-      }
-
-      // 2) Fallback RSS si vacío
-      if (!rows || rows.length === 0) {
-        try {
-          const results = await Promise.allSettled(
-            RSS_FEEDS.map(f =>
-              fetch(f.url, { headers: { "Accept": "application/json" } })
-                .then(r => r.json())
-                .then(j => parseRssJson(j, f.source))
-            )
-          );
-          const merged = results.flatMap(r => (r.status === "fulfilled" ? r.value : []));
-          const withTs = merged.map(x => ({ ...x, _ts: x.published_at ? Date.parse(x.published_at) : 0 }));
-          withTs.sort((a, b) => b._ts - a._ts);
-          rows = withTs.slice(0, 30).map(({ _ts, ...rest }) => rest);
-        } catch (e) {
-          setErr("No se pudieron cargar noticias desde las fuentes públicas.");
-          rows = [];
-        }
-      }
-
-      setItems(rows);
-      setLoading(false);
-    })();
-  }, []);
-
-  return (
-    <div className="max-w-4xl mx-auto p-4 md:p-6">
-      <h1 className="text-2xl font-extrabold mb-3">Noticias NFL</h1>
-
-      {loading && <p className="text-sm text-gray-500">Cargando…</p>}
-
-      {!loading && err && (
-        <div className="p-4 border rounded-2xl bg-white card text-sm text-red-600">
-          {err}
-        </div>
-      )}
-
-      {!loading && items.length === 0 && !err && (
-        <div className="p-4 border rounded-2xl bg-white card text-sm text-gray-600">
-          No hay noticias cargadas aún. 
-        </div>
-      )}
-
-      <div className="grid gap-3">
-        {items.map((n) => (
-          <a key={n.id} href={n.url} target="_blank" rel="noreferrer" className="p-4 border rounded-2xl bg-white card hover:bg-gray-50 transition">
-            <div className="text-sm text-gray-500">
-              {n.source || "—"} · {n.published_at ? DateTime.fromISO(n.published_at).setZone(TZ).toFormat("dd LLL HH:mm") : ""}
+          {playersLoading && (
+            <div className="p-4 border rounded-2xl bg-white card">
+              <TableSkeleton rows={6} cols={5} />
             </div>
-            <div className="font-semibold">{n.title}</div>
-            {n.summary && <div className="text-sm text-gray-600 mt-1 line-clamp-2" dangerouslySetInnerHTML={{ __html: n.summary }} />}
-          </a>
-        ))}
-      </div>
+          )}
+
+          {!playersLoading && (
+            <>
+              {/* Mobile: tarjetas apiladas, nunca scroll horizontal */}
+              <div className="md:hidden space-y-2">
+                {(players || []).map((p) => (
+                  <div key={p.id} className="p-3 border rounded-xl bg-white card text-sm">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-medium">{p.avatar_emoji || "🏈"} {p.display_name}{p.is_admin ? " 👑" : ""}</span>
+                      {p.eliminated_at ? (
+                        <span className="badge badge-danger">Eliminado</span>
+                      ) : (
+                        <span className="badge">Activo</span>
+                      )}
+                    </div>
+                    <div className="text-xs text-gray-500 truncate mt-0.5">{p.email}</div>
+                    <div className="mt-2 flex items-center justify-between flex-wrap gap-2">
+                      <div className="flex items-center gap-1">
+                        <span className="text-xs text-gray-500 mr-1">Vidas</span>
+                        <button
+                          className="btn btn-ghost !w-9 !h-9 !p-0 text-base"
+                          disabled={busyId === p.id}
+                          onClick={() => adjustLives(p, -1)}
+                          aria-label={`Quitar vida a ${p.display_name}`}
+                        >−</button>
+                        <span className="w-6 text-center inline-block font-medium">{p.lives}</span>
+                        <button
+                          className="btn btn-ghost !w-9 !h-9 !p-0 text-base"
+                          disabled={busyId === p.id}
+                          onClick={() => adjustLives(p, 1)}
+                          aria-label={`Dar vida a ${p.display_name}`}
+                        >+</button>
+                      </div>
+                      <label className="inline-flex items-center gap-1.5 text-xs">
+                        <input
+                          type="checkbox"
+                          checked={!!p.paid}
+                          disabled={busyId === p.id}
+                          onChange={() => togglePaid(p)}
+                        />
+                        Pagó {p.paid ? "✅" : ""}
+                      </label>
+                      <button className="text-xs underline" disabled={busyId === p.id} onClick={() => toggleEliminated(p)}>
+                        {p.eliminated_at ? "Reactivar" : "Eliminar"}
+                      </button>
+                    </div>
+                  </div>
+                ))}
+                {!players?.length && (
+                  <div className="p-4 border rounded-2xl bg-white card text-sm text-gray-500">Sin jugadores todavía.</div>
+                )}
+              </div>
+
+              {/* Desktop: tabla */}
+              <div className="hidden md:block p-4 border rounded-2xl bg-white card overflow-x-auto">
+                <table className="w-full text-sm table-minimal">
+                  <thead>
+                    <tr>
+                      <th>Jugador</th>
+                      <th>Email</th>
+                      <th>Vidas</th>
+                      <th>Estado</th>
+                      <th>Pagó</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(players || []).map((p) => (
+                      <tr key={p.id}>
+                        <td className="font-medium">{p.avatar_emoji || "🏈"} {p.display_name}{p.is_admin ? " 👑" : ""}</td>
+                        <td className="text-gray-500">{p.email}</td>
+                        <td>
+                          <div className="flex items-center gap-1">
+                            <button className="btn btn-ghost !py-0.5 !px-2" disabled={busyId === p.id} onClick={() => adjustLives(p, -1)}>-</button>
+                            <span className="w-5 text-center inline-block">{p.lives}</span>
+                            <button className="btn btn-ghost !py-0.5 !px-2" disabled={busyId === p.id} onClick={() => adjustLives(p, 1)}>+</button>
+                          </div>
+                        </td>
+                        <td>
+                          {p.eliminated_at ? (
+                            <span className="badge badge-danger">Eliminado</span>
+                          ) : (
+                            <span className="badge">Activo</span>
+                          )}
+                        </td>
+                        <td>
+                          <label className="inline-flex items-center gap-1.5">
+                            <input
+                              type="checkbox"
+                              checked={!!p.paid}
+                              disabled={busyId === p.id}
+                              onChange={() => togglePaid(p)}
+                            />
+                            {p.paid ? "✅" : "—"}
+                          </label>
+                        </td>
+                        <td>
+                          <button className="text-xs underline" disabled={busyId === p.id} onClick={() => toggleEliminated(p)}>
+                            {p.eliminated_at ? "Reactivar" : "Eliminar"}
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                    {!players?.length && (
+                      <tr><td colSpan={6} className="py-3 text-gray-500">Sin jugadores todavía.</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }

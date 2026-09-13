@@ -13,11 +13,13 @@
 // Supabase del propio usuario (header Authorization: Bearer ...).
 import { createClient } from '@supabase/supabase-js';
 import { currentWeek } from './_theoddsapi.mjs';
+import { sendPush } from './_push.mjs';
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.VITE_SUPABASE_URL;
 const SERVICE_KEY  = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_ROLE || process.env.VITE_SUPABASE_SERVICE_KEY;
 const CRON_TOKEN   = process.env.CRON_TOKEN || process.env.VITE_CRON_TOKEN;
 const SEASON       = Number(process.env.SEASON || '2026');
+const SITE_URL     = process.env.SITE_URL || process.env.VITE_SITE_URL || '';
 
 // Qué tan cerca del kickoff hay que estar para que el autopick "de emergencia"
 // pueda tomar un juego. Evita que el cron le asigne a alguien el equipo del
@@ -38,6 +40,33 @@ async function getAuthedUserId(req) {
 }
 
 /**
+ * Push de resultado cuando un pick pasa de 'pending' a win/loss/push. Corre
+ * una sola vez por pick (settleWeek nunca vuelve a tocar un pick que ya
+ * tiene resultado), sin importar si quien disparó settleWeek fue el cron o
+ * cualquier jugador con la app abierta.
+ */
+async function sendResultPush(pick, result, prof) {
+  if (!result || result === 'pending') return;
+  const lives = prof?.lives ?? 0;
+  const justEliminated = result === 'loss' && !!prof?.eliminated_at;
+  let title, body;
+  if (result === 'win') {
+    title = `✅ ¡Ganaste la Semana ${pick.week}!`;
+    body = `${pick.team_id} ganó. Sigues vivo con ${lives} vida${lives === 1 ? '' : 's'}.`;
+  } else if (result === 'push') {
+    title = `➖ Push en la Semana ${pick.week}`;
+    body = `${pick.team_id} empató. No se descuenta vida.`;
+  } else if (justEliminated) {
+    title = `💀 Quedaste eliminado`;
+    body = `${pick.team_id} perdió en la Semana ${pick.week} y se acabaron tus vidas. ¡Gracias por jugar!`;
+  } else {
+    title = `❌ Perdiste la Semana ${pick.week}`;
+    body = `${pick.team_id} perdió. Te quedan ${lives} vida${lives === 1 ? '' : 's'}.`;
+  }
+  await sendPush(pick.user_id, { title, body, url: SITE_URL });
+}
+
+/**
  * Evalúa (win/loss/push) todos los picks pendientes de juegos ya finalizados.
  * Si `week` es null, lo hace para toda la temporada (uso normal del cron: no
  * necesita saber qué semana va, y es idempotente/barato de sobra correrlo
@@ -52,7 +81,7 @@ async function settleWeek(week) {
   const gameIds = (finalGames || []).map((g) => g.id);
   if (!gameIds.length) return { evaluated: 0 };
 
-  let picksQuery = sb.from('picks').select('id').eq('season', SEASON).in('game_id', gameIds).eq('result', 'pending');
+  let picksQuery = sb.from('picks').select('id, user_id, team_id, week').eq('season', SEASON).in('game_id', gameIds).eq('result', 'pending');
   if (week != null) picksQuery = picksQuery.eq('week', week);
   const { data: pending, error: pErr } = await picksQuery;
   if (pErr) throw pErr;
@@ -60,7 +89,14 @@ async function settleWeek(week) {
   let evaluated = 0;
   for (const p of pending || []) {
     const { error } = await sb.rpc('eval_pick', { _pick_id: p.id });
-    if (!error) evaluated++;
+    if (error) continue;
+    evaluated++;
+
+    const [{ data: pickRow }, { data: prof }] = await Promise.all([
+      sb.from('picks').select('result').eq('id', p.id).maybeSingle(),
+      sb.from('profiles').select('lives, eliminated_at').eq('id', p.user_id).maybeSingle(),
+    ]);
+    await sendResultPush(p, pickRow?.result, prof).catch(() => {});
   }
   return { evaluated };
 }
@@ -151,13 +187,63 @@ async function autopickForUser(userId, week) {
   return { picked: choice.team, game_id: choice.game.id };
 }
 
+/**
+ * Ajustes de admin sobre otro jugador (vidas / eliminado). Necesita
+ * service role porque profiles solo permite UPDATE de auth.uid() = id vía
+ * RLS -- un admin no puede tocar la fila de otro jugador desde el cliente.
+ */
+async function adminUpdatePlayer(targetUserId, { lives, eliminated, paid }) {
+  const patch = {};
+  if (lives != null) patch.lives = Math.max(0, Math.trunc(Number(lives)));
+  if (eliminated != null) patch.eliminated_at = eliminated ? new Date().toISOString() : null;
+  if (paid != null) patch.paid = !!paid;
+  if (!Object.keys(patch).length) return { updated: false };
+
+  const { error } = await sb.from('profiles').update(patch).eq('id', targetUserId);
+  if (error) throw error;
+  return { updated: true, ...patch };
+}
+
+/** Bote de la liga: solo admin/cron puede fijar la cuota de entrada. */
+async function adminSetConfig(key, value) {
+  const { error } = await sb.from('app_config').upsert({ key, value: String(value) }, { onConflict: 'key' });
+  if (error) throw error;
+  return { key, value: String(value) };
+}
+
 export default async function handler(req, res) {
   try {
-    const { token, action, week, user_id } = req.query;
+    const params = { ...req.query, ...(req.body || {}) };
+    const { token, action, week, user_id } = params;
     const isCron = !!CRON_TOKEN && token === CRON_TOKEN;
     const authedUserId = isCron ? null : await getAuthedUserId(req);
     if (!isCron && !authedUserId) {
       return res.status(401).json({ ok: false, error: 'unauthorized' });
+    }
+
+    if (action === 'adminUpdatePlayer') {
+      if (!isCron) {
+        const { data: prof } = await sb.from('profiles').select('is_admin').eq('id', authedUserId).maybeSingle();
+        if (!prof?.is_admin) return res.status(403).json({ ok: false, error: 'forbidden: solo admin' });
+      }
+      const targetUser = user_id;
+      if (!targetUser) return res.status(400).json({ ok: false, error: 'missing user_id' });
+      const lives = params.lives != null ? Number(params.lives) : null;
+      const eliminated = params.eliminated != null ? params.eliminated === 'true' || params.eliminated === true : null;
+      const paid = params.paid != null ? params.paid === 'true' || params.paid === true : null;
+      const r = await adminUpdatePlayer(targetUser, { lives, eliminated, paid });
+      return res.json({ ok: true, action, user_id: targetUser, ...r });
+    }
+
+    if (action === 'adminSetConfig') {
+      if (!isCron) {
+        const { data: prof } = await sb.from('profiles').select('is_admin').eq('id', authedUserId).maybeSingle();
+        if (!prof?.is_admin) return res.status(403).json({ ok: false, error: 'forbidden: solo admin' });
+      }
+      const key = params.key;
+      if (!key || params.value == null) return res.status(400).json({ ok: false, error: 'missing key/value' });
+      const r = await adminSetConfig(key, params.value);
+      return res.json({ ok: true, action, ...r });
     }
 
     if (action === 'settleWeek') {

@@ -1,6 +1,7 @@
 import fetch from 'node-fetch';
 import { DateTime } from 'luxon';
 import { supa } from './_supabase.mjs';
+import { sendPush } from './_push.mjs';
 
 const SEASON = Number(process.env.SEASON || '2026');
 const LEAGUE_NAME = process.env.VITE_LEAGUE_NAME || 'Survivor 2026';
@@ -54,21 +55,28 @@ export default async function handler(req, res) {
       for (const m of members || []) {
         const { data: pick } = await supa.from('picks').select('id').eq('user_id', m.id).eq('week', w).eq('season', SEASON).maybeSingle();
         if (pick) continue;
-        const { data: prof } = await supa.from('profiles').select('email, display_name').eq('id', m.id).maybeSingle();
-        if (!prof?.email) continue;
+        const { data: prof } = await supa.from('profiles').select('email, display_name, notify_email').eq('id', m.id).maybeSingle();
 
-        const html = emailShell({
+        if (prof?.email && prof.notify_email !== false) {
+          const html = emailShell({
+            title: `⏰ Falta poco para cerrar la Semana ${w}`,
+            greeting: `Hola ${prof.display_name || ''},`,
+            body: `Todavía no eliges tu pick para la <b>Semana ${w}</b>${kickoffLocal ? ` y el próximo kickoff es el <b>${kickoffLocal}</b> (hora CDMX)` : ''}. Entra a la app y elige tu equipo antes de que cierre.`,
+            ctaText: 'Hacer mi pick',
+            ctaUrl: base,
+            footnote: 'Si no eliges a tiempo, el sistema puede asignarte automáticamente el favorito más fuerte disponible que no hayas usado.',
+          });
+          const text = `Hola ${prof.display_name || ''},\n\nTodavía no eliges tu pick para la Semana ${w}${kickoffLocal ? ` (próximo kickoff: ${kickoffLocal} hora CDMX)` : ''}.\nEntra aquí: ${base}\n\nSi no eliges a tiempo, se puede aplicar autopick del favorito más fuerte disponible.`;
+          await sendEmail(prof.email, `⏰ Falta poco para cerrar la Semana ${w} — ${LEAGUE_NAME}`, text, html);
+          sent++;
+        }
+
+        const pushed = await sendPush(m.id, {
           title: `⏰ Falta poco para cerrar la Semana ${w}`,
-          greeting: `Hola ${prof.display_name || ''},`,
-          body: `Todavía no eliges tu pick para la <b>Semana ${w}</b>${kickoffLocal ? ` y el próximo kickoff es el <b>${kickoffLocal}</b> (hora CDMX)` : ''}. Entra a la app y elige tu equipo antes de que cierre.`,
-          ctaText: 'Hacer mi pick',
-          ctaUrl: base,
-          footnote: 'Si no eliges a tiempo, el sistema puede asignarte automáticamente el favorito más fuerte disponible que no hayas usado.',
+          body: `Aún no eliges tu pick${kickoffLocal ? ` — kickoff ${kickoffLocal} (CDMX)` : ''}.`,
+          url: base,
         });
-        const text = `Hola ${prof.display_name || ''},\n\nTodavía no eliges tu pick para la Semana ${w}${kickoffLocal ? ` (próximo kickoff: ${kickoffLocal} hora CDMX)` : ''}.\nEntra aquí: ${base}\n\nSi no eliges a tiempo, se puede aplicar autopick del favorito más fuerte disponible.`;
-
-        await sendEmail(prof.email, `⏰ Falta poco para cerrar la Semana ${w} — ${LEAGUE_NAME}`, text, html);
-        sent++;
+        sent += pushed;
       }
     }
     res.status(200).json({ ok: true, sent });

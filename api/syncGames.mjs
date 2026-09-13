@@ -26,17 +26,24 @@ function scoreFor(scores, teamName) {
 }
 
 async function syncFromOddsApi() {
-  // /odds trae próximos partidos (h2h es el market más barato, solo
-  // necesitamos el calendario aquí; los spreads/ML los llena syncOdds.mjs).
-  // /scores trae partidos en vivo/terminados de los últimos días.
-  const [upcoming, recent] = await Promise.all([
-    fetchOddsApiJSON('odds', { regions: 'us', markets: 'h2h', oddsFormat: 'american', dateFormat: 'iso' }),
+  // /events trae TODO el calendario (toda la temporada, sin importar si ya
+  // hay línea de apuesta publicada) y no gasta cuota -- es la fuente de
+  // verdad de qué partidos existen. Antes solo se usaba /odds, que solo
+  // devuelve partidos con mercado h2h ya publicado (las casas de apuestas
+  // no postean líneas de partidos que faltan varias semanas), así que
+  // partidos reales -- p.ej. Seattle vs Patriots -- no aparecían en la app
+  // hasta que alguien publicara una línea. /odds sigue trayendo spreads/ML
+  // para los que ya tienen mercado abierto; /scores trae en vivo/terminados.
+  const [schedule, upcoming, recent] = await Promise.all([
+    fetchOddsApiJSON('events', { dateFormat: 'iso' }),
+    fetchOddsApiJSON('odds', { regions: 'us', markets: 'h2h', oddsFormat: 'american', dateFormat: 'iso' }).catch(() => []),
     fetchOddsApiJSON('scores', { daysFrom: '3', dateFormat: 'iso' }).catch(() => []),
   ]);
 
   const byId = new Map();
-  for (const ev of upcoming || []) byId.set(ev.id, { ...ev, _live: false });
-  for (const ev of recent || []) byId.set(ev.id, { ...ev, _live: true });
+  for (const ev of schedule || []) byId.set(ev.id, { ...ev, _live: false });
+  for (const ev of upcoming || []) byId.set(ev.id, { ...byId.get(ev.id), ...ev, _live: false });
+  for (const ev of recent || []) byId.set(ev.id, { ...byId.get(ev.id), ...ev, _live: true });
 
   let upserts = 0;
   const weeksSeen = new Set();

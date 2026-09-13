@@ -7,8 +7,21 @@
   - SUPABASE_SERVICE_ROLE_KEY (o SUPABASE_SERVICE_ROLE), SEASON=2026
   - **ODDS_API_KEY** (the-odds-api.com, tiene plan gratuito ~500 requests/mes) — fuente de partidos/marcadores/líneas
   - (opcional) SEASON_WEEK1_START (fecha ISO del martes previo al primer jueves de temporada; ya trae default para 2025/2026)
-  - (opcional) RESEND_API_KEY, EMAIL_FROM
+  - (opcional) RESEND_API_KEY, EMAIL_FROM — para que los recordatorios de pick lleguen por correo de verdad (si faltan, solo se loguean en la consola de Vercel)
+  - (opcional, notificaciones push) **VAPID_PUBLIC_KEY**, **VAPID_PRIVATE_KEY**, **VITE_VAPID_PUBLIC_KEY** (mismo valor que VAPID_PUBLIC_KEY) — ver sección 6
   - **CRON_TOKEN** = (elige un token seguro, ej. `luis-123-xyz`)
+
+### Al arrancar una temporada nueva (2027, 2028, ...)
+Además de `VITE_SEASON`/`SEASON` en Vercel, actualiza también la fila que usa
+el rollover automático de perfiles (reinicia vidas a 2 y limpia eliminación
+la primera vez que cada jugador entra en la temporada nueva):
+```sql
+update public.app_config set value = '2027' where key = 'season';
+```
+Se dejó en una tabla aparte (en vez de confiar en un valor que mande el
+navegador) porque `profiles` ya no permite que el cliente escriba
+`season`/`lives`/`eliminated_at` directamente -- ver la nota de seguridad
+más abajo.
 
 ### Por qué ya no se usa ESPN
 `site.api.espn.com` bloquea por IP a los servidores de Vercel/AWS (confirmado:
@@ -17,9 +30,19 @@ función serverless). `syncGames.mjs` y `syncScores.mjs` ahora usan The Odds
 API. Esa fuente no tiene estadísticas de equipo, líderes de partido, lesiones
 ni "últimos 5 juegos" — esas secciones del modal de detalles se quitaron.
 
+### Partidos que no aparecían (ej. Seattle vs Patriots)
+`syncGames.mjs` armaba el calendario únicamente a partir de `/odds`, que solo
+devuelve partidos con línea de apuesta (mercado h2h) ya publicada. Las casas
+de apuestas no postean líneas de todos los partidos con semanas de
+anticipación, así que partidos reales del calendario simplemente no
+existían todavía en la tabla `games` -- no había forma de pickearlos. Se
+agregó `/events` (calendario completo de la temporada, no gasta cuota de la
+API) como fuente de verdad de qué partidos existen; `/odds` sigue llenando
+spread/moneyline solo para los que ya tienen mercado abierto.
+
 ## 2) Cron diario en Vercel (permitido en Hobby)
-- Settings → Functions → Cron Jobs:
-  - `/api/syncGames?token=CRON_TOKEN` → `0 6 * * *` (descubre calendario nuevo; usa el endpoint `/odds` de The Odds API, el que más cuota consume, por eso una vez al día basta)
+- Ya configurado en `vercel.json` (Cron Jobs de Vercel, no necesitas tocar nada):
+  - `/api/syncGames?token=CRON_TOKEN` → `0 6 * * *` (descubre calendario nuevo; usa `/odds`, el endpoint de The Odds API que más cuota consume, por eso una vez al día basta)
 
 ## 3) Cron cada 30 min con GitHub Actions (recomendado, ya está en el repo)
 `.github/workflows/cron.yml` corre `syncScores` + `settleWeek` + `autopick`
@@ -70,5 +93,35 @@ export default {
 - Luego: `/api/syncScores?token=CRON_TOKEN` → debe responder ok.
 - Revisa Logs en Vercel → Functions.
 
+## 6) Notificaciones push (opcional)
+Cada jugador puede activarlas desde Ajustes → "Activar notificaciones". Hay
+dos disparadores:
+- Recordatorio de pick (`api/sendReminders.mjs`, junto con el correo) cuando
+  falta poco para que cierre su pick.
+- Resultado (`api/control.mjs`, dentro de `settleWeek`) en cuanto un pick
+  pasa de pendiente a ganado/perdido/push -- incluye un aviso especial si
+  esa pérdida lo deja eliminado. Se manda como mucho una vez por pick, sin
+  importar cuántas veces corra `settleWeek` (es idempotente: solo evalúa
+  picks todavía en `result='pending'`), y sin importar si quien la disparó
+  fue el cron o cualquier jugador con la app abierta -- `settleWeek` corre
+  para todos, no solo para quien la llama.
+
+- Genera un par de llaves VAPID una sola vez (no se vuelve a repetir salvo
+  que quieras rotarlas):
+  ```
+  npx web-push generate-vapid-keys
+  ```
+- Agrega en Vercel:
+  - `VAPID_PUBLIC_KEY` y `VAPID_PRIVATE_KEY` (la privada nunca debe ir al
+    cliente ni a git)
+  - `VITE_VAPID_PUBLIC_KEY` = el mismo valor que `VAPID_PUBLIC_KEY` (este sí
+    va al bundle del navegador, es la mitad pública)
+  - (opcional) `VAPID_SUBJECT` = `mailto:tu-correo@ejemplo.com`
+- Sin `VITE_VAPID_PUBLIC_KEY` la tarjeta de Ajustes se queda en "tu
+  navegador no soporta notificaciones push"; sin `VAPID_PRIVATE_KEY`,
+  `sendReminders` simplemente no manda push (el correo sigue funcionando
+  igual).
+
 ## Seguridad
 - Los endpoints exigen el `CRON_TOKEN` por query `?token=` o header `x-cron-token`.
+- `profiles`: RLS solo deja que cada quien edite su propia fila (`auth.uid() = id`), pero eso no distingue columnas -- por defecto Postgres deja editar cualquier columna de esa fila. Se restringió el `GRANT UPDATE` de `authenticated` a solo `display_name` y `notify_email`; `lives`, `is_admin`, `eliminated_at` y `season` solo los puede tocar el service role (endpoint admin en `api/control.mjs`) o la función `rollover_my_season()` (que no confía en un valor mandado por el navegador, lee la temporada objetivo de `public.app_config`). Antes de este cambio cualquier jugador podía, desde la consola del navegador, hacer `supabase.from('profiles').update({is_admin:true})` sobre su propia fila.

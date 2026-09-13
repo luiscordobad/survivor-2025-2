@@ -1,12 +1,16 @@
 {
   "name": "Survivor 2026",
   "short_name": "Survivor",
+  "description": "Survivor NFL 2026 con tus amigos: picks semanales, standings y resultados en vivo.",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
+  "orientation": "portrait-primary",
   "background_color": "#0a0d14",
   "theme_color": "#0a0d14",
+  "lang": "es",
   "icons": [
-    { "src": "/icon-192.png", "type": "image/png", "sizes": "192x192" },
-    { "src": "/icon-512.png", "type": "image/png", "sizes": "512x512" }
+    { "src": "/icon-192.png", "type": "image/png", "sizes": "192x192", "purpose": "any" },
+    { "src": "/icon-512.png", "type": "image/png", "sizes": "512x512", "purpose": "any" }
   ]
 }
