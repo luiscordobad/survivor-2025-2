@@ -151,13 +151,43 @@ async function autopickForUser(userId, week) {
   return { picked: choice.team, game_id: choice.game.id };
 }
 
+/**
+ * Ajustes de admin sobre otro jugador (vidas / eliminado). Necesita
+ * service role porque profiles solo permite UPDATE de auth.uid() = id vía
+ * RLS -- un admin no puede tocar la fila de otro jugador desde el cliente.
+ */
+async function adminUpdatePlayer(targetUserId, { lives, eliminated }) {
+  const patch = {};
+  if (lives != null) patch.lives = Math.max(0, Math.trunc(Number(lives)));
+  if (eliminated != null) patch.eliminated_at = eliminated ? new Date().toISOString() : null;
+  if (!Object.keys(patch).length) return { updated: false };
+
+  const { error } = await sb.from('profiles').update(patch).eq('id', targetUserId);
+  if (error) throw error;
+  return { updated: true, ...patch };
+}
+
 export default async function handler(req, res) {
   try {
-    const { token, action, week, user_id } = req.query;
+    const params = { ...req.query, ...(req.body || {}) };
+    const { token, action, week, user_id } = params;
     const isCron = !!CRON_TOKEN && token === CRON_TOKEN;
     const authedUserId = isCron ? null : await getAuthedUserId(req);
     if (!isCron && !authedUserId) {
       return res.status(401).json({ ok: false, error: 'unauthorized' });
+    }
+
+    if (action === 'adminUpdatePlayer') {
+      if (!isCron) {
+        const { data: prof } = await sb.from('profiles').select('is_admin').eq('id', authedUserId).maybeSingle();
+        if (!prof?.is_admin) return res.status(403).json({ ok: false, error: 'forbidden: solo admin' });
+      }
+      const targetUser = user_id;
+      if (!targetUser) return res.status(400).json({ ok: false, error: 'missing user_id' });
+      const lives = params.lives != null ? Number(params.lives) : null;
+      const eliminated = params.eliminated != null ? params.eliminated === 'true' || params.eliminated === true : null;
+      const r = await adminUpdatePlayer(targetUser, { lives, eliminated });
+      return res.json({ ok: true, action, user_id: targetUser, ...r });
     }
 
     if (action === 'settleWeek') {

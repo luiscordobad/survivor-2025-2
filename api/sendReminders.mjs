@@ -54,8 +54,8 @@ export default async function handler(req, res) {
       for (const m of members || []) {
         const { data: pick } = await supa.from('picks').select('id').eq('user_id', m.id).eq('week', w).eq('season', SEASON).maybeSingle();
         if (pick) continue;
-        const { data: prof } = await supa.from('profiles').select('email, display_name').eq('id', m.id).maybeSingle();
-        if (!prof?.email) continue;
+        const { data: prof } = await supa.from('profiles').select('email, display_name, notify_email').eq('id', m.id).maybeSingle();
+        if (!prof?.email || prof.notify_email === false) continue;
 
         const html = emailShell({
           title: `⏰ Falta poco para cerrar la Semana ${w}`,

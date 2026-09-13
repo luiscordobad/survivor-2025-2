@@ -34,6 +34,180 @@ function Countdown({ iso }) {
   return <span>{left}</span>;
 }
 
+function Skel({ className = "" }) {
+  return <div className={clsx("skel", className)} />;
+}
+
+function GameCardSkeleton({ count = 4 }) {
+  return (
+    <>
+      {Array.from({ length: count }, (_, i) => (
+        <div key={i} className="p-4 border rounded-2xl bg-white card">
+          <div className="flex items-center justify-between">
+            <Skel className="h-3 w-24" />
+            <Skel className="h-3 w-16" />
+          </div>
+          <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="flex items-center gap-3">
+              <Skel className="h-10 w-10 rounded-full" />
+              <Skel className="h-4 w-28" />
+            </div>
+            <div className="flex items-center gap-3">
+              <Skel className="h-10 w-10 rounded-full" />
+              <Skel className="h-4 w-28" />
+            </div>
+          </div>
+        </div>
+      ))}
+    </>
+  );
+}
+
+function TableSkeleton({ rows = 6, cols = 5 }) {
+  return (
+    <div className="p-4 border rounded-2xl bg-white card">
+      <Skel className="h-4 w-40 mb-4" />
+      <div className="space-y-2">
+        {Array.from({ length: rows }, (_, r) => (
+          <div key={r} className="flex items-center gap-3">
+            {Array.from({ length: cols }, (_, c) => (
+              <Skel key={c} className="h-3 flex-1" />
+            ))}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ListSkeleton({ rows = 5 }) {
+  return (
+    <div className="space-y-3">
+      {Array.from({ length: rows }, (_, i) => (
+        <div key={i} className="p-4 border rounded-2xl bg-white card">
+          <Skel className="h-4 w-2/3 mb-2" />
+          <Skel className="h-3 w-1/3" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* ========================= PWA: instalar app ========================= */
+function isStandaloneNow() {
+  return (
+    window.matchMedia?.("(display-mode: standalone)")?.matches ||
+    window.navigator.standalone === true
+  );
+}
+function isIOSDevice() {
+  return /iphone|ipad|ipod/i.test(navigator.userAgent) ||
+    (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+}
+
+function usePwaInstall() {
+  const [deferredPrompt, setDeferredPrompt] = useState(null);
+  const [installed, setInstalled] = useState(isStandaloneNow());
+  const isIOS = useMemo(isIOSDevice, []);
+
+  useEffect(() => {
+    const onBeforeInstall = (e) => {
+      e.preventDefault();
+      setDeferredPrompt(e);
+    };
+    const onInstalled = () => {
+      setInstalled(true);
+      setDeferredPrompt(null);
+    };
+    window.addEventListener("beforeinstallprompt", onBeforeInstall);
+    window.addEventListener("appinstalled", onInstalled);
+    return () => {
+      window.removeEventListener("beforeinstallprompt", onBeforeInstall);
+      window.removeEventListener("appinstalled", onInstalled);
+    };
+  }, []);
+
+  const promptInstall = async () => {
+    if (!deferredPrompt) return false;
+    deferredPrompt.prompt();
+    const { outcome } = await deferredPrompt.userChoice.catch(() => ({ outcome: "dismissed" }));
+    setDeferredPrompt(null);
+    return outcome === "accepted";
+  };
+
+  return {
+    installed,
+    isIOS,
+    canPromptNative: !!deferredPrompt,
+    promptInstall,
+    // en iOS Safari nunca hay beforeinstallprompt: mostramos instrucciones manuales
+    showIOSHint: isIOS && !installed,
+  };
+}
+
+function InstallAppCard() {
+  const pwa = usePwaInstall();
+  if (pwa.installed) {
+    return (
+      <div className="p-4 border rounded-2xl bg-white card text-sm">
+        <p>✅ La app ya está instalada en este dispositivo.</p>
+      </div>
+    );
+  }
+  return (
+    <div className="p-4 border rounded-2xl bg-white card text-sm space-y-2">
+      <h3 className="font-semibold">📲 Agregar a pantalla de inicio</h3>
+      {pwa.canPromptNative ? (
+        <>
+          <p className="text-gray-600">Instálala como app: acceso directo, pantalla completa y carga más rápida.</p>
+          <button className="btn btn-primary mt-1" onClick={pwa.promptInstall}>Instalar app</button>
+        </>
+      ) : pwa.showIOSHint ? (
+        <p className="text-gray-600">
+          En iPhone/iPad: toca el botón <b>Compartir</b> (□ con flecha ↑) en Safari y luego{" "}
+          <b>"Agregar a pantalla de inicio"</b>.
+        </p>
+      ) : (
+        <p className="text-gray-600">
+          Desde el menú de tu navegador busca <b>"Instalar app"</b> o <b>"Agregar a pantalla de inicio"</b>.
+        </p>
+      )}
+    </div>
+  );
+}
+
+function InstallBanner() {
+  const pwa = usePwaInstall();
+  const [dismissed, setDismissed] = useState(() => {
+    try { return localStorage.getItem("pwaInstallDismissed") === "1"; } catch { return false; }
+  });
+  const dismiss = () => {
+    setDismissed(true);
+    try { localStorage.setItem("pwaInstallDismissed", "1"); } catch {}
+  };
+  if (pwa.installed || dismissed) return null;
+  if (!pwa.canPromptNative && !pwa.showIOSHint) return null;
+
+  return (
+    <div className="border-b" style={{ background: "var(--bg-elev)", borderColor: "var(--border)" }}>
+      <div className="max-w-6xl mx-auto px-4 py-2 flex items-center justify-between gap-3 text-sm">
+        <span>
+          📲{" "}
+          {pwa.canPromptNative
+            ? "Instala la app para acceso rápido."
+            : "Agrégala a tu pantalla de inicio: Compartir → \"Agregar a pantalla de inicio\"."}
+        </span>
+        <div className="flex items-center gap-2 shrink-0">
+          {pwa.canPromptNative && (
+            <button className="btn btn-primary !py-1 !px-2 text-xs" onClick={pwa.promptInstall}>Instalar</button>
+          )}
+          <button className="text-xs underline" onClick={dismiss}>Ahora no</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function downloadCSV(filename, rows) {
   const esc = (v) => (v == null ? "" : `"${String(v).replaceAll('"', '""')}"`);
   const csv = rows.map((r) => r.map(esc).join(",")).join("\n") + "\n";
@@ -339,17 +513,17 @@ function Login() {
 export default function AppRoot() {
   const session = useSession();
 
-  // Kill-switch de Service Worker para evitar pantalla blanca por caché vieja
+  // Service worker real (cache-first para assets, network-first para
+  // navegación) en vez del kill-switch anterior. sw.js sube su propia
+  // versión de caché en cada release para no repetir el bug de pantalla
+  // blanca por caché vieja.
   useEffect(() => {
     if ("serviceWorker" in navigator) {
-      navigator.serviceWorker
-        .getRegistrations?.()
-        .then((regs) => regs.forEach((r) => r.unregister()))
-        .catch(() => {});
+      navigator.serviceWorker.register("/sw.js").catch(() => {});
     }
   }, []);
 
-  const [view, setView] = useState("game"); // game | standings | assistant | news | rules
+  const [view, setView] = useState("game"); // game | standings | assistant | news | settings | rules
   if (!session) return <Login />;
 
   const NAV_ITEMS = [
@@ -357,6 +531,7 @@ export default function AppRoot() {
     ["standings", "Standings", "🏆"],
     ["assistant", "Asistente", "🤖"],
     ["news", "Noticias", "📰"],
+    ["settings", "Ajustes", "⚙️"],
     ["rules", "Reglas", "📋"],
   ];
 
@@ -380,6 +555,8 @@ export default function AppRoot() {
         </div>
       </div>
 
+      <InstallBanner />
+
       {/* Bottom nav: solo mobile */}
       <nav className="bottom-nav md:hidden">
         {NAV_ITEMS.map(([key, label, icon]) => (
@@ -402,6 +579,8 @@ export default function AppRoot() {
         <AssistantTab session={session} />
       ) : view === "news" ? (
         <NewsTab />
+      ) : view === "settings" ? (
+        <SettingsTab session={session} />
       ) : (
         <Rules />
       )}
@@ -1375,7 +1554,8 @@ function GamesTab({ session }) {
       <section className="mt-4 p-4 border rounded-2xl bg-white card">
         <h2 className="font-semibold mb-3">Partidos W{week}</h2>
         <div className="space-y-3">
-          {gamesFiltered.map((g) => {
+          {!lastUpdated && <GameCardSkeleton count={4} />}
+          {!!lastUpdated && gamesFiltered.map((g) => {
             const locked = DateTime.fromISO(g.start_time) <= DateTime.now();
             const local = DateTime.fromISO(g.start_time).setZone(TZ).toFormat("EEE dd LLL HH:mm");
             const { last } = oddsPairs[g.id] || {};
@@ -1509,7 +1689,7 @@ function GamesTab({ session }) {
               </div>
             );
           })}
-          {(!gamesFiltered || gamesFiltered.length === 0) && (
+          {!!lastUpdated && (!gamesFiltered || gamesFiltered.length === 0) && (
             <div className="text-sm text-gray-500">No hay partidos con este filtro/búsqueda.</div>
           )}
         </div>
@@ -2128,7 +2308,10 @@ function StandingsTab() {
     return (
       <div className="max-w-6xl mx-auto p-4 md:p-6">
         <h1 className="text-2xl font-extrabold mb-3">Standings NFL</h1>
-        <p className="text-sm text-gray-500">Cargando…</p>
+        <div className="grid md:grid-cols-2 gap-4">
+          <TableSkeleton rows={8} cols={6} />
+          <TableSkeleton rows={8} cols={6} />
+        </div>
       </div>
     );
   }
@@ -2579,7 +2762,7 @@ function NewsTab() {
     <div className="max-w-4xl mx-auto p-4 md:p-6">
       <h1 className="text-2xl font-extrabold mb-3">Noticias NFL</h1>
 
-      {loading && <p className="text-sm text-gray-500">Cargando…</p>}
+      {loading && <ListSkeleton rows={5} />}
 
       {!loading && err && (
         <div className="p-4 border rounded-2xl bg-white card text-sm text-red-600">
@@ -2604,6 +2787,184 @@ function NewsTab() {
           </a>
         ))}
       </div>
+    </div>
+  );
+}
+
+/* ========================= Ajustes ========================= */
+function SettingsTab({ session }) {
+  const uid = session?.user?.id || null;
+  const [me, setMe] = useState(null);
+  const [displayName, setDisplayName] = useState("");
+  const [notifyEmail, setNotifyEmail] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [savedMsg, setSavedMsg] = useState("");
+
+  const [players, setPlayers] = useState(null);
+  const [playersLoading, setPlayersLoading] = useState(false);
+  const [busyId, setBusyId] = useState(null);
+
+  useEffect(() => {
+    if (!uid) return;
+    (async () => {
+      const { data } = await supabase.from("profiles").select("*").eq("id", uid).maybeSingle();
+      if (data) {
+        setMe(data);
+        setDisplayName(data.display_name || "");
+        setNotifyEmail(data.notify_email !== false);
+      }
+    })();
+  }, [uid]);
+
+  const saveAccount = async () => {
+    if (!uid) return;
+    setSaving(true);
+    setSavedMsg("");
+    const { error } = await supabase
+      .from("profiles")
+      .update({ display_name: displayName.trim() || me?.display_name, notify_email: notifyEmail })
+      .eq("id", uid);
+    setSaving(false);
+    setSavedMsg(error ? `Error: ${error.message}` : "Guardado ✅");
+  };
+
+  const loadPlayers = async () => {
+    setPlayersLoading(true);
+    const { data } = await supabase
+      .from("profiles")
+      .select("id,email,display_name,lives,eliminated_at,is_admin,season")
+      .eq("season", SEASON)
+      .order("display_name", { ascending: true });
+    setPlayers(data || []);
+    setPlayersLoading(false);
+  };
+
+  useEffect(() => {
+    if (me?.is_admin) loadPlayers();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [me?.is_admin]);
+
+  const authHeaders = () => ({
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${session?.access_token || ""}`,
+  });
+
+  const adminAction = async (patch) => {
+    const r = await fetch(`${SITE}/api/control?action=adminUpdatePlayer`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify(patch),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || j.ok === false) throw new Error(j.error || "Error");
+  };
+
+  const adjustLives = async (p, delta) => {
+    setBusyId(p.id);
+    try {
+      const newLives = Math.max(0, (p.lives ?? 0) + delta);
+      await adminAction({ user_id: p.id, lives: newLives });
+      await loadPlayers();
+    } catch (e) {
+      alert(e.message);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const toggleEliminated = async (p) => {
+    setBusyId(p.id);
+    try {
+      await adminAction({ user_id: p.id, eliminated: !p.eliminated_at });
+      await loadPlayers();
+    } catch (e) {
+      alert(e.message);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  return (
+    <div className="max-w-4xl mx-auto p-4 md:p-6 space-y-6">
+      <h1 className="text-2xl font-extrabold">Ajustes</h1>
+
+      <div>
+        <h2 className="font-semibold mb-2">Mi cuenta</h2>
+        <div className="p-4 border rounded-2xl bg-white card space-y-3">
+          <div className="text-sm text-gray-500">{me?.email}</div>
+          <label className="block text-sm">
+            <span className="text-xs text-gray-500">Nombre para mostrar</span>
+            <input className="input w-full mt-1" value={displayName} onChange={(e) => setDisplayName(e.target.value)} />
+          </label>
+          <label className="inline-flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={notifyEmail} onChange={(e) => setNotifyEmail(e.target.checked)} />
+            Recibir recordatorios por correo cuando me falte hacer pick
+          </label>
+          <div className="flex items-center gap-3">
+            <button className="btn btn-primary" onClick={saveAccount} disabled={saving}>
+              {saving ? "Guardando…" : "Guardar"}
+            </button>
+            {savedMsg && <span className="text-sm text-gray-500">{savedMsg}</span>}
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <h2 className="font-semibold mb-2">App</h2>
+        <InstallAppCard />
+      </div>
+
+      {me?.is_admin && (
+        <div>
+          <h2 className="font-semibold mb-2">Jugadores (temporada {SEASON})</h2>
+          <div className="p-4 border rounded-2xl bg-white card overflow-x-auto">
+            {playersLoading && <TableSkeleton rows={6} cols={5} />}
+            {!playersLoading && (
+              <table className="w-full text-sm table-minimal">
+                <thead>
+                  <tr>
+                    <th>Jugador</th>
+                    <th>Email</th>
+                    <th>Vidas</th>
+                    <th>Estado</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(players || []).map((p) => (
+                    <tr key={p.id}>
+                      <td className="font-medium">{p.display_name}{p.is_admin ? " 👑" : ""}</td>
+                      <td className="text-gray-500">{p.email}</td>
+                      <td>
+                        <div className="flex items-center gap-1">
+                          <button className="btn btn-ghost !py-0.5 !px-2" disabled={busyId === p.id} onClick={() => adjustLives(p, -1)}>-</button>
+                          <span className="w-5 text-center inline-block">{p.lives}</span>
+                          <button className="btn btn-ghost !py-0.5 !px-2" disabled={busyId === p.id} onClick={() => adjustLives(p, 1)}>+</button>
+                        </div>
+                      </td>
+                      <td>
+                        {p.eliminated_at ? (
+                          <span className="badge badge-danger">Eliminado</span>
+                        ) : (
+                          <span className="badge">Activo</span>
+                        )}
+                      </td>
+                      <td>
+                        <button className="text-xs underline" disabled={busyId === p.id} onClick={() => toggleEliminated(p)}>
+                          {p.eliminated_at ? "Reactivar" : "Eliminar"}
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                  {!players?.length && (
+                    <tr><td colSpan={5} className="py-3 text-gray-500">Sin jugadores todavía.</td></tr>
+                  )}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
