@@ -12,6 +12,7 @@
 // lo usa. Las llamadas desde el navegador se autentican con el JWT de
 // Supabase del propio usuario (header Authorization: Bearer ...).
 import { createClient } from '@supabase/supabase-js';
+import { currentWeek } from './_theoddsapi.mjs';
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.VITE_SUPABASE_URL;
 const SERVICE_KEY  = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_ROLE || process.env.VITE_SUPABASE_SERVICE_KEY;
@@ -36,26 +37,24 @@ async function getAuthedUserId(req) {
   return data.user.id;
 }
 
-/** Evalúa (win/loss/push) todos los picks pendientes de juegos ya finalizados en la semana. */
+/**
+ * Evalúa (win/loss/push) todos los picks pendientes de juegos ya finalizados.
+ * Si `week` es null, lo hace para toda la temporada (uso normal del cron: no
+ * necesita saber qué semana va, y es idempotente/barato de sobra correrlo
+ * seguido -- solo toca picks en result='pending' de juegos ya en 'final').
+ */
 async function settleWeek(week) {
-  const { data: finalGames, error: gErr } = await sb
-    .from('games')
-    .select('id')
-    .eq('season', SEASON)
-    .eq('week', week)
-    .eq('status', 'final');
+  let gamesQuery = sb.from('games').select('id').eq('season', SEASON).eq('status', 'final');
+  if (week != null) gamesQuery = gamesQuery.eq('week', week);
+  const { data: finalGames, error: gErr } = await gamesQuery;
   if (gErr) throw gErr;
 
   const gameIds = (finalGames || []).map((g) => g.id);
   if (!gameIds.length) return { evaluated: 0 };
 
-  const { data: pending, error: pErr } = await sb
-    .from('picks')
-    .select('id')
-    .eq('season', SEASON)
-    .eq('week', week)
-    .in('game_id', gameIds)
-    .eq('result', 'pending');
+  let picksQuery = sb.from('picks').select('id').eq('season', SEASON).in('game_id', gameIds).eq('result', 'pending');
+  if (week != null) picksQuery = picksQuery.eq('week', week);
+  const { data: pending, error: pErr } = await picksQuery;
   if (pErr) throw pErr;
 
   let evaluated = 0;
@@ -161,14 +160,16 @@ export default async function handler(req, res) {
       return res.status(401).json({ ok: false, error: 'unauthorized' });
     }
 
-    const wk = Number(week || '1');
-
     if (action === 'settleWeek') {
       // Seguro para cualquier caller autenticado: no apunta a nadie en
       // particular y solo confirma resultados ya decididos por los marcadores.
+      // Sin `week` explícito, liquida toda la temporada (ideal para el cron).
+      const wk = week != null ? Number(week) : null;
       const r = await settleWeek(wk);
       return res.json({ ok: true, action, season: SEASON, week: wk, ...r });
     }
+
+    const wk = Number(week || currentWeek(SEASON));
 
     if (action === 'autopickOne') {
       const targetUser = user_id || authedUserId;

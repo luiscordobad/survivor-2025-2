@@ -21,40 +21,49 @@ ni "últimos 5 juegos" — esas secciones del modal de detalles se quitaron.
 - Settings → Functions → Cron Jobs:
   - `/api/syncGames?token=CRON_TOKEN` → `0 6 * * *` (descubre calendario nuevo; usa el endpoint `/odds` de The Odds API, el que más cuota consume, por eso una vez al día basta)
 
-## 3) Crons cada 5-15 min GRATIS con cron-job.org
-⚠️ **Cuidado con la cuota de The Odds API**: el plan gratis es de ~500
-requests/mes. `syncScores` es barato (usa solo `/scores`, sin markets), pero
-correr cada 5 minutos igual son ~8,600 requests/mes — se acaba la cuota en un
-par de días. Ajusta la frecuencia a lo que tu plan aguante, o corre `syncScores`
-solo durante las ventanas de partidos (jueves/domingo/lunes en vivo) en vez de
-24/7.
-- Crea cuenta en https://cron-job.org
-- Crea estos jobs GET (`settleWeek`/`autopick` sí necesitan `week=N`, actualízalo semana a semana):
-  1) `https://TU-PROYECTO.vercel.app/api/syncScores?token=CRON_TOKEN` → cada 15-30 minutos durante juegos en vivo
-  2) `https://TU-PROYECTO.vercel.app/api/control?action=settleWeek&week=N&token=CRON_TOKEN` → cada 15-30 minutos (liquida picks de juegos ya finalizados y descuenta vidas)
-  3) `https://TU-PROYECTO.vercel.app/api/control?action=autopick&week=N&token=CRON_TOKEN` → cada 30-60 minutos (autopick del favorito más fuerte para quien no eligió)
-  4) `https://TU-PROYECTO.vercel.app/api/sendReminders?token=CRON_TOKEN` → cada hora
-- En “Advanced” configura timezone a `America/Mexico_City` (opcional).
+## 3) Cron cada 30 min con GitHub Actions (recomendado, ya está en el repo)
+`.github/workflows/cron.yml` corre `syncScores` + `settleWeek` + `autopick`
+cada 30 minutos, y `sendReminders` ~cada hora, sin necesidad de crear cuenta
+en ningún servicio externo. `settleWeek`/`autopick` ya no necesitan `week=N`:
+si no se los pasas, `settleWeek` liquida toda la temporada y `autopick` usa
+la semana actual calculada por fecha.
 
-## 4) Alternativa: Cloudflare Workers (1 solo lugar)
-- Crea Worker con el siguiente handler:
+Solo falta que agregues 2 secrets del repo (Settings → Secrets and
+variables → Actions → New repository secret):
+- `SITE_URL` = `https://survivor-2025-maiztros.vercel.app` (sin `/` al final)
+- `CRON_TOKEN` = el mismo valor que ya tienes en Vercel
+
+En cuanto los agregues el workflow ya corre solo. Para probarlo antes de
+esperar 30 min: pestaña **Actions** del repo → "Survivor cron jobs" → **Run
+workflow**.
+
+⚠️ **Cuota de The Odds API**: el plan gratis es de ~500 requests/mes.
+`syncScores` internamente NO gasta cuota si no hay ningún juego en ventana de
+"posiblemente en vivo" (5h antes / 30min después de un kickoff), así que
+correrlo cada 30 min todo el día es seguro para el free tier.
+
+## 4) Alternativas (si prefieres no usar GitHub Actions)
+- **cron-job.org**: crea cuenta gratis y pega estas URLs como jobs GET:
+  1) `https://TU-PROYECTO.vercel.app/api/syncScores?token=CRON_TOKEN` → cada 15-30 min
+  2) `https://TU-PROYECTO.vercel.app/api/control?action=settleWeek&token=CRON_TOKEN` → cada 15-30 min
+  3) `https://TU-PROYECTO.vercel.app/api/control?action=autopick&token=CRON_TOKEN` → cada 30-60 min
+  4) `https://TU-PROYECTO.vercel.app/api/sendReminders?token=CRON_TOKEN` → cada hora
+- **Cloudflare Workers**:
 ```
 export default {
   async scheduled(event, env, ctx) {
     const base = 'https://TU-PROYECTO.vercel.app';
     const token = env.CRON_TOKEN;
-    const week = env.CURRENT_WEEK; // actualízalo semana a semana
     await Promise.all([
       fetch(`${base}/api/syncScores?token=${token}`),
-      fetch(`${base}/api/control?action=settleWeek&week=${week}&token=${token}`),
-      fetch(`${base}/api/control?action=autopick&week=${week}&token=${token}`),
+      fetch(`${base}/api/control?action=settleWeek&token=${token}`),
+      fetch(`${base}/api/control?action=autopick&token=${token}`),
       fetch(`${base}/api/sendReminders?token=${token}`)
     ]);
   }
 };
 ```
-- Variables del Worker: `CRON_TOKEN` = (igual que Vercel)
-- Cron Trigger: `*/15 * * * *` (ver nota de cuota arriba)
+  Cron Trigger: `*/30 * * * *`
 
 ## 5) Probar rápido
 - Abre en el navegador: `/api/syncGames?token=CRON_TOKEN` → debe responder `{"ok":true,...}` con partidos cargados.

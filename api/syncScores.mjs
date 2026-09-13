@@ -19,16 +19,32 @@ function scoreFor(scores, teamName) {
   return row?.score != null ? Number(row.score) : null;
 }
 
+// Cuánto antes/después de un posible juego en vivo vale la pena gastar una
+// llamada a The Odds API. Deja correr el cron cada 15-30 min todo el día sin
+// preocuparse por la cuota gratuita: fuera de ventana de juego no pega a la
+// API en absoluto.
+const LIVE_WINDOW_BEFORE_HOURS = 5;
+const LIVE_WINDOW_AFTER_MINUTES = 30;
+
 async function syncScores() {
   const { data: pending, error: pErr } = await sb
     .from('games')
-    .select('id')
+    .select('id, start_time')
     .eq('season', SEASON)
     .neq('status', 'final');
   if (pErr) throw pErr;
 
   const pendingIds = new Set((pending || []).map((g) => g.id));
   if (!pendingIds.size) return { updated: 0, checked: 0 };
+
+  const now = Date.now();
+  const windowStart = now - LIVE_WINDOW_BEFORE_HOURS * 3_600_000;
+  const windowEnd = now + LIVE_WINDOW_AFTER_MINUTES * 60_000;
+  const anyLiveish = (pending || []).some((g) => {
+    const t = new Date(g.start_time).getTime();
+    return t >= windowStart && t <= windowEnd;
+  });
+  if (!anyLiveish) return { updated: 0, checked: pendingIds.size, skipped: 'no_games_in_live_window' };
 
   const recent = await fetchOddsApiJSON('scores', { daysFrom: '3', dateFormat: 'iso' });
 
