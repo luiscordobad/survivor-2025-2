@@ -39,7 +39,6 @@ jobs:
           CRON_TOKEN: ${{ secrets.CRON_TOKEN }}
 
       - name: sendReminders (solo en el tick :00, ~cada hora)
-        if: ${{ contains(github.event.schedule, '*/30') }}
         run: |
           MIN=$(date -u +%M)
           if [ "$MIN" = "00" ]; then
