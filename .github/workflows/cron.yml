@@ -1,0 +1,52 @@
+name: Survivor cron jobs
+
+# Reemplaza a cron-job.org: GitHub Actions ya soporta cron y no necesitas
+# crear otra cuenta en ningún lado. Requiere 2 secrets del repo (Settings ->
+# Secrets and variables -> Actions):
+#   SITE_URL    = https://survivor-2025-maiztros.vercel.app  (sin / al final)
+#   CRON_TOKEN  = el mismo valor que tienes configurado en Vercel
+#
+# syncScores/syncGames usan la cuota gratuita de The Odds API (~500
+# requests/mes). syncScores internamente no gasta cuota si no hay ningún
+# juego en ventana de "posiblemente en vivo", así que corre seguido (cada
+# 30 min) sin preocuparse por eso. settleWeek/autopick/sendReminders no
+# tocan The Odds API en absoluto.
+on:
+  schedule:
+    - cron: '*/30 * * * *'
+  workflow_dispatch: {}
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: syncScores (marcadores en vivo, barato en cuota)
+        run: curl -fsS "$SITE_URL/api/syncScores?token=$CRON_TOKEN" || true
+        env:
+          SITE_URL: ${{ secrets.SITE_URL }}
+          CRON_TOKEN: ${{ secrets.CRON_TOKEN }}
+
+      - name: settleWeek (liquida picks de juegos ya finalizados)
+        run: curl -fsS "$SITE_URL/api/control?action=settleWeek&token=$CRON_TOKEN" || true
+        env:
+          SITE_URL: ${{ secrets.SITE_URL }}
+          CRON_TOKEN: ${{ secrets.CRON_TOKEN }}
+
+      - name: autopick (favorito más fuerte para quien no picó)
+        run: curl -fsS "$SITE_URL/api/control?action=autopick&token=$CRON_TOKEN" || true
+        env:
+          SITE_URL: ${{ secrets.SITE_URL }}
+          CRON_TOKEN: ${{ secrets.CRON_TOKEN }}
+
+      - name: sendReminders (solo en el tick :00, ~cada hora)
+        if: ${{ contains(github.event.schedule, '*/30') }}
+        run: |
+          MIN=$(date -u +%M)
+          if [ "$MIN" = "00" ]; then
+            curl -fsS "$SITE_URL/api/sendReminders?token=$CRON_TOKEN" || true
+          else
+            echo "skip (minuto $MIN, solo corre en :00)"
+          fi
+        env:
+          SITE_URL: ${{ secrets.SITE_URL }}
+          CRON_TOKEN: ${{ secrets.CRON_TOKEN }}

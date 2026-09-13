@@ -94,6 +94,12 @@ export function weekForDate(commenceTimeISO, season) {
   return Math.max(1, Math.floor(diffDays / 7) + 1);
 }
 
+// Semana NFL "de hoy", para que los cron jobs no necesiten saber qué
+// semana va: siempre pueden pedir la actual sin parámetro.
+export function currentWeek(season) {
+  return Math.min(18, weekForDate(new Date().toISOString(), season));
+}
+
 export async function fetchOddsApiJSON(path, params = {}) {
   const apiKey = process.env.ODDS_API_KEY;
   if (!apiKey) throw new Error("Missing ODDS_API_KEY");
