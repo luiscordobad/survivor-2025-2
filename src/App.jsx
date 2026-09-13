@@ -237,6 +237,13 @@ function usePushNotifications(session) {
     if (!supported || !uid) return;
     setBusy(true);
     try {
+      if (Notification.permission === "denied") {
+        alert(
+          "Los avisos están bloqueados para este sitio en tu navegador (por eso no aparece ningún permiso al hacer clic).\n\n" +
+          "Haz clic en el ícono junto a la URL (candado o el ícono de ajustes ⓘ) → \"Configuración del sitio\"/\"Permisos\" → busca \"Notificaciones\" → cámbialo a \"Permitir\". Luego recarga la página e inténtalo de nuevo."
+        );
+        return;
+      }
       const perm = await Notification.requestPermission();
       if (perm !== "granted") { alert("Permiso de notificaciones no concedido."); return; }
       const reg = await navigator.serviceWorker.ready;
