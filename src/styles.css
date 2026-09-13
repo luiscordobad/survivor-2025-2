@@ -3,39 +3,85 @@
 @tailwind components;
 @tailwind utilities;
 
-/* ====== Tokens simples ====== */
+/* ====== Tokens del sistema de diseño (dark, "app deportiva") ======
+   El resto de la app usa utilidades de Tailwind (bg-white, bg-black,
+   text-gray-500, etc.) remapeadas en tailwind.config.js a esta misma
+   paleta -- estas variables son para lo que no pasa por Tailwind
+   (scrollbars, selección de texto, el <body> base). */
 :root{
-  --ring: 0 0% 9%;
-  --card: 0 0% 100%;
-  --border: 214 32% 91%;
-  --muted: 215 16% 47%;
+  --bg: #0a0d14;          /* fondo de página */
+  --bg-elev: #12161f;     /* tarjetas / superficies elevadas */
+  --bg-elev-2: #1a202c;   /* hover / inputs */
+  --border: #262d3a;
+  --fg: #eef1f6;
+  --fg-muted: #8b93a7;
+  --accent: #22c55e;      /* verde "vivo" -- CTA, seleccionado */
+  --accent-fg: #04150a;
+  --danger: #f43f5e;
+  --live: #ef4444;
+  --warn: #f59e0b;
 }
+
+html, body, #root { height: 100%; }
+body {
+  background: var(--bg);
+  color: var(--fg);
+  -webkit-tap-highlight-color: transparent;
+}
+::selection { background: var(--accent); color: var(--accent-fg); }
+input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
+
+/* Scrollbar oscuro (Chrome/Edge) */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 999px; }
+::-webkit-scrollbar-thumb:hover { background: var(--bg-elev-2); }
 
 /* ====== Cards ====== */
 .card{
-  @apply bg-white border border-slate-200 rounded-2xl shadow-[0_1px_2px_rgba(0,0,0,0.04)] transition-all duration-200;
+  @apply bg-white border rounded-2xl shadow-[0_1px_2px_rgba(0,0,0,0.3)] transition-all duration-200;
+  border-color: var(--border);
 }
 .card:hover{
-  @apply shadow-[0_6px_16px_rgba(0,0,0,0.06)];
+  @apply shadow-[0_10px_24px_rgba(0,0,0,0.45)];
 }
 
 /* ====== Badges (pill) ====== */
 .badge{
-  @apply inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium border border-slate-200 text-slate-700 bg-slate-50;
+  @apply inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium border;
+  border-color: var(--border);
+  color: var(--fg-muted);
+  background: var(--bg-elev-2);
 }
 .badge-warn{
-  @apply border-amber-200 bg-amber-50 text-amber-700;
+  color: var(--warn);
+  background: rgba(245, 158, 11, 0.12);
+  border-color: rgba(245, 158, 11, 0.35);
 }
 .badge-danger{
-  @apply border-rose-200 bg-rose-50 text-rose-700;
+  color: #fb7185;
+  background: rgba(244, 63, 94, 0.12);
+  border-color: rgba(244, 63, 94, 0.35);
+}
+.badge-live{
+  color: #fff;
+  background: var(--live);
+  border-color: var(--live);
+  animation: pulse-live 1.6s ease-in-out infinite;
+}
+@keyframes pulse-live {
+  0%, 100% { opacity: 1; }
+  50% { opacity: .65; }
 }
 
 /* ====== Progressbar popularidad ====== */
 .progressbar{
-  @apply h-2 w-full rounded-full bg-slate-100 overflow-hidden;
+  @apply h-2 w-full rounded-full overflow-hidden;
+  background: var(--bg-elev-2);
 }
 .progressbar > div{
-  @apply h-full rounded-full bg-slate-900 transition-[width] duration-500;
+  @apply h-full rounded-full transition-[width] duration-500;
+  background: var(--accent);
 }
 
 /* ====== Tabla minimal ====== */
@@ -43,46 +89,102 @@
   @apply text-sm;
 }
 .table-minimal thead th{
-  @apply text-left font-semibold text-slate-600 bg-slate-50 border-b border-slate-200 px-3 py-2 first:rounded-tl-xl last:rounded-tr-xl;
+  @apply text-left font-semibold px-3 py-2 first:rounded-tl-xl last:rounded-tr-xl border-b;
+  color: var(--fg-muted);
+  background: var(--bg-elev-2);
+  border-color: var(--border);
 }
 .table-minimal tbody td{
-  @apply px-3 py-2 border-b border-slate-100 align-middle;
+  @apply px-3 py-2 border-b align-middle;
+  border-color: var(--border);
 }
 .table-minimal tbody tr:hover td{
-  @apply bg-slate-50/60;
+  background: var(--bg-elev-2);
 }
 
 /* ====== Botones base ====== */
 .btn{
-  @apply inline-flex items-center justify-center gap-2 px-3 py-1.5 rounded-lg border border-slate-200 text-slate-800 bg-white hover:bg-slate-50 transition;
+  @apply inline-flex items-center justify-center gap-2 px-3 py-1.5 rounded-lg border transition;
+  border-color: var(--border);
+  color: var(--fg);
+  background: var(--bg-elev);
 }
+.btn:hover{ background: var(--bg-elev-2); }
 .btn-primary{
-  @apply border-slate-900 bg-slate-900 text-white hover:bg-black;
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-fg);
+  font-weight: 600;
 }
+.btn-primary:hover{ filter: brightness(1.08); }
 .btn-ghost{
-  @apply border-transparent bg-transparent hover:bg-slate-50;
+  @apply border-transparent bg-transparent;
 }
+.btn-ghost:hover{ background: var(--bg-elev-2); }
 
 /* ====== Segmented (tabs del header) ====== */
 .seg{
-  @apply inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-slate-200 text-[13px] font-medium bg-white hover:bg-slate-50 transition;
+  @apply inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border text-[13px] font-medium transition;
+  border-color: var(--border);
+  background: var(--bg-elev);
+  color: var(--fg-muted);
 }
+.seg:hover{ background: var(--bg-elev-2); color: var(--fg); }
 .seg-active{
-  @apply bg-slate-900 text-white border-slate-900 hover:bg-black;
+  background: var(--accent);
+  color: var(--accent-fg);
+  border-color: var(--accent);
 }
+.seg-active:hover{ background: var(--accent); }
 
 /* ====== Inputs ====== */
 .input{
-  @apply border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-slate-900/10;
+  @apply border rounded-lg px-3 py-2 focus:outline-none;
+  background: var(--bg-elev);
+  border-color: var(--border);
+  color: var(--fg);
 }
+.input:focus{ box-shadow: 0 0 0 2px rgba(34,197,94,.35); border-color: var(--accent); }
 .select{
-  @apply border border-slate-200 rounded-lg px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10;
+  @apply border rounded-lg px-2 py-1 text-sm focus:outline-none;
+  background: var(--bg-elev);
+  border-color: var(--border);
+  color: var(--fg);
 }
+.select:focus{ box-shadow: 0 0 0 2px rgba(34,197,94,.35); border-color: var(--accent); }
 
 /* ====== Utilidades extra ====== */
 .sticky-nav{
-  @apply sticky top-0 z-50 bg-white/80 backdrop-blur supports-[backdrop-filter]:bg-white/60 border-b border-slate-200;
+  @apply sticky top-0 z-50 backdrop-blur border-b;
+  background: rgba(10, 13, 20, 0.85);
+  border-color: var(--border);
 }
 .kicker{
-  @apply text-[11px] text-slate-500;
+  color: var(--fg-muted);
+  @apply text-[11px];
 }
+
+/* ====== Bottom tab bar (mobile) ====== */
+.bottom-nav{
+  @apply fixed bottom-0 left-0 right-0 z-50 flex items-stretch justify-around border-t;
+  background: rgba(10, 13, 20, 0.92);
+  backdrop-filter: blur(8px);
+  border-color: var(--border);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+.bottom-nav-item{
+  @apply flex-1 flex flex-col items-center justify-center gap-0.5 py-2 text-[11px] font-medium;
+  color: var(--fg-muted);
+}
+.bottom-nav-item.active{ color: var(--accent); }
+
+/* ====== Grid de standings (bracket de sobrevivencia) ====== */
+.pick-cell{
+  @apply inline-flex items-center justify-center rounded-md text-[10px] font-bold;
+  width: 26px; height: 26px;
+}
+.pick-cell-win{ background: rgba(34,197,94,.18); color: #4ade80; }
+.pick-cell-loss{ background: rgba(244,63,94,.18); color: #fb7185; text-decoration: line-through; }
+.pick-cell-push{ background: rgba(245,158,11,.18); color: #fbbf24; }
+.pick-cell-pending{ background: var(--bg-elev-2); color: var(--fg-muted); }
+.pick-cell-empty{ background: transparent; color: var(--fg-muted); opacity: .3; }

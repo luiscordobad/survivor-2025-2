@@ -225,7 +225,7 @@ function Login() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-white p-6">
+    <div className="min-h-screen flex items-center justify-center bg-[#0a0d14] p-6">
       <div className="w-full max-w-md border rounded-2xl p-6 bg-white card">
         <h1 className="text-2xl font-extrabold text-center">{LEAGUE}</h1>
 
@@ -236,7 +236,7 @@ function Login() {
               Ingresa tu nueva contraseña para tu cuenta.
             </p>
             <input
-              className="border p-2 w-full rounded-lg"
+              className="input w-full"
               type="password"
               placeholder="Nueva contraseña"
               value={newPwd1}
@@ -244,7 +244,7 @@ function Login() {
               required
             />
             <input
-              className="border p-2 w-full rounded-lg"
+              className="input w-full"
               type="password"
               placeholder="Confirmar nueva contraseña"
               value={newPwd2}
@@ -284,7 +284,7 @@ function Login() {
                   </button>
                 </div>
                 <input
-                  className="border p-2 w-full rounded-lg"
+                  className="input w-full"
                   placeholder="email"
                   type="email"
                   value={email}
@@ -292,7 +292,7 @@ function Login() {
                   required
                 />
                 <input
-                  className="border p-2 w-full rounded-lg"
+                  className="input w-full"
                   placeholder="contraseña"
                   type="password"
                   value={pwd}
@@ -316,7 +316,7 @@ function Login() {
             {tab === "magic" && (
               <form onSubmit={doMagic} className="mt-4 space-y-3">
                 <input
-                  className="border p-2 w-full rounded-lg"
+                  className="input w-full"
                   placeholder="tu@email.com"
                   type="email"
                   value={email}
@@ -352,30 +352,47 @@ export default function AppRoot() {
   const [view, setView] = useState("game"); // game | standings | assistant | news | rules
   if (!session) return <Login />;
 
+  const NAV_ITEMS = [
+    ["game", "Partidos", "🏈"],
+    ["standings", "Standings", "🏆"],
+    ["assistant", "Asistente", "🤖"],
+    ["news", "Noticias", "📰"],
+    ["rules", "Reglas", "📋"],
+  ];
+
   return (
-    <div className="min-h-screen bg-white text-slate-900">
+    <div className="min-h-screen bg-[#0a0d14] text-slate-900 pb-16 md:pb-0">
+      {/* Header: en desktop trae los tabs; en mobile solo la marca (los tabs viven en el bottom-nav) */}
       <div className="w-full border-b bg-white sticky top-0 z-50">
-        <div className="max-w-6xl mx-auto px-4 py-2 flex items-center gap-2">
-          {[
-            ["game", "Partidos"],
-            ["standings", "Standings"],
-            ["assistant", "Asistente"],
-            ["news", "Noticias"],
-            ["rules", "Reglas"],
-          ].map(([key, label]) => (
-            <button
-              key={key}
-              className={clsx(
-                "text-sm px-3 py-1 rounded",
-                view === key ? "bg-black text-white" : "border"
-              )}
-              onClick={() => setView(key)}
-            >
-              {label}
-            </button>
-          ))}
+        <div className="max-w-6xl mx-auto px-4 py-2 flex items-center gap-2 justify-between md:justify-start">
+          <span className="text-sm font-bold tracking-tight md:hidden">{LEAGUE}</span>
+          <div className="hidden md:flex items-center gap-2">
+            {NAV_ITEMS.map(([key, label]) => (
+              <button
+                key={key}
+                className={clsx("seg", view === key && "seg-active")}
+                onClick={() => setView(key)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
+
+      {/* Bottom nav: solo mobile */}
+      <nav className="bottom-nav md:hidden">
+        {NAV_ITEMS.map(([key, label, icon]) => (
+          <button
+            key={key}
+            className={clsx("bottom-nav-item", view === key && "active")}
+            onClick={() => setView(key)}
+          >
+            <span className="text-lg leading-none">{icon}</span>
+            <span>{label}</span>
+          </button>
+        ))}
+      </nav>
 
       {view === "game" ? (
         <GamesTab session={session} />
@@ -702,6 +719,10 @@ function GamesTab({ session }) {
   const gamesMap = useMemo(() => {
     const m = {}; (games || []).forEach((g) => (m[g.id] = g)); return m;
   }, [games]);
+
+  const allGamesMap = useMemo(() => {
+    const m = {}; (allGamesSeason || []).forEach((g) => (m[g.id] = g)); return m;
+  }, [allGamesSeason]);
 
   const pickFrozen = useMemo(() => isPickFrozen(myPickThisWeek, gamesMap), [myPickThisWeek, gamesMap]);
 
@@ -1148,11 +1169,60 @@ function GamesTab({ session }) {
     (allPicksSeason || []).forEach(p => {
       if (p.season !== SEASON) return;
       if (!map.has(p.user_id)) map.set(p.user_id, []);
-      map.get(p.user_id).push({ week: p.week, team_id: p.team_id, result: p.result });
+      map.get(p.user_id).push({ week: p.week, team_id: p.team_id, result: p.result, game_id: p.game_id });
     });
     for (const [, arr] of map) arr.sort((a, b) => a.week - b.week);
     return map;
   }, [allPicksSeason]);
+
+  function buildWeekShareText() {
+    const alive = (standingsSorted || []).filter((s) => (s.lives ?? 0) > 0);
+    const eliminated = (standingsSorted || []).filter((s) => (s.lives ?? 0) <= 0);
+    const lines = [];
+    lines.push(`🏈 ${LEAGUE} — Semana ${week}`);
+    lines.push("");
+    lines.push(`✅ Vivos (${alive.length}):`);
+    if (alive.length) {
+      alive.forEach((s) => {
+        const pick = (picksByUser.get(s.user_id) || []).find((p) => p.week === week);
+        const tag = pick ? `${pick.team_id}${pick.result && pick.result !== "pending" ? ` (${pick.result.toUpperCase()})` : ""}` : "sin pick";
+        lines.push(`• ${s.display_name || "Jugador"} — ${tag} · ${s.lives}❤️`);
+      });
+    } else {
+      lines.push("• Nadie 😱");
+    }
+    if (eliminated.length) {
+      lines.push("");
+      lines.push(`💀 Eliminados (${eliminated.length}): ${eliminated.map((s) => s.display_name || "Jugador").join(", ")}`);
+    }
+    lines.push("");
+    lines.push(`${LEAGUE} · survivor`);
+    return lines.join("\n");
+  }
+
+  async function shareWeek() {
+    const text = buildWeekShareText();
+    if (navigator.share) {
+      try {
+        await navigator.share({ text, title: `${LEAGUE} — Semana ${week}` });
+        return;
+      } catch {
+        // usuario canceló el share sheet u otro error; caemos a copiar
+      }
+    }
+    try {
+      await navigator.clipboard.writeText(text);
+      alert("Resumen copiado — pégalo en tu grupo de WhatsApp.");
+    } catch {
+      alert(text);
+    }
+  }
+
+  const survivorWeeks = useMemo(() => {
+    const maxWithPicks = (allPicksSeason || []).reduce((m, p) => Math.max(m, p.week || 0), 0);
+    const upTo = Math.max(week, maxWithPicks, 1);
+    return Array.from({ length: upTo }, (_, i) => i + 1);
+  }, [allPicksSeason, week]);
 
   /* ========================= Render ========================= */
   const nextKick = nextKickoffISO;
@@ -1203,7 +1273,7 @@ function GamesTab({ session }) {
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <label className="text-xs text-gray-500">Semana</label>
-              <select className="border p-1 rounded-lg" value={week} onChange={(e) => setWeek(Number(e.target.value))}>
+              <select className="select" value={week} onChange={(e) => setWeek(Number(e.target.value))}>
                 {Array.from({ length: 18 }, (_, i) => i + 1).map((w) => (
                   <option key={w} value={w}>W{w}</option>
                 ))}
@@ -1224,7 +1294,7 @@ function GamesTab({ session }) {
 
           <input
             ref={searchRef}
-            className="mt-3 border w-full p-2 rounded-lg"
+            className="input mt-3 w-full"
             placeholder="Buscar equipo..."
             value={teamQuery}
             onChange={(e) => setTeamQuery(e.target.value)}
@@ -1253,7 +1323,7 @@ function GamesTab({ session }) {
               <span>umbral:</span>
               <input
                 type="number"
-                className="border rounded px-2 py-1 w-16"
+                className="input px-2 py-1 w-16"
                 min={1} max={49}
                 value={diffCutoff}
                 onChange={(e) => setDiffCutoff(Math.max(1, Math.min(49, Number(e.target.value) || 20)))}
@@ -1284,6 +1354,9 @@ function GamesTab({ session }) {
               }
             >
               Exportar standings (CSV)
+            </button>
+            <button className="text-xs px-3 py-1 rounded border col-span-2" onClick={shareWeek}>
+              📤 Compartir resumen de la semana
             </button>
             <AutoPickButtons week={week} session={session} isAdmin={!!me?.is_admin} />
           </div>
@@ -1523,59 +1596,79 @@ function GamesTab({ session }) {
         </div>
       </section>
 
-      {/* ===== NUEVO: Standings de la liga (una sola tabla) ===== */}
+      {/* ===== Grid de sobrevivencia: quién sigue vivo, semana a semana ===== */}
       <section className="mt-6 p-4 border rounded-2xl bg-white card">
-        <div className="flex items-center justify-between">
-          <h2 className="font-semibold">Standings de la liga (temporada)</h2>
-          <p className="text-xs text-gray-500">Ranking: W → L → T → Margen</p>
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <h2 className="font-semibold">Grid de sobrevivencia</h2>
+          <div className="flex items-center gap-3 text-xs text-gray-500">
+            <span className="inline-flex items-center gap-1"><span className="inline-block w-2.5 h-2.5 rounded-sm" style={{ background: "#4ade80" }} />Ganó</span>
+            <span className="inline-flex items-center gap-1"><span className="inline-block w-2.5 h-2.5 rounded-sm" style={{ background: "#fb7185" }} />Perdió</span>
+            <span className="inline-flex items-center gap-1"><span className="inline-block w-2.5 h-2.5 rounded-sm" style={{ background: "#fbbf24" }} />Push</span>
+          </div>
         </div>
 
         <div className="overflow-x-auto mt-3">
-          <table className="w-full text-sm table-minimal">
+          <table className="text-sm table-minimal border-separate border-spacing-y-1">
             <thead>
               <tr>
-                <th>#</th>
-                <th>Jugador</th>
-                <th>W</th>
-                <th>L</th>
-                <th>T</th>
-                <th>Vidas</th>
-                <th>Margen</th>
-                <th>Picks (resumen)</th>
+                <th className="sticky left-0 bg-white z-10 pr-3">Jugador</th>
+                <th className="text-center">Vidas</th>
+                {survivorWeeks.map((w) => (
+                  <th key={w} className="text-center px-1">W{w}</th>
+                ))}
               </tr>
             </thead>
             <tbody>
-              {(standingsSorted || []).map((s, idx) => {
+              {(standingsSorted || []).map((s) => {
                 const isMe = s.user_id === uid;
+                const alive = (s.lives ?? 0) > 0;
                 const picksList = picksByUser.get(s.user_id) || [];
-                const summary = picksList.map(r => `W${r.week} ${r.team_id || "—"}`).join(" · ");
+                const byWeek = {};
+                picksList.forEach((p) => { byWeek[p.week] = p; });
                 return (
                   <tr key={s.user_id}>
-                    <td className="tabular-nums">{idx + 1}</td>
-                    <td className="whitespace-nowrap">
+                    <td className="sticky left-0 bg-white whitespace-nowrap pr-3">
                       <div className="flex items-center gap-2">
-                        <span>{s.display_name || s.user_id.slice(0,6)}</span>
-                        {isMe && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-gray-100">Tú</span>}
+                        <span className={!alive ? "line-through text-gray-500" : ""}>
+                          {s.display_name || s.user_id.slice(0, 6)}
+                        </span>
+                        {isMe && <span className="badge">Tú</span>}
+                        {!alive && <span className="badge badge-danger">Eliminado</span>}
                       </div>
                     </td>
-                    <td className="tabular-nums">{s.wins || 0}</td>
-                    <td className="tabular-nums">{s.losses || 0}</td>
-                    <td className="tabular-nums">{s.pushes || 0}</td>
-                    <td>
-                      <span className={clsx(
-                        "inline-block text-xs px-2 py-0.5 rounded",
-                        (s.lives ?? 0) > 0 ? "bg-emerald-100 text-emerald-800" : "bg-rose-100 text-rose-800"
-                      )}>
-                        {s.lives ?? 0}
-                      </span>
+                    <td className="text-center">
+                      <span className={clsx("badge", !alive && "badge-danger")}>{s.lives ?? 0}</span>
                     </td>
-                    <td className="tabular-nums">{s.margin_sum ?? 0}</td>
-                    <td className="text-xs text-gray-700 break-words">{summary || "Sin picks registrados."}</td>
+                    {survivorWeeks.map((w) => {
+                      const p = byWeek[w];
+                      if (!p) {
+                        return (
+                          <td key={w} className="text-center">
+                            <span className="pick-cell pick-cell-empty">—</span>
+                          </td>
+                        );
+                      }
+                      const g = allGamesMap[p.game_id];
+                      const res = p.result && p.result !== "pending"
+                        ? p.result
+                        : (g ? computePickResultFromGame(g, p.team_id) : "pending");
+                      const cellCls =
+                        res === "win" ? "pick-cell-win" :
+                        res === "loss" ? "pick-cell-loss" :
+                        res === "push" ? "pick-cell-push" : "pick-cell-pending";
+                      return (
+                        <td key={w} className="text-center">
+                          <span className={clsx("pick-cell", cellCls)} title={`${p.team_id} · ${res}`}>
+                            {p.team_id}
+                          </span>
+                        </td>
+                      );
+                    })}
                   </tr>
                 );
               })}
               {(!standingsSorted || standingsSorted.length === 0) && (
-                <tr><td className="py-2 text-gray-500" colSpan={8}>Sin datos aún.</td></tr>
+                <tr><td className="py-2 text-gray-500" colSpan={2 + survivorWeeks.length}>Sin datos aún.</td></tr>
               )}
             </tbody>
           </table>
@@ -1836,7 +1929,7 @@ function GamesTab({ session }) {
               <div className="text-sm font-semibold mb-2">Comentarios del juego</div>
               <div className="flex gap-2">
                 <input
-                  className="border rounded-lg p-2 w-full"
+                  className="input w-full"
                   placeholder="Escribe una nota (visible para la liga)…"
                   value={newNote}
                   onChange={(e) => setNewNote(e.target.value)}
@@ -2347,7 +2440,7 @@ function AssistantTab({ session }) {
         <h1 className="text-2xl font-extrabold">Asistente</h1>
         <div className="flex items-center gap-2">
           <label className="text-xs text-gray-500">Semana</label>
-          <select className="border p-1 rounded-lg" value={week} onChange={(e)=> setWeek(Number(e.target.value))}>
+          <select className="select" value={week} onChange={(e)=> setWeek(Number(e.target.value))}>
             {Array.from({ length: 18 }, (_, i) => i + 1).map((w) => (<option key={w} value={w}>W{w}</option>))}
           </select>
         </div>
