@@ -9,8 +9,18 @@ const SEASON       = Number(process.env.SEASON || '2026');
 const sb = createClient(SUPABASE_URL, SERVICE_KEY);
 
 // Helpers
+// ESPN devuelve 403 a peticiones que parecen bots (User-Agent genérico, sin
+// Referer/Origin de espn.com). Estos headers imitan un navegador real.
+const ESPN_HEADERS = {
+  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+  'Accept': 'application/json, text/plain, */*',
+  'Accept-Language': 'en-US,en;q=0.9',
+  'Referer': 'https://www.espn.com/',
+  'Origin': 'https://www.espn.com',
+};
+
 async function fetchJSON(url) {
-  const r = await fetch(url, { headers: { 'User-Agent': 'SurvivorSync/1.0', 'Accept':'application/json' }});
+  const r = await fetch(url, { headers: ESPN_HEADERS });
   if (!r.ok) throw new Error(`HTTP ${r.status} for ${url}`);
   return r.json();
 }
