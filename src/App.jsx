@@ -12,6 +12,7 @@ const SITE = import.meta.env.VITE_SITE_URL || "";
 const LEAGUE = import.meta.env.VITE_LEAGUE_NAME || "Maiztros Survivor 2026";
 const SEASON = Number(import.meta.env.VITE_SEASON || 2026);
 const VAPID_PUBLIC_KEY = import.meta.env.VITE_VAPID_PUBLIC_KEY || "";
+const AVATAR_CHOICES = ["🏈", "🦁", "🐺", "🐻", "🦅", "🐯", "🦍", "🐊", "🦈", "🐗", "🔥", "⚡", "💀", "🎯", "🏆", "🃏"];
 
 /* ========================= Utils ========================= */
 const clsx = (...xs) => xs.filter(Boolean).join(" ");
@@ -764,6 +765,7 @@ function GamesTab({ session }) {
   const [pendingPick, setPendingPick] = useState(null);
   const [pickSavedToast, setPickSavedToast] = useState(null);
   const [playerModalId, setPlayerModalId] = useState(null);
+  const [avatarMap, setAvatarMap] = useState({});
   const [lastUpdated, setLastUpdated] = useState(null);
 
   const [allGamesSeason, setAllGamesSeason] = useState([]);
@@ -972,6 +974,8 @@ function GamesTab({ session }) {
     setStandings(st || []);
     await loadLeaguePicks(week);
     await loadSeasonData();
+    const { data: profs } = await supabase.from("profiles").select("id, avatar_emoji");
+    setAvatarMap(Object.fromEntries((profs || []).map((p) => [p.id, p.avatar_emoji || "🏈"])));
     setLastUpdated(new Date().toISOString());
   };
 
@@ -1265,6 +1269,17 @@ function GamesTab({ session }) {
     return streak ? `${type}${streak}` : "—";
   }
 
+  function teamRecord(teamId) {
+    let w = 0, l = 0, t = 0;
+    (allGamesSeason || []).forEach((g) => {
+      if (g.home_team !== teamId && g.away_team !== teamId) return;
+      if (!hasGameEnded(g)) return;
+      const res = computePickResultFromGame(g, teamId);
+      if (res === "win") w++; else if (res === "loss") l++; else if (res === "push") t++;
+    });
+    return t ? `${w}-${l}-${t}` : `${w}-${l}`;
+  }
+
   function lastMatchupsSummary(homeId, awayId, maxN = 5) {
     const relevant = (allGamesSeason || [])
       .filter(x =>
@@ -1425,6 +1440,14 @@ function GamesTab({ session }) {
     const pct = popPct(teamId);
     const wp = winPctForTeam(game, teamId);
     const titleTxt = `${teamId} · Win% ${wp ?? "—"} · Popularidad ${pct}%`;
+    const isHome = teamId === game.home_team;
+
+    const isFinal = hasGameEnded(game);
+    const isWinner =
+      isFinal && game.home_score != null && game.away_score != null && game.home_score !== game.away_score &&
+      teamId === (game.home_score > game.away_score ? game.home_team : game.away_team);
+    const record = teamRecord(teamId);
+    const streak = teamStreak(teamId);
 
     return (
       <button
@@ -1432,8 +1455,9 @@ function GamesTab({ session }) {
         onClick={() => confirmPick(game, teamId)}
         disabled={disabled}
         className={clsx(
-          "w-full text-left rounded-xl border transition px-4 py-3",
-          selected ? "border-emerald-500 bg-emerald-50 card"
+          "w-full text-left rounded-xl border-2 transition px-4 py-3",
+          isWinner ? "border-emerald-500 card"
+            : selected ? "border-emerald-500 bg-emerald-50 card"
             : alreadyUsed ? "border-gray-200 card"
             : "border-gray-200 hover:bg-gray-50 card",
           disabled && "opacity-50 cursor-not-allowed"
@@ -1448,6 +1472,13 @@ function GamesTab({ session }) {
             {!alreadyUsed && fav && <span className="badge badge-warn">Fav</span>}
             {!alreadyUsed && pct < 15 && <span className="badge">DIF</span>}
           </div>
+        </div>
+        <div className="mt-1.5 flex items-center gap-2 text-xs text-gray-500">
+          {isHome && <span className="badge">LOCAL</span>}
+          <span>{record} · {streak}</span>
+        </div>
+        <div className="progressbar mt-2" title={`${pct}% de la liga pickeó ${teamId}`}>
+          <div style={{ width: `${pct}%` }} />
         </div>
       </button>
     );
@@ -1500,6 +1531,90 @@ function GamesTab({ session }) {
     return lines.join("\n");
   }
 
+  async function canvasToShareOrDownload(canvas, filename, shareTitle, shareText) {
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
+    if (!blob) return alert("No se pudo generar la imagen.");
+    const file = new File([blob], filename, { type: "image/png" });
+
+    if (navigator.canShare?.({ files: [file] })) {
+      try {
+        await navigator.share({ files: [file], title: shareTitle, text: shareText });
+        return;
+      } catch {
+        // usuario canceló el share sheet; caemos a descargar
+      }
+    }
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = filename; a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+  }
+
+  async function shareStandingsStory() {
+    const rows = (standingsSorted || []).slice(0, 12);
+    if (!rows.length) return alert("Todavía no hay standings para exportar.");
+
+    const W = 540, H = 960;
+    const canvas = document.createElement("canvas");
+    canvas.width = W * 2; canvas.height = H * 2;
+    const ctx = canvas.getContext("2d");
+    ctx.scale(2, 2);
+
+    ctx.fillStyle = "#0a0d14";
+    ctx.fillRect(0, 0, W, H);
+
+    // Top: branding (deja espacio arriba tipo "safe zone" de stories)
+    ctx.textAlign = "center";
+    ctx.fillStyle = "#22c55e";
+    ctx.font = "bold 20px -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif";
+    ctx.fillText("🏈 " + LEAGUE.toUpperCase(), W / 2, 130);
+    ctx.fillStyle = "#eef1f6";
+    ctx.font = "bold 40px -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif";
+    ctx.fillText("STANDINGS", W / 2, 178);
+    ctx.fillStyle = "#8b93a7";
+    ctx.font = "16px -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif";
+    ctx.fillText(`Semana ${week}`, W / 2, 206);
+    ctx.textAlign = "left";
+
+    const rowH = 58;
+    const listTop = 250;
+    rows.forEach((s, i) => {
+      const y = listTop + i * rowH;
+      const alive = (s.lives ?? 0) > 0;
+      ctx.fillStyle = i % 2 === 0 ? "#12161f" : "#0f131b";
+      ctx.beginPath();
+      ctx.roundRect ? ctx.roundRect(28, y, W - 56, rowH - 8, 10) : ctx.rect(28, y, W - 56, rowH - 8);
+      ctx.fill();
+
+      ctx.fillStyle = alive ? "#8b93a7" : "#6b7686";
+      ctx.font = "bold 17px -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif";
+      ctx.fillText(`#${i + 1}`, 44, y + 33);
+
+      ctx.fillStyle = alive ? "#eef1f6" : "#6b7686";
+      ctx.font = "600 19px -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif";
+      const name = `${avatarMap[s.user_id] || "🏈"} ${(s.display_name || s.user_id.slice(0, 6)).slice(0, 16)}`;
+      ctx.fillText(name, 90, y + 33);
+
+      ctx.textAlign = "right";
+      ctx.fillStyle = "#a7afc0";
+      ctx.font = "15px -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif";
+      ctx.fillText(`${s.wins ?? 0}-${s.losses ?? 0}${s.pushes ? `-${s.pushes}` : ""}`, W - 110, y + 33);
+
+      ctx.fillStyle = alive ? "#4ade80" : "#fb7185";
+      ctx.font = "bold 17px -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif";
+      ctx.fillText(alive ? `${s.lives ?? 0}❤️` : "☠️", W - 44, y + 33);
+      ctx.textAlign = "left";
+    });
+
+    ctx.textAlign = "center";
+    ctx.fillStyle = "#8b93a7";
+    ctx.font = "14px -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif";
+    ctx.fillText(`${LEAGUE} · survivor`, W / 2, H - 90);
+    ctx.textAlign = "left";
+
+    await canvasToShareOrDownload(canvas, `standings-story-w${week}.png`, `${LEAGUE} — Standings`, `Standings semana ${week}`);
+  }
+
   async function shareStandingsImage() {
     const rows = standingsSorted || [];
     if (!rows.length) return alert("Todavía no hay standings para exportar.");
@@ -1542,7 +1657,7 @@ function GamesTab({ session }) {
 
       ctx.fillStyle = alive ? "#eef1f6" : "#6b7686";
       ctx.font = "600 18px -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif";
-      const name = (s.display_name || s.user_id.slice(0, 6)).slice(0, 24);
+      const name = `${avatarMap[s.user_id] || "🏈"} ${(s.display_name || s.user_id.slice(0, 6)).slice(0, 22)}`;
       ctx.fillText(name, 84, y + 32);
       if (!alive) {
         const w = ctx.measureText(name).width;
@@ -1566,22 +1681,7 @@ function GamesTab({ session }) {
     ctx.font = "12px -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif";
     ctx.fillText(`${LEAGUE} · survivor`, 24, H - 18);
 
-    const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
-    if (!blob) return alert("No se pudo generar la imagen.");
-    const file = new File([blob], `standings-w${week}.png`, { type: "image/png" });
-
-    if (navigator.canShare?.({ files: [file] })) {
-      try {
-        await navigator.share({ files: [file], title: `${LEAGUE} — Standings`, text: `Standings semana ${week}` });
-        return;
-      } catch {
-        // usuario canceló el share sheet; caemos a descargar
-      }
-    }
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url; a.download = `standings-w${week}.png`; a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 5000);
+    await canvasToShareOrDownload(canvas, `standings-w${week}.png`, `${LEAGUE} — Standings`, `Standings semana ${week}`);
   }
 
   async function shareWeek() {
@@ -1651,7 +1751,7 @@ function GamesTab({ session }) {
         </div>
         <div className="flex items-center flex-wrap gap-3">
           <p className="text-sm text-gray-700">
-            Hola, <b>{me?.display_name}</b> · Vidas:{" "}
+            Hola, <b>{me?.avatar_emoji || "🏈"} {me?.display_name}</b> · Vidas:{" "}
             <span
               className={clsx(
                 "inline-block px-2 py-0.5 rounded",
@@ -1770,6 +1870,9 @@ function GamesTab({ session }) {
             </button>
             <button className="text-xs px-3 py-1 rounded border col-span-2" onClick={shareStandingsImage}>
               🖼️ Exportar standings (imagen)
+            </button>
+            <button className="text-xs px-3 py-1 rounded border col-span-2" onClick={shareStandingsStory}>
+              📱 Exportar historia (9:16)
             </button>
             <AutoPickButtons week={week} session={session} isAdmin={!!me?.is_admin} />
           </div>
@@ -1955,7 +2058,7 @@ function GamesTab({ session }) {
                         <tr key={p.id}>
                           <td>
                             <button className="hover:underline text-left" onClick={() => setPlayerModalId(p.user_id)}>
-                              {userNames[p.user_id] || p.user_id.slice(0, 6)}
+                              {avatarMap[p.user_id] || "🏈"} {userNames[p.user_id] || p.user_id.slice(0, 6)}
                             </button>
                           </td>
                           <td><TeamMini id={p.team_id} /></td>
@@ -2043,7 +2146,7 @@ function GamesTab({ session }) {
                           className={clsx("hover:underline", !alive && "line-through text-gray-500")}
                           onClick={() => setPlayerModalId(s.user_id)}
                         >
-                          {s.display_name || s.user_id.slice(0, 6)}
+                          {avatarMap[s.user_id] || "🏈"} {s.display_name || s.user_id.slice(0, 6)}
                         </button>
                         {isMe && <span className="badge">Tú</span>}
                         {!alive && <span className="badge badge-danger">Eliminado</span>}
@@ -2184,7 +2287,7 @@ function GamesTab({ session }) {
             <div className="w-full max-w-sm bg-white rounded-2xl p-5 border card max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
               <div className="flex items-start justify-between gap-2">
                 <div>
-                  <h3 className="font-semibold text-lg">{s?.display_name || playerModalId.slice(0, 6)}</h3>
+                  <h3 className="font-semibold text-lg">{avatarMap[playerModalId] || "🏈"} {s?.display_name || playerModalId.slice(0, 6)}</h3>
                   <div className="mt-1 flex items-center gap-2 text-xs">
                     <span className={clsx("badge", !alive && "badge-danger")}>
                       {alive ? `${s?.lives ?? 0} vida${(s?.lives ?? 0) === 1 ? "" : "s"}` : "Eliminado"}
@@ -2675,6 +2778,7 @@ function SettingsTab({ session }) {
   const [me, setMe] = useState(null);
   const [displayName, setDisplayName] = useState("");
   const [notifyEmail, setNotifyEmail] = useState(true);
+  const [avatarEmoji, setAvatarEmoji] = useState("🏈");
   const [saving, setSaving] = useState(false);
   const [savedMsg, setSavedMsg] = useState("");
 
@@ -2691,6 +2795,10 @@ function SettingsTab({ session }) {
   const [startingLivesInput, setStartingLivesInput] = useState("2");
   const [startingLivesSaving, setStartingLivesSaving] = useState(false);
 
+  const [summaryWeek, setSummaryWeek] = useState(() => Number(localStorage.getItem("week")) || 1);
+  const [missingPicks, setMissingPicks] = useState(null);
+  const [missingLoading, setMissingLoading] = useState(false);
+
   useEffect(() => {
     if (!uid) return;
     (async () => {
@@ -2699,6 +2807,7 @@ function SettingsTab({ session }) {
         setMe(data);
         setDisplayName(data.display_name || "");
         setNotifyEmail(data.notify_email !== false);
+        setAvatarEmoji(data.avatar_emoji || "🏈");
       }
     })();
     (async () => {
@@ -2731,7 +2840,7 @@ function SettingsTab({ session }) {
     setSavedMsg("");
     const { error } = await supabase
       .from("profiles")
-      .update({ display_name: displayName.trim() || me?.display_name, notify_email: notifyEmail })
+      .update({ display_name: displayName.trim() || me?.display_name, notify_email: notifyEmail, avatar_emoji: avatarEmoji })
       .eq("id", uid);
     setSaving(false);
     setSavedMsg(error ? `Error: ${error.message}` : "Guardado ✅");
@@ -2741,17 +2850,42 @@ function SettingsTab({ session }) {
     setPlayersLoading(true);
     const { data } = await supabase
       .from("profiles")
-      .select("id,email,display_name,lives,eliminated_at,is_admin,season,paid")
+      .select("id,email,display_name,lives,eliminated_at,is_admin,season,paid,avatar_emoji")
       .eq("season", SEASON)
       .order("display_name", { ascending: true });
     setPlayers(data || []);
     setPlayersLoading(false);
   };
 
+  const loadMissingPicks = async (wk) => {
+    setMissingLoading(true);
+    try {
+      const { data: active } = await supabase
+        .from("profiles")
+        .select("id,display_name,avatar_emoji")
+        .eq("season", SEASON)
+        .is("eliminated_at", null);
+      const { data: picked } = await supabase
+        .from("picks")
+        .select("user_id")
+        .eq("season", SEASON)
+        .eq("week", wk);
+      const pickedIds = new Set((picked || []).map((p) => p.user_id));
+      setMissingPicks((active || []).filter((p) => !pickedIds.has(p.id)));
+    } finally {
+      setMissingLoading(false);
+    }
+  };
+
   useEffect(() => {
-    if (me?.is_admin) loadPlayers();
+    if (me?.is_admin) { loadPlayers(); loadMissingPicks(summaryWeek); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [me?.is_admin]);
+
+  useEffect(() => {
+    if (me?.is_admin) loadMissingPicks(summaryWeek);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [summaryWeek]);
 
   const authHeaders = () => ({
     "Content-Type": "application/json",
@@ -2856,6 +2990,25 @@ function SettingsTab({ session }) {
             <span className="text-xs text-gray-500">Nombre para mostrar</span>
             <input className="input w-full mt-1" value={displayName} onChange={(e) => setDisplayName(e.target.value)} />
           </label>
+          <div>
+            <span className="text-xs text-gray-500">Avatar</span>
+            <div className="mt-1 flex flex-wrap gap-1.5">
+              {AVATAR_CHOICES.map((emo) => (
+                <button
+                  key={emo}
+                  type="button"
+                  onClick={() => setAvatarEmoji(emo)}
+                  className={clsx(
+                    "w-10 h-10 flex items-center justify-center rounded-lg border text-xl",
+                    emo === avatarEmoji ? "border-emerald-500" : "border-gray-200"
+                  )}
+                  style={emo === avatarEmoji ? { background: "rgba(34,197,94,.15)" } : undefined}
+                >
+                  {emo}
+                </button>
+              ))}
+            </div>
+          </div>
           <label className="inline-flex items-center gap-2 text-sm">
             <input type="checkbox" checked={notifyEmail} onChange={(e) => setNotifyEmail(e.target.checked)} />
             Recibir recordatorios por correo cuando me falte hacer pick
@@ -2938,6 +3091,52 @@ function SettingsTab({ session }) {
 
       {me?.is_admin && (
         <div>
+          <h2 className="font-semibold mb-2">📋 Resumen admin</h2>
+          <div className="p-4 border rounded-2xl bg-white card space-y-4 text-sm">
+            <div className="flex items-center gap-2">
+              <label className="text-xs text-gray-500">Semana</label>
+              <select className="select" value={summaryWeek} onChange={(e) => setSummaryWeek(Number(e.target.value))}>
+                {Array.from({ length: 18 }, (_, i) => i + 1).map((w) => (
+                  <option key={w} value={w}>W{w}</option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <h3 className="font-semibold text-xs uppercase text-gray-500 mb-1.5">Sin pick en W{summaryWeek}</h3>
+              {missingLoading ? (
+                <Skel className="h-6 w-48" />
+              ) : missingPicks?.length ? (
+                <div className="flex flex-wrap gap-1.5">
+                  {missingPicks.map((p) => (
+                    <span key={p.id} className="badge badge-warn">{p.avatar_emoji || "🏈"} {p.display_name}</span>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-gray-500">✅ Todos los jugadores activos ya tienen pick esta semana.</p>
+              )}
+            </div>
+
+            <div>
+              <h3 className="font-semibold text-xs uppercase text-gray-500 mb-1.5">Pago pendiente</h3>
+              {playersLoading ? (
+                <Skel className="h-6 w-48" />
+              ) : (players || []).some((p) => !p.paid) ? (
+                <div className="flex flex-wrap gap-1.5">
+                  {(players || []).filter((p) => !p.paid).map((p) => (
+                    <span key={p.id} className="badge badge-danger">{p.avatar_emoji || "🏈"} {p.display_name}</span>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-gray-500">✅ Todos han pagado.</p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {me?.is_admin && (
+        <div>
           <h2 className="font-semibold mb-2">Jugadores (temporada {SEASON})</h2>
           <div className="p-4 border rounded-2xl bg-white card overflow-x-auto">
             {playersLoading && <TableSkeleton rows={6} cols={5} />}
@@ -2956,7 +3155,7 @@ function SettingsTab({ session }) {
                 <tbody>
                   {(players || []).map((p) => (
                     <tr key={p.id}>
-                      <td className="font-medium">{p.display_name}{p.is_admin ? " 👑" : ""}</td>
+                      <td className="font-medium">{p.avatar_emoji || "🏈"} {p.display_name}{p.is_admin ? " 👑" : ""}</td>
                       <td className="text-gray-500">{p.email}</td>
                       <td>
                         <div className="flex items-center gap-1">
