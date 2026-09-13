@@ -7,6 +7,9 @@
   - SUPABASE_SERVICE_ROLE_KEY (o SUPABASE_SERVICE_ROLE), SEASON=2026
   - **ODDS_API_KEY** (the-odds-api.com, tiene plan gratuito ~500 requests/mes) — fuente de partidos/marcadores/líneas
   - (opcional) SEASON_WEEK1_START (fecha ISO del martes previo al primer jueves de temporada; ya trae default para 2025/2026)
+  - (opcional) RESEND_API_KEY, EMAIL_FROM — para que los recordatorios de pick lleguen por correo de verdad (si faltan, solo se loguean en la consola de Vercel)
+  - (opcional, notificaciones push) **VAPID_PUBLIC_KEY**, **VAPID_PRIVATE_KEY**, **VITE_VAPID_PUBLIC_KEY** (mismo valor que VAPID_PUBLIC_KEY) — ver sección 6
+  - **CRON_TOKEN** = (elige un token seguro, ej. `luis-123-xyz`)
 
 ### Al arrancar una temporada nueva (2027, 2028, ...)
 Además de `VITE_SEASON`/`SEASON` en Vercel, actualiza también la fila que usa
@@ -19,8 +22,6 @@ Se dejó en una tabla aparte (en vez de confiar en un valor que mande el
 navegador) porque `profiles` ya no permite que el cliente escriba
 `season`/`lives`/`eliminated_at` directamente -- ver la nota de seguridad
 más abajo.
-  - (opcional) RESEND_API_KEY, EMAIL_FROM
-  - **CRON_TOKEN** = (elige un token seguro, ej. `luis-123-xyz`)
 
 ### Por qué ya no se usa ESPN
 `site.api.espn.com` bloquea por IP a los servidores de Vercel/AWS (confirmado:
@@ -91,6 +92,27 @@ export default {
 - Abre en el navegador: `/api/syncGames?token=CRON_TOKEN` → debe responder `{"ok":true,...}` con partidos cargados.
 - Luego: `/api/syncScores?token=CRON_TOKEN` → debe responder ok.
 - Revisa Logs en Vercel → Functions.
+
+## 6) Notificaciones push (opcional)
+Cada jugador puede activarlas desde Ajustes → "Activar notificaciones"; se
+mandan junto con el recordatorio de correo (`api/sendReminders.mjs`, mismo
+cron de la sección 3) cuando falta poco para que cierre su pick.
+
+- Genera un par de llaves VAPID una sola vez (no se vuelve a repetir salvo
+  que quieras rotarlas):
+  ```
+  npx web-push generate-vapid-keys
+  ```
+- Agrega en Vercel:
+  - `VAPID_PUBLIC_KEY` y `VAPID_PRIVATE_KEY` (la privada nunca debe ir al
+    cliente ni a git)
+  - `VITE_VAPID_PUBLIC_KEY` = el mismo valor que `VAPID_PUBLIC_KEY` (este sí
+    va al bundle del navegador, es la mitad pública)
+  - (opcional) `VAPID_SUBJECT` = `mailto:tu-correo@ejemplo.com`
+- Sin `VITE_VAPID_PUBLIC_KEY` la tarjeta de Ajustes se queda en "tu
+  navegador no soporta notificaciones push"; sin `VAPID_PRIVATE_KEY`,
+  `sendReminders` simplemente no manda push (el correo sigue funcionando
+  igual).
 
 ## Seguridad
 - Los endpoints exigen el `CRON_TOKEN` por query `?token=` o header `x-cron-token`.

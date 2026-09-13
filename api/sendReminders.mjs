@@ -1,9 +1,37 @@
 import fetch from 'node-fetch';
 import { DateTime } from 'luxon';
+import webpush from 'web-push';
 import { supa } from './_supabase.mjs';
 
 const SEASON = Number(process.env.SEASON || '2026');
 const LEAGUE_NAME = process.env.VITE_LEAGUE_NAME || 'Survivor 2026';
+
+const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY || process.env.VITE_VAPID_PUBLIC_KEY;
+const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY;
+if (VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY) {
+  webpush.setVapidDetails(process.env.VAPID_SUBJECT || 'mailto:no-reply@survivor.app', VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
+}
+
+/** Manda push a todas las suscripciones del usuario; borra las que ya expiraron (404/410). */
+async function sendPush(userId, payload) {
+  if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) return 0;
+  const { data: subs } = await supa.from('push_subscriptions').select('id, endpoint, p256dh, auth').eq('user_id', userId);
+  let sent = 0;
+  for (const s of subs || []) {
+    try {
+      await webpush.sendNotification(
+        { endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } },
+        JSON.stringify(payload)
+      );
+      sent++;
+    } catch (e) {
+      if (e.statusCode === 404 || e.statusCode === 410) {
+        await supa.from('push_subscriptions').delete().eq('id', s.id);
+      }
+    }
+  }
+  return sent;
+}
 
 function guard(req, res) {
   const url = new URL(req.url, `https://${req.headers.host}`);
@@ -55,20 +83,27 @@ export default async function handler(req, res) {
         const { data: pick } = await supa.from('picks').select('id').eq('user_id', m.id).eq('week', w).eq('season', SEASON).maybeSingle();
         if (pick) continue;
         const { data: prof } = await supa.from('profiles').select('email, display_name, notify_email').eq('id', m.id).maybeSingle();
-        if (!prof?.email || prof.notify_email === false) continue;
 
-        const html = emailShell({
+        if (prof?.email && prof.notify_email !== false) {
+          const html = emailShell({
+            title: `⏰ Falta poco para cerrar la Semana ${w}`,
+            greeting: `Hola ${prof.display_name || ''},`,
+            body: `Todavía no eliges tu pick para la <b>Semana ${w}</b>${kickoffLocal ? ` y el próximo kickoff es el <b>${kickoffLocal}</b> (hora CDMX)` : ''}. Entra a la app y elige tu equipo antes de que cierre.`,
+            ctaText: 'Hacer mi pick',
+            ctaUrl: base,
+            footnote: 'Si no eliges a tiempo, el sistema puede asignarte automáticamente el favorito más fuerte disponible que no hayas usado.',
+          });
+          const text = `Hola ${prof.display_name || ''},\n\nTodavía no eliges tu pick para la Semana ${w}${kickoffLocal ? ` (próximo kickoff: ${kickoffLocal} hora CDMX)` : ''}.\nEntra aquí: ${base}\n\nSi no eliges a tiempo, se puede aplicar autopick del favorito más fuerte disponible.`;
+          await sendEmail(prof.email, `⏰ Falta poco para cerrar la Semana ${w} — ${LEAGUE_NAME}`, text, html);
+          sent++;
+        }
+
+        const pushed = await sendPush(m.id, {
           title: `⏰ Falta poco para cerrar la Semana ${w}`,
-          greeting: `Hola ${prof.display_name || ''},`,
-          body: `Todavía no eliges tu pick para la <b>Semana ${w}</b>${kickoffLocal ? ` y el próximo kickoff es el <b>${kickoffLocal}</b> (hora CDMX)` : ''}. Entra a la app y elige tu equipo antes de que cierre.`,
-          ctaText: 'Hacer mi pick',
-          ctaUrl: base,
-          footnote: 'Si no eliges a tiempo, el sistema puede asignarte automáticamente el favorito más fuerte disponible que no hayas usado.',
+          body: `Aún no eliges tu pick${kickoffLocal ? ` — kickoff ${kickoffLocal} (CDMX)` : ''}.`,
+          url: base,
         });
-        const text = `Hola ${prof.display_name || ''},\n\nTodavía no eliges tu pick para la Semana ${w}${kickoffLocal ? ` (próximo kickoff: ${kickoffLocal} hora CDMX)` : ''}.\nEntra aquí: ${base}\n\nSi no eliges a tiempo, se puede aplicar autopick del favorito más fuerte disponible.`;
-
-        await sendEmail(prof.email, `⏰ Falta poco para cerrar la Semana ${w} — ${LEAGUE_NAME}`, text, html);
-        sent++;
+        sent += pushed;
       }
     }
     res.status(200).json({ ok: true, sent });

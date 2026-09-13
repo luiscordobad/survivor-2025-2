@@ -156,15 +156,23 @@ async function autopickForUser(userId, week) {
  * service role porque profiles solo permite UPDATE de auth.uid() = id vía
  * RLS -- un admin no puede tocar la fila de otro jugador desde el cliente.
  */
-async function adminUpdatePlayer(targetUserId, { lives, eliminated }) {
+async function adminUpdatePlayer(targetUserId, { lives, eliminated, paid }) {
   const patch = {};
   if (lives != null) patch.lives = Math.max(0, Math.trunc(Number(lives)));
   if (eliminated != null) patch.eliminated_at = eliminated ? new Date().toISOString() : null;
+  if (paid != null) patch.paid = !!paid;
   if (!Object.keys(patch).length) return { updated: false };
 
   const { error } = await sb.from('profiles').update(patch).eq('id', targetUserId);
   if (error) throw error;
   return { updated: true, ...patch };
+}
+
+/** Bote de la liga: solo admin/cron puede fijar la cuota de entrada. */
+async function adminSetConfig(key, value) {
+  const { error } = await sb.from('app_config').upsert({ key, value: String(value) }, { onConflict: 'key' });
+  if (error) throw error;
+  return { key, value: String(value) };
 }
 
 export default async function handler(req, res) {
@@ -186,8 +194,20 @@ export default async function handler(req, res) {
       if (!targetUser) return res.status(400).json({ ok: false, error: 'missing user_id' });
       const lives = params.lives != null ? Number(params.lives) : null;
       const eliminated = params.eliminated != null ? params.eliminated === 'true' || params.eliminated === true : null;
-      const r = await adminUpdatePlayer(targetUser, { lives, eliminated });
+      const paid = params.paid != null ? params.paid === 'true' || params.paid === true : null;
+      const r = await adminUpdatePlayer(targetUser, { lives, eliminated, paid });
       return res.json({ ok: true, action, user_id: targetUser, ...r });
+    }
+
+    if (action === 'adminSetConfig') {
+      if (!isCron) {
+        const { data: prof } = await sb.from('profiles').select('is_admin').eq('id', authedUserId).maybeSingle();
+        if (!prof?.is_admin) return res.status(403).json({ ok: false, error: 'forbidden: solo admin' });
+      }
+      const key = params.key;
+      if (!key || params.value == null) return res.status(400).json({ ok: false, error: 'missing key/value' });
+      const r = await adminSetConfig(key, params.value);
+      return res.json({ ok: true, action, ...r });
     }
 
     if (action === 'settleWeek') {

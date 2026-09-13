@@ -11,6 +11,7 @@ const TZ = import.meta.env.VITE_TZ || "America/Mexico_City";
 const SITE = import.meta.env.VITE_SITE_URL || "";
 const LEAGUE = import.meta.env.VITE_LEAGUE_NAME || "Maiztros Survivor 2026";
 const SEASON = Number(import.meta.env.VITE_SEASON || 2026);
+const VAPID_PUBLIC_KEY = import.meta.env.VITE_VAPID_PUBLIC_KEY || "";
 
 /* ========================= Utils ========================= */
 const clsx = (...xs) => xs.filter(Boolean).join(" ");
@@ -204,6 +205,110 @@ function InstallBanner() {
           <button className="text-xs underline" onClick={dismiss}>Ahora no</button>
         </div>
       </div>
+    </div>
+  );
+}
+
+/* ========================= Notificaciones push ========================= */
+function urlBase64ToUint8Array(base64String) {
+  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const raw = atob(base64);
+  return Uint8Array.from([...raw].map((c) => c.charCodeAt(0)));
+}
+
+function usePushNotifications(session) {
+  const uid = session?.user?.id || null;
+  const supported = typeof window !== "undefined" && "serviceWorker" in navigator && "PushManager" in window && !!VAPID_PUBLIC_KEY;
+  const [subscribed, setSubscribed] = useState(false);
+  const [checking, setChecking] = useState(true);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (!supported) { setChecking(false); return; }
+    navigator.serviceWorker.ready
+      .then((reg) => reg.pushManager.getSubscription())
+      .then((sub) => setSubscribed(!!sub))
+      .catch(() => {})
+      .finally(() => setChecking(false));
+  }, [supported]);
+
+  const subscribe = async () => {
+    if (!supported || !uid) return;
+    setBusy(true);
+    try {
+      const perm = await Notification.requestPermission();
+      if (perm !== "granted") { alert("Permiso de notificaciones no concedido."); return; }
+      const reg = await navigator.serviceWorker.ready;
+      const sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
+      });
+      const json = sub.toJSON();
+      const { error } = await supabase.from("push_subscriptions").insert({
+        user_id: uid,
+        endpoint: json.endpoint,
+        p256dh: json.keys.p256dh,
+        auth: json.keys.auth,
+      });
+      if (error && error.code !== "23505") throw error; // 23505 = ya existía (endpoint unique)
+      setSubscribed(true);
+    } catch (e) {
+      alert(e.message || "No se pudo activar notificaciones.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const unsubscribe = async () => {
+    setBusy(true);
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      const sub = await reg.pushManager.getSubscription();
+      if (sub) {
+        await supabase.from("push_subscriptions").delete().eq("endpoint", sub.endpoint);
+        await sub.unsubscribe();
+      }
+      setSubscribed(false);
+    } catch (e) {
+      alert(e.message || "No se pudo desactivar.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return { supported, subscribed, checking, busy, subscribe, unsubscribe };
+}
+
+function PushNotificationsCard({ session }) {
+  const push = usePushNotifications(session);
+  if (!push.supported) {
+    return (
+      <div className="p-4 border rounded-2xl bg-white card text-sm text-gray-500">
+        Tu navegador no soporta notificaciones push (en iPhone/iPad: agrega primero la app a pantalla de inicio, ábrela desde ahí e intenta de nuevo).
+      </div>
+    );
+  }
+  return (
+    <div className="p-4 border rounded-2xl bg-white card text-sm space-y-2">
+      <h3 className="font-semibold">🔔 Notificaciones push</h3>
+      {push.checking ? (
+        <Skel className="h-8 w-40" />
+      ) : push.subscribed ? (
+        <>
+          <p className="text-gray-600">Activadas en este dispositivo.</p>
+          <button className="btn" onClick={push.unsubscribe} disabled={push.busy}>
+            {push.busy ? "…" : "Desactivar"}
+          </button>
+        </>
+      ) : (
+        <>
+          <p className="text-gray-600">Recibe un aviso directo en tu celular/compu cuando falte poco para que cierre tu pick.</p>
+          <button className="btn btn-primary" onClick={push.subscribe} disabled={push.busy}>
+            {push.busy ? "Activando…" : "Activar notificaciones"}
+          </button>
+        </>
+      )}
     </div>
   );
 }
@@ -650,6 +755,7 @@ function GamesTab({ session }) {
   const [userNames, setUserNames] = useState({});
   const [popularity, setPopularity] = useState([]);
   const [pendingPick, setPendingPick] = useState(null);
+  const [pickSavedToast, setPickSavedToast] = useState(null);
   const [lastUpdated, setLastUpdated] = useState(null);
 
   const [allGamesSeason, setAllGamesSeason] = useState([]);
@@ -957,7 +1063,14 @@ function GamesTab({ session }) {
     await loadMyPicks(); await loadLeaguePicks(week); await loadSeasonData();
     const { data: st } = await supabase.from("standings").select("*"); setStandings(st || []);
     setPendingPick(null); setLastUpdated(new Date().toISOString());
+    setPickSavedToast(`Pick guardado: ${teamId} en W${week}`);
   };
+
+  useEffect(() => {
+    if (!pickSavedToast) return;
+    const id = setTimeout(() => setPickSavedToast(null), 3500);
+    return () => clearTimeout(id);
+  }, [pickSavedToast]);
 
   function derivedResultForPick(pick) {
     if (!pick) return "pending";
@@ -1912,9 +2025,18 @@ function GamesTab({ session }) {
         </div>
       )}
 
+      {/* ===== Toast confirmación de pick ===== */}
+      {pickSavedToast && (
+        <div className="fixed bottom-20 md:bottom-4 right-4 left-4 md:left-auto px-4 py-2.5 rounded-xl text-sm shadow-lg z-[80] flex items-center gap-2"
+          style={{ background: "var(--accent)", color: "var(--accent-fg)" }}>
+          <span>✅</span>
+          <span className="font-medium">{pickSavedToast}</span>
+        </div>
+      )}
+
       {/* ===== Toast recordatorio ===== */}
-      {!myPickThisWeek && nextKick && (me?.lives ?? 0) > 0 && (
-        <div className="fixed bottom-4 right-4 px-4 py-2 rounded-xl bg-black text-white text-sm shadow-lg">
+      {!pickSavedToast && !myPickThisWeek && nextKick && (me?.lives ?? 0) > 0 && (
+        <div className="fixed bottom-20 md:bottom-4 right-4 px-4 py-2 rounded-xl bg-black text-white text-sm shadow-lg">
           Recuerda elegir: kickoff en <Countdown iso={nextKick} />
         </div>
       )}
@@ -2347,6 +2469,11 @@ function SettingsTab({ session }) {
   const [playersLoading, setPlayersLoading] = useState(false);
   const [busyId, setBusyId] = useState(null);
 
+  const [buyIn, setBuyIn] = useState(0);
+  const [buyInInput, setBuyInInput] = useState("0");
+  const [buyInSaving, setBuyInSaving] = useState(false);
+  const [paidStats, setPaidStats] = useState({ paid: 0, total: 0 });
+
   useEffect(() => {
     if (!uid) return;
     (async () => {
@@ -2357,7 +2484,23 @@ function SettingsTab({ session }) {
         setNotifyEmail(data.notify_email !== false);
       }
     })();
+    (async () => {
+      const { data } = await supabase.from("app_config").select("value").eq("key", "buy_in").maybeSingle();
+      const v = Number(data?.value ?? 0) || 0;
+      setBuyIn(v);
+      setBuyInInput(String(v));
+    })();
+    loadPaidStats();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [uid]);
+
+  const loadPaidStats = async () => {
+    const { count: total } = await supabase
+      .from("profiles").select("*", { count: "exact", head: true }).eq("season", SEASON);
+    const { count: paid } = await supabase
+      .from("profiles").select("*", { count: "exact", head: true }).eq("season", SEASON).eq("paid", true);
+    setPaidStats({ paid: paid || 0, total: total || 0 });
+  };
 
   const saveAccount = async () => {
     if (!uid) return;
@@ -2375,7 +2518,7 @@ function SettingsTab({ session }) {
     setPlayersLoading(true);
     const { data } = await supabase
       .from("profiles")
-      .select("id,email,display_name,lives,eliminated_at,is_admin,season")
+      .select("id,email,display_name,lives,eliminated_at,is_admin,season,paid")
       .eq("season", SEASON)
       .order("display_name", { ascending: true });
     setPlayers(data || []);
@@ -2427,6 +2570,39 @@ function SettingsTab({ session }) {
     }
   };
 
+  const togglePaid = async (p) => {
+    setBusyId(p.id);
+    try {
+      await adminAction({ user_id: p.id, paid: !p.paid });
+      await loadPlayers();
+      await loadPaidStats();
+    } catch (e) {
+      alert(e.message);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const saveBuyIn = async () => {
+    setBuyInSaving(true);
+    try {
+      const v = Math.max(0, Number(buyInInput) || 0);
+      const r = await fetch(`${SITE}/api/control?action=adminSetConfig`, {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify({ key: "buy_in", value: v }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || j.ok === false) throw new Error(j.error || "Error");
+      setBuyIn(v);
+    } catch (e) {
+      alert(e.message);
+    } finally {
+      setBuyInSaving(false);
+    }
+  };
+
+
   return (
     <div className="max-w-4xl mx-auto p-4 md:p-6 space-y-6">
       <h1 className="text-2xl font-extrabold">Ajustes</h1>
@@ -2454,7 +2630,47 @@ function SettingsTab({ session }) {
 
       <div>
         <h2 className="font-semibold mb-2">App</h2>
-        <InstallAppCard />
+        <div className="space-y-3">
+          <InstallAppCard />
+          <PushNotificationsCard session={session} />
+        </div>
+      </div>
+
+      <div>
+        <h2 className="font-semibold mb-2">💰 Bote de la liga</h2>
+        <div className="p-4 border rounded-2xl bg-white card space-y-2 text-sm">
+          {buyIn > 0 ? (
+            <>
+              <p>Cuota de entrada: <b>${buyIn.toLocaleString("es-MX")}</b> por jugador.</p>
+              <p>
+                Han pagado <b>{paidStats.paid}</b> de {paidStats.total} ·{" "}
+                bote acumulado: <b>${(buyIn * paidStats.paid).toLocaleString("es-MX")}</b>
+              </p>
+              {!me?.is_admin && (
+                <p className="text-xs text-gray-500">
+                  {me?.paid ? "✅ Ya apareces como pagado." : "Avísale al admin cuando hagas tu pago para que te marque como pagado."}
+                </p>
+              )}
+            </>
+          ) : (
+            <p className="text-gray-500">{me?.is_admin ? "Todavía no defines una cuota de entrada." : "El admin no ha definido una cuota de entrada."}</p>
+          )}
+          {me?.is_admin && (
+            <div className="flex items-center gap-2 pt-1">
+              <label className="text-xs text-gray-500">Cuota por jugador</label>
+              <input
+                className="input w-28"
+                type="number"
+                min="0"
+                value={buyInInput}
+                onChange={(e) => setBuyInInput(e.target.value)}
+              />
+              <button className="btn btn-primary !py-1 !px-3 text-xs" onClick={saveBuyIn} disabled={buyInSaving}>
+                {buyInSaving ? "Guardando…" : "Guardar"}
+              </button>
+            </div>
+          )}
+        </div>
       </div>
 
       {me?.is_admin && (
@@ -2470,6 +2686,7 @@ function SettingsTab({ session }) {
                     <th>Email</th>
                     <th>Vidas</th>
                     <th>Estado</th>
+                    <th>Pagó</th>
                     <th></th>
                   </tr>
                 </thead>
@@ -2493,6 +2710,17 @@ function SettingsTab({ session }) {
                         )}
                       </td>
                       <td>
+                        <label className="inline-flex items-center gap-1.5">
+                          <input
+                            type="checkbox"
+                            checked={!!p.paid}
+                            disabled={busyId === p.id}
+                            onChange={() => togglePaid(p)}
+                          />
+                          {p.paid ? "✅" : "—"}
+                        </label>
+                      </td>
+                      <td>
                         <button className="text-xs underline" disabled={busyId === p.id} onClick={() => toggleEliminated(p)}>
                           {p.eliminated_at ? "Reactivar" : "Eliminar"}
                         </button>
@@ -2500,7 +2728,7 @@ function SettingsTab({ session }) {
                     </tr>
                   ))}
                   {!players?.length && (
-                    <tr><td colSpan={5} className="py-3 text-gray-500">Sin jugadores todavía.</td></tr>
+                    <tr><td colSpan={6} className="py-3 text-gray-500">Sin jugadores todavía.</td></tr>
                   )}
                 </tbody>
               </table>
