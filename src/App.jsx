@@ -763,6 +763,7 @@ function GamesTab({ session }) {
   const [popularity, setPopularity] = useState([]);
   const [pendingPick, setPendingPick] = useState(null);
   const [pickSavedToast, setPickSavedToast] = useState(null);
+  const [playerModalId, setPlayerModalId] = useState(null);
   const [lastUpdated, setLastUpdated] = useState(null);
 
   const [allGamesSeason, setAllGamesSeason] = useState([]);
@@ -961,8 +962,7 @@ function GamesTab({ session }) {
 
   const initAll = async () => {
     if (!uid) return;
-    const email = session.user.email;
-    const prof = await ensureProfile(uid, email);
+    const prof = await ensureProfile();
     setMe(prof);
 
     await loadTeams();
@@ -1411,7 +1411,9 @@ function GamesTab({ session }) {
 
   /* ---- Botón de pick por equipo ---- */
   const TeamBox = ({ game, teamId }) => {
-    const disabled = !canPick(game, teamId).ok;
+    const check = canPick(game, teamId);
+    const disabled = !check.ok;
+    const alreadyUsed = check.reason === "USED";
     const selected = myPickThisWeek?.game_id === game.id && myPickThisWeek?.team_id === teamId;
     const { last } = oddsPairs[game.id] || {};
     const fav =
@@ -1426,20 +1428,25 @@ function GamesTab({ session }) {
 
     return (
       <button
-        title={titleTxt}
+        title={alreadyUsed ? `${teamId} · ya lo usaste esta temporada` : titleTxt}
         onClick={() => confirmPick(game, teamId)}
         disabled={disabled}
         className={clsx(
           "w-full text-left rounded-xl border transition px-4 py-3",
-          selected ? "border-emerald-500 bg-emerald-50 card" : "border-gray-200 hover:bg-gray-50 card",
+          selected ? "border-emerald-500 bg-emerald-50 card"
+            : alreadyUsed ? "border-gray-200 card"
+            : "border-gray-200 hover:bg-gray-50 card",
           disabled && "opacity-50 cursor-not-allowed"
         )}
       >
         <div className="flex items-center justify-between">
-          <TeamMini id={teamId} />
+          <span className={alreadyUsed ? "line-through decoration-2" : ""}>
+            <TeamMini id={teamId} />
+          </span>
           <div className="flex items-center gap-2">
-            {fav && <span className="badge badge-warn">Fav</span>}
-            {pct < 15 && <span className="badge">DIF</span>}
+            {alreadyUsed && <span className="badge badge-danger">🔒 Ya usado</span>}
+            {!alreadyUsed && fav && <span className="badge badge-warn">Fav</span>}
+            {!alreadyUsed && pct < 15 && <span className="badge">DIF</span>}
           </div>
         </div>
       </button>
@@ -1493,6 +1500,90 @@ function GamesTab({ session }) {
     return lines.join("\n");
   }
 
+  async function shareStandingsImage() {
+    const rows = standingsSorted || [];
+    if (!rows.length) return alert("Todavía no hay standings para exportar.");
+
+    const W = 720;
+    const rowH = 56;
+    const headerH = 110;
+    const footerH = 46;
+    const H = headerH + rows.length * rowH + footerH;
+
+    const canvas = document.createElement("canvas");
+    canvas.width = W * 2; canvas.height = H * 2; // @2x para que se vea nítido
+    const ctx = canvas.getContext("2d");
+    ctx.scale(2, 2);
+
+    // Fondo
+    ctx.fillStyle = "#0a0d14";
+    ctx.fillRect(0, 0, W, H);
+
+    // Header
+    ctx.fillStyle = "#22c55e";
+    ctx.fillRect(0, 0, W, 70);
+    ctx.fillStyle = "#04150a";
+    ctx.font = "bold 26px -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif";
+    ctx.fillText(`🏈 ${LEAGUE}`, 24, 44);
+    ctx.fillStyle = "#eef1f6";
+    ctx.font = "14px -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif";
+    ctx.fillText(`Standings · Semana ${week} · ${new Date().toLocaleDateString("es-MX")}`, 24, 94);
+
+    // Filas
+    rows.forEach((s, i) => {
+      const y = headerH + i * rowH;
+      const alive = (s.lives ?? 0) > 0;
+      ctx.fillStyle = i % 2 === 0 ? "#12161f" : "#0f131b";
+      ctx.fillRect(16, y, W - 32, rowH - 8);
+
+      ctx.fillStyle = alive ? "#8b93a7" : "#6b7686";
+      ctx.font = "bold 16px -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif";
+      ctx.fillText(`#${i + 1}`, 32, y + 32);
+
+      ctx.fillStyle = alive ? "#eef1f6" : "#6b7686";
+      ctx.font = "600 18px -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif";
+      const name = (s.display_name || s.user_id.slice(0, 6)).slice(0, 24);
+      ctx.fillText(name, 84, y + 32);
+      if (!alive) {
+        const w = ctx.measureText(name).width;
+        ctx.strokeStyle = "#6b7686"; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.moveTo(84, y + 27); ctx.lineTo(84 + w, y + 27); ctx.stroke();
+      }
+
+      ctx.textAlign = "right";
+      ctx.fillStyle = "#a7afc0";
+      ctx.font = "15px -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif";
+      ctx.fillText(`${s.wins ?? 0}-${s.losses ?? 0}${s.pushes ? `-${s.pushes}` : ""}`, W - 130, y + 32);
+
+      ctx.fillStyle = alive ? "#4ade80" : "#fb7185";
+      ctx.font = "bold 16px -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif";
+      ctx.fillText(alive ? `${s.lives ?? 0}❤️` : "☠️", W - 32, y + 32);
+      ctx.textAlign = "left";
+    });
+
+    // Footer
+    ctx.fillStyle = "#8b93a7";
+    ctx.font = "12px -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif";
+    ctx.fillText(`${LEAGUE} · survivor`, 24, H - 18);
+
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
+    if (!blob) return alert("No se pudo generar la imagen.");
+    const file = new File([blob], `standings-w${week}.png`, { type: "image/png" });
+
+    if (navigator.canShare?.({ files: [file] })) {
+      try {
+        await navigator.share({ files: [file], title: `${LEAGUE} — Standings`, text: `Standings semana ${week}` });
+        return;
+      } catch {
+        // usuario canceló el share sheet; caemos a descargar
+      }
+    }
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = `standings-w${week}.png`; a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+  }
+
   async function shareWeek() {
     const text = buildWeekShareText();
     if (navigator.share) {
@@ -1516,6 +1607,32 @@ function GamesTab({ session }) {
     const upTo = Math.max(week, maxWithPicks, 1);
     return Array.from({ length: upTo }, (_, i) => i + 1);
   }, [allPicksSeason, week]);
+
+  const weeklyFavorites = useMemo(() => {
+    const byWeek = new Map();
+    (allPicksSeason || []).forEach((p) => {
+      if (!byWeek.has(p.week)) byWeek.set(p.week, new Map());
+      const m = byWeek.get(p.week);
+      m.set(p.team_id, (m.get(p.team_id) || 0) + 1);
+    });
+    const totalPlayers = (standingsSorted || []).length || 1;
+    const rows = [];
+    for (const [wk, counts] of byWeek.entries()) {
+      let top = null;
+      for (const [team_id, count] of counts.entries()) {
+        if (!top || count > top.count) top = { team_id, count };
+      }
+      if (!top || top.count < 2) continue; // no vale la pena mostrar "favorito" de 1 solo pick
+      const pct = Math.round((top.count * 100) / totalPlayers);
+      const samplePick = (allPicksSeason || []).find((p) => p.week === wk && p.team_id === top.team_id);
+      const g = samplePick ? allGamesMap[samplePick.game_id] : null;
+      const res = samplePick?.result && samplePick.result !== "pending"
+        ? samplePick.result
+        : (g ? computePickResultFromGame(g, top.team_id) : "pending");
+      rows.push({ week: wk, team_id: top.team_id, count: top.count, pct, res });
+    }
+    return rows.sort((a, b) => b.week - a.week);
+  }, [allPicksSeason, standingsSorted, allGamesMap]);
 
   /* ========================= Render ========================= */
   const nextKick = nextKickoffISO;
@@ -1650,6 +1767,9 @@ function GamesTab({ session }) {
             </button>
             <button className="text-xs px-3 py-1 rounded border col-span-2" onClick={shareWeek}>
               📤 Compartir resumen de la semana
+            </button>
+            <button className="text-xs px-3 py-1 rounded border col-span-2" onClick={shareStandingsImage}>
+              🖼️ Exportar standings (imagen)
             </button>
             <AutoPickButtons week={week} session={session} isAdmin={!!me?.is_admin} />
           </div>
@@ -1833,7 +1953,11 @@ function GamesTab({ session }) {
                       const shownRes = derivedResultForPick(p);
                       return (
                         <tr key={p.id}>
-                          <td>{userNames[p.user_id] || p.user_id.slice(0, 6)}</td>
+                          <td>
+                            <button className="hover:underline text-left" onClick={() => setPlayerModalId(p.user_id)}>
+                              {userNames[p.user_id] || p.user_id.slice(0, 6)}
+                            </button>
+                          </td>
                           <td><TeamMini id={p.team_id} /></td>
                           <td>
                             <span className={
@@ -1915,9 +2039,12 @@ function GamesTab({ session }) {
                   <tr key={s.user_id}>
                     <td className="sticky left-0 bg-white whitespace-nowrap pr-3">
                       <div className="flex items-center gap-2">
-                        <span className={!alive ? "line-through text-gray-500" : ""}>
+                        <button
+                          className={clsx("hover:underline", !alive && "line-through text-gray-500")}
+                          onClick={() => setPlayerModalId(s.user_id)}
+                        >
                           {s.display_name || s.user_id.slice(0, 6)}
-                        </span>
+                        </button>
                         {isMe && <span className="badge">Tú</span>}
                         {!alive && <span className="badge badge-danger">Eliminado</span>}
                       </div>
@@ -1960,6 +2087,34 @@ function GamesTab({ session }) {
           </table>
         </div>
       </section>
+
+      {/* ===== Favorito de la semana ===== */}
+      {weeklyFavorites.length > 0 && (
+        <section className="mt-6 p-4 border rounded-2xl bg-white card">
+          <h2 className="font-semibold">🔥 Favorito de la semana</h2>
+          <p className="text-xs text-gray-600">El equipo más pickeado por la liga cada semana, y si les salió bien.</p>
+          <div className="mt-3 overflow-x-auto">
+            <table className="w-full text-sm table-minimal">
+              <thead><tr><th>Semana</th><th>Equipo</th><th>% de la liga</th><th>Resultado</th></tr></thead>
+              <tbody>
+                {weeklyFavorites.map((r) => (
+                  <tr key={r.week}>
+                    <td>W{r.week}</td>
+                    <td><TeamMini id={r.team_id} /> <span className="text-gray-500">({r.count})</span></td>
+                    <td>{r.pct}%</td>
+                    <td>
+                      {r.res === "win" ? <span className="text-emerald-700 font-semibold">✅ Ganó</span>
+                        : r.res === "loss" ? <span className="text-red-600 font-semibold">❌ Perdió</span>
+                        : r.res === "push" ? <span className="text-gray-600">➖ Push</span>
+                        : <span className="text-gray-500">⏳ Pendiente</span>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
 
       {/* ===== Historial de usuario ===== */}
       <section className="mt-6">
@@ -2018,6 +2173,57 @@ function GamesTab({ session }) {
           </div>
         </div>
       )}
+
+      {/* ===== Ficha de jugador ===== */}
+      {playerModalId && (() => {
+        const s = (standingsSorted || []).find((x) => x.user_id === playerModalId);
+        const picksList = picksByUser.get(playerModalId) || [];
+        const alive = (s?.lives ?? 0) > 0;
+        return (
+          <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50" onClick={() => setPlayerModalId(null)}>
+            <div className="w-full max-w-sm bg-white rounded-2xl p-5 border card max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <h3 className="font-semibold text-lg">{s?.display_name || playerModalId.slice(0, 6)}</h3>
+                  <div className="mt-1 flex items-center gap-2 text-xs">
+                    <span className={clsx("badge", !alive && "badge-danger")}>
+                      {alive ? `${s?.lives ?? 0} vida${(s?.lives ?? 0) === 1 ? "" : "s"}` : "Eliminado"}
+                    </span>
+                    <span className="badge">{s?.wins ?? 0}-{s?.losses ?? 0}{s?.pushes ? `-${s.pushes}` : ""}</span>
+                  </div>
+                </div>
+                <button className="text-sm underline" onClick={() => setPlayerModalId(null)}>Cerrar</button>
+              </div>
+
+              <h4 className="mt-4 text-xs font-semibold text-gray-500 uppercase">Historial de picks</h4>
+              {picksList.length ? (
+                <table className="w-full text-sm mt-2 table-minimal">
+                  <thead><tr><th>Semana</th><th>Equipo</th><th>Resultado</th></tr></thead>
+                  <tbody>
+                    {picksList.map((p) => {
+                      const g = allGamesMap[p.game_id];
+                      const res = p.result && p.result !== "pending" ? p.result : (g ? computePickResultFromGame(g, p.team_id) : "pending");
+                      return (
+                        <tr key={p.week}>
+                          <td>W{p.week}</td>
+                          <td><TeamMini id={p.team_id} /></td>
+                          <td className={
+                            res === "win" ? "text-emerald-700 font-semibold"
+                            : res === "loss" ? "text-red-600 font-semibold"
+                            : res === "push" ? "text-gray-600" : "text-gray-500"
+                          }>{res}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              ) : (
+                <p className="text-sm text-gray-500 mt-2">Sin picks todavía.</p>
+              )}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* ===== Banner resultado ===== */}
       {resultBanner && (
@@ -2481,6 +2687,10 @@ function SettingsTab({ session }) {
   const [buyInSaving, setBuyInSaving] = useState(false);
   const [paidStats, setPaidStats] = useState({ paid: 0, total: 0 });
 
+  const [startingLives, setStartingLives] = useState(2);
+  const [startingLivesInput, setStartingLivesInput] = useState("2");
+  const [startingLivesSaving, setStartingLivesSaving] = useState(false);
+
   useEffect(() => {
     if (!uid) return;
     (async () => {
@@ -2496,6 +2706,12 @@ function SettingsTab({ session }) {
       const v = Number(data?.value ?? 0) || 0;
       setBuyIn(v);
       setBuyInInput(String(v));
+    })();
+    (async () => {
+      const { data } = await supabase.from("app_config").select("value").eq("key", "starting_lives").maybeSingle();
+      const v = Number(data?.value ?? 2) || 2;
+      setStartingLives(v);
+      setStartingLivesInput(String(v));
     })();
     loadPaidStats();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2609,6 +2825,24 @@ function SettingsTab({ session }) {
     }
   };
 
+  const saveStartingLives = async () => {
+    setStartingLivesSaving(true);
+    try {
+      const v = Math.max(1, Math.trunc(Number(startingLivesInput) || 2));
+      const r = await fetch(`${SITE}/api/control?action=adminSetConfig`, {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify({ key: "starting_lives", value: v }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || j.ok === false) throw new Error(j.error || "Error");
+      setStartingLives(v);
+    } catch (e) {
+      alert(e.message);
+    } finally {
+      setStartingLivesSaving(false);
+    }
+  };
 
   return (
     <div className="max-w-4xl mx-auto p-4 md:p-6 space-y-6">
@@ -2640,6 +2874,28 @@ function SettingsTab({ session }) {
         <div className="space-y-3">
           <InstallAppCard />
           <PushNotificationsCard session={session} />
+        </div>
+      </div>
+
+      <div>
+        <h2 className="font-semibold mb-2">📋 Reglas de la liga</h2>
+        <div className="p-4 border rounded-2xl bg-white card space-y-2 text-sm">
+          <p>Vidas iniciales: <b>{startingLives}</b> (se reinician así al arrancar cada temporada nueva).</p>
+          {me?.is_admin && (
+            <div className="flex items-center gap-2 pt-1">
+              <label className="text-xs text-gray-500">Vidas iniciales</label>
+              <input
+                className="input w-20"
+                type="number"
+                min="1"
+                value={startingLivesInput}
+                onChange={(e) => setStartingLivesInput(e.target.value)}
+              />
+              <button className="btn btn-primary !py-1 !px-3 text-xs" onClick={saveStartingLives} disabled={startingLivesSaving}>
+                {startingLivesSaving ? "Guardando…" : "Guardar"}
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
