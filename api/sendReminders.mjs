@@ -1,37 +1,10 @@
 import fetch from 'node-fetch';
 import { DateTime } from 'luxon';
-import webpush from 'web-push';
 import { supa } from './_supabase.mjs';
+import { sendPush } from './_push.mjs';
 
 const SEASON = Number(process.env.SEASON || '2026');
 const LEAGUE_NAME = process.env.VITE_LEAGUE_NAME || 'Survivor 2026';
-
-const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY || process.env.VITE_VAPID_PUBLIC_KEY;
-const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY;
-if (VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY) {
-  webpush.setVapidDetails(process.env.VAPID_SUBJECT || 'mailto:no-reply@survivor.app', VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
-}
-
-/** Manda push a todas las suscripciones del usuario; borra las que ya expiraron (404/410). */
-async function sendPush(userId, payload) {
-  if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) return 0;
-  const { data: subs } = await supa.from('push_subscriptions').select('id, endpoint, p256dh, auth').eq('user_id', userId);
-  let sent = 0;
-  for (const s of subs || []) {
-    try {
-      await webpush.sendNotification(
-        { endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } },
-        JSON.stringify(payload)
-      );
-      sent++;
-    } catch (e) {
-      if (e.statusCode === 404 || e.statusCode === 410) {
-        await supa.from('push_subscriptions').delete().eq('id', s.id);
-      }
-    }
-  }
-  return sent;
-}
 
 function guard(req, res) {
   const url = new URL(req.url, `https://${req.headers.host}`);

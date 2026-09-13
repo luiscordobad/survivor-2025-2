@@ -95,6 +95,35 @@ function ListSkeleton({ rows = 5 }) {
   );
 }
 
+/* ========================= Gráfica: vidas de la liga por semana ========================= */
+function LivesChart({ data }) {
+  if (!data?.length) return null;
+  const W = 640, H = 200, padL = 28, padR = 12, padT = 20, padB = 24;
+  const innerW = W - padL - padR;
+  const innerH = H - padT - padB;
+  const maxAlive = Math.max(1, ...data.map((d) => d.alive));
+  const barW = innerW / data.length;
+
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-auto" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Jugadores vivos por semana">
+      <line x1={padL} y1={padT} x2={padL} y2={H - padB} stroke="#262d3a" strokeWidth="1" />
+      <line x1={padL} y1={H - padB} x2={W - padR} y2={H - padB} stroke="#262d3a" strokeWidth="1" />
+      {data.map((d, i) => {
+        const h = (d.alive / maxAlive) * innerH;
+        const x = padL + i * barW;
+        const y = H - padB - h;
+        return (
+          <g key={d.week}>
+            <rect x={x + barW * 0.15} y={y} width={barW * 0.7} height={Math.max(h, 1)} rx="3" fill="#22c55e" />
+            <text x={x + barW / 2} y={y - 4} fontSize="10" fill="#eef1f6" textAnchor="middle">{d.alive}</text>
+            <text x={x + barW / 2} y={H - padB + 14} fontSize="9" fill="#8b93a7" textAnchor="middle">W{d.week}</text>
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
 /* ========================= PWA: instalar app ========================= */
 function isStandaloneNow() {
   return (
@@ -311,7 +340,7 @@ function PushNotificationsCard({ session }) {
         </>
       ) : (
         <>
-          <p className="text-gray-600">Recibe un aviso directo en tu celular/compu cuando falte poco para que cierre tu pick.</p>
+          <p className="text-gray-600">Recibe un aviso directo en tu celular/compu cuando falte poco para que cierre tu pick, y en cuanto se sepa si ganaste, perdiste o quedaste eliminado.</p>
           <button className="btn btn-primary" onClick={push.subscribe} disabled={push.busy}>
             {push.busy ? "Activando…" : "Activar notificaciones"}
           </button>
@@ -766,6 +795,7 @@ function GamesTab({ session }) {
   const [pickSavedToast, setPickSavedToast] = useState(null);
   const [playerModalId, setPlayerModalId] = useState(null);
   const [avatarMap, setAvatarMap] = useState({});
+  const [startingLivesCfg, setStartingLivesCfg] = useState(2);
   const [lastUpdated, setLastUpdated] = useState(null);
 
   const [allGamesSeason, setAllGamesSeason] = useState([]);
@@ -976,6 +1006,8 @@ function GamesTab({ session }) {
     await loadSeasonData();
     const { data: profs } = await supabase.from("profiles").select("id, avatar_emoji");
     setAvatarMap(Object.fromEntries((profs || []).map((p) => [p.id, p.avatar_emoji || "🏈"])));
+    const { data: cfg } = await supabase.from("app_config").select("value").eq("key", "starting_lives").maybeSingle();
+    setStartingLivesCfg(Number(cfg?.value ?? 2) || 2);
     setLastUpdated(new Date().toISOString());
   };
 
@@ -1741,6 +1773,27 @@ function GamesTab({ session }) {
     return rows.sort((a, b) => b.week - a.week);
   }, [allPicksSeason, standingsSorted, allGamesMap]);
 
+  const livesByWeek = useMemo(() => {
+    const allUserIds = new Set([
+      ...(standingsSorted || []).map((s) => s.user_id),
+      ...picksByUser.keys(),
+    ]);
+    return survivorWeeks.map((w) => {
+      let alive = 0;
+      allUserIds.forEach((uid2) => {
+        let lives = startingLivesCfg;
+        (picksByUser.get(uid2) || []).forEach((p) => {
+          if (p.week > w) return;
+          const g = allGamesMap[p.game_id];
+          const res = p.result && p.result !== "pending" ? p.result : (g ? computePickResultFromGame(g, p.team_id) : "pending");
+          if (res === "loss") lives -= 1;
+        });
+        if (lives > 0) alive++;
+      });
+      return { week: w, alive };
+    });
+  }, [survivorWeeks, standingsSorted, picksByUser, allGamesMap, startingLivesCfg]);
+
   /* ========================= Render ========================= */
   const nextKick = nextKickoffISO;
 
@@ -2018,8 +2071,8 @@ function GamesTab({ session }) {
                   <th>Jugador</th>
                   <th>Equipo</th>
                   <th>Resultado</th>
-                  <th>Auto</th>
-                  <th>Actualizado</th>
+                  <th className="hidden sm:table-cell">Auto</th>
+                  <th className="hidden sm:table-cell">Actualizado</th>
                 </tr>
               </thead>
               <tbody>
@@ -2046,8 +2099,8 @@ function GamesTab({ session }) {
                               {shownRes}
                             </span>
                           </td>
-                          <td>{p.auto_pick ? "Sí" : "No"}</td>
-                          <td className="text-xs text-gray-500">
+                          <td className="hidden sm:table-cell">{p.auto_pick ? "Sí" : "No"}</td>
+                          <td className="hidden sm:table-cell text-xs text-gray-500">
                             {p.updated_at ? DateTime.fromISO(p.updated_at).setZone(TZ).toFormat("dd LLL HH:mm") : "-"}
                           </td>
                         </tr>
@@ -2165,6 +2218,17 @@ function GamesTab({ session }) {
           </table>
         </div>
       </section>
+
+      {/* ===== Vidas de la liga por semana ===== */}
+      {livesByWeek.some((d) => d.alive > 0) && (
+        <section className="mt-6 p-4 border rounded-2xl bg-white card">
+          <h2 className="font-semibold">❤️ Vidas de la liga por semana</h2>
+          <p className="text-xs text-gray-600">Cuántos jugadores seguían vivos al final de cada semana.</p>
+          <div className="mt-3">
+            <LivesChart data={livesByWeek} />
+          </div>
+        </section>
+      )}
 
       {/* ===== Favorito de la semana ===== */}
       {weeklyFavorites.length > 0 && (
@@ -2663,6 +2727,9 @@ function StandingsTab() {
     return `T${n}`;
   }
 
+  // En mobile solo se ven las columnas esenciales (Equipo/W/L/T/%) para que
+  // la tabla quepa sin scroll horizontal; PF/PC/Loc./Vis./Rach. aparecen
+  // desde sm hacia arriba.
   const colHeader = (
     <thead>
       <tr>
@@ -2671,11 +2738,11 @@ function StandingsTab() {
         <th>L</th>
         <th>T</th>
         <th>%</th>
-        <th>PF</th>
-        <th>PC</th>
-        <th>Loc.</th>
-        <th>Vis.</th>
-        <th>Rach.</th>
+        <th className="hidden sm:table-cell">PF</th>
+        <th className="hidden sm:table-cell">PC</th>
+        <th className="hidden sm:table-cell">Loc.</th>
+        <th className="hidden sm:table-cell">Vis.</th>
+        <th className="hidden sm:table-cell">Rach.</th>
       </tr>
     </thead>
   );
@@ -2694,11 +2761,11 @@ function StandingsTab() {
                 <td className="text-red-600 font-medium">{r.l}</td>
                 <td className="text-gray-600">{r.t}</td>
                 <td className="font-mono">{pctStr(r.w, r.l, r.t)}</td>
-                <td>{r.pf}</td>
-                <td>{r.pa}</td>
-                <td>{`${r.home_w}-${r.home_l}${r.home_t ? `-${r.home_t}` : ""}`}</td>
-                <td>{`${r.away_w}-${r.away_l}${r.away_t ? `-${r.away_t}` : ""}`}</td>
-                <td>{streakStr(r)}</td>
+                <td className="hidden sm:table-cell">{r.pf}</td>
+                <td className="hidden sm:table-cell">{r.pa}</td>
+                <td className="hidden sm:table-cell">{`${r.home_w}-${r.home_l}${r.home_t ? `-${r.home_t}` : ""}`}</td>
+                <td className="hidden sm:table-cell">{`${r.away_w}-${r.away_l}${r.away_t ? `-${r.away_t}` : ""}`}</td>
+                <td className="hidden sm:table-cell">{streakStr(r)}</td>
               </tr>
             ))}
             {!list.length && (
@@ -3010,7 +3077,7 @@ function SettingsTab({ session }) {
         <div className="p-4 border rounded-2xl bg-white card space-y-2 text-sm">
           <p>Vidas iniciales: <b>{startingLives}</b> (se reinician así al arrancar cada temporada nueva).</p>
           {me?.is_admin && (
-            <div className="flex items-center gap-2 pt-1">
+            <div className="flex flex-wrap items-center gap-2 pt-1">
               <label className="text-xs text-gray-500">Vidas iniciales</label>
               <input
                 className="input w-20"
@@ -3047,7 +3114,7 @@ function SettingsTab({ session }) {
             <p className="text-gray-500">{me?.is_admin ? "Todavía no defines una cuota de entrada." : "El admin no ha definido una cuota de entrada."}</p>
           )}
           {me?.is_admin && (
-            <div className="flex items-center gap-2 pt-1">
+            <div className="flex flex-wrap items-center gap-2 pt-1">
               <label className="text-xs text-gray-500">Cuota por jugador</label>
               <input
                 className="input w-28"
@@ -3065,10 +3132,16 @@ function SettingsTab({ session }) {
       </div>
 
       {me?.is_admin && (
+        <div className="pt-2 mt-2 border-t" style={{ borderColor: "var(--border)" }}>
+          <h2 className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-3">Administración de la liga</h2>
+        </div>
+      )}
+
+      {me?.is_admin && (
         <div>
           <h2 className="font-semibold mb-2">📋 Resumen admin</h2>
           <div className="p-4 border rounded-2xl bg-white card space-y-4 text-sm">
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <label className="text-xs text-gray-500">Semana</label>
               <select className="select" value={summaryWeek} onChange={(e) => setSummaryWeek(Number(e.target.value))}>
                 {Array.from({ length: 18 }, (_, i) => i + 1).map((w) => (
@@ -3113,64 +3186,113 @@ function SettingsTab({ session }) {
       {me?.is_admin && (
         <div>
           <h2 className="font-semibold mb-2">Jugadores (temporada {SEASON})</h2>
-          <div className="p-4 border rounded-2xl bg-white card overflow-x-auto">
-            {playersLoading && <TableSkeleton rows={6} cols={5} />}
-            {!playersLoading && (
-              <table className="w-full text-sm table-minimal">
-                <thead>
-                  <tr>
-                    <th>Jugador</th>
-                    <th>Email</th>
-                    <th>Vidas</th>
-                    <th>Estado</th>
-                    <th>Pagó</th>
-                    <th></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {(players || []).map((p) => (
-                    <tr key={p.id}>
-                      <td className="font-medium">{p.avatar_emoji || "🏈"} {p.display_name}{p.is_admin ? " 👑" : ""}</td>
-                      <td className="text-gray-500">{p.email}</td>
-                      <td>
-                        <div className="flex items-center gap-1">
-                          <button className="btn btn-ghost !py-0.5 !px-2" disabled={busyId === p.id} onClick={() => adjustLives(p, -1)}>-</button>
-                          <span className="w-5 text-center inline-block">{p.lives}</span>
-                          <button className="btn btn-ghost !py-0.5 !px-2" disabled={busyId === p.id} onClick={() => adjustLives(p, 1)}>+</button>
-                        </div>
-                      </td>
-                      <td>
-                        {p.eliminated_at ? (
-                          <span className="badge badge-danger">Eliminado</span>
-                        ) : (
-                          <span className="badge">Activo</span>
-                        )}
-                      </td>
-                      <td>
-                        <label className="inline-flex items-center gap-1.5">
-                          <input
-                            type="checkbox"
-                            checked={!!p.paid}
-                            disabled={busyId === p.id}
-                            onChange={() => togglePaid(p)}
-                          />
-                          {p.paid ? "✅" : "—"}
-                        </label>
-                      </td>
-                      <td>
-                        <button className="text-xs underline" disabled={busyId === p.id} onClick={() => toggleEliminated(p)}>
-                          {p.eliminated_at ? "Reactivar" : "Eliminar"}
-                        </button>
-                      </td>
+
+          {playersLoading && (
+            <div className="p-4 border rounded-2xl bg-white card">
+              <TableSkeleton rows={6} cols={5} />
+            </div>
+          )}
+
+          {!playersLoading && (
+            <>
+              {/* Mobile: tarjetas apiladas, nunca scroll horizontal */}
+              <div className="md:hidden space-y-2">
+                {(players || []).map((p) => (
+                  <div key={p.id} className="p-3 border rounded-xl bg-white card text-sm">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-medium">{p.avatar_emoji || "🏈"} {p.display_name}{p.is_admin ? " 👑" : ""}</span>
+                      {p.eliminated_at ? (
+                        <span className="badge badge-danger">Eliminado</span>
+                      ) : (
+                        <span className="badge">Activo</span>
+                      )}
+                    </div>
+                    <div className="text-xs text-gray-500 truncate mt-0.5">{p.email}</div>
+                    <div className="mt-2 flex items-center justify-between flex-wrap gap-2">
+                      <div className="flex items-center gap-1">
+                        <span className="text-xs text-gray-500 mr-1">Vidas</span>
+                        <button className="btn btn-ghost !py-0.5 !px-2" disabled={busyId === p.id} onClick={() => adjustLives(p, -1)}>-</button>
+                        <span className="w-5 text-center inline-block">{p.lives}</span>
+                        <button className="btn btn-ghost !py-0.5 !px-2" disabled={busyId === p.id} onClick={() => adjustLives(p, 1)}>+</button>
+                      </div>
+                      <label className="inline-flex items-center gap-1.5 text-xs">
+                        <input
+                          type="checkbox"
+                          checked={!!p.paid}
+                          disabled={busyId === p.id}
+                          onChange={() => togglePaid(p)}
+                        />
+                        Pagó {p.paid ? "✅" : ""}
+                      </label>
+                      <button className="text-xs underline" disabled={busyId === p.id} onClick={() => toggleEliminated(p)}>
+                        {p.eliminated_at ? "Reactivar" : "Eliminar"}
+                      </button>
+                    </div>
+                  </div>
+                ))}
+                {!players?.length && (
+                  <div className="p-4 border rounded-2xl bg-white card text-sm text-gray-500">Sin jugadores todavía.</div>
+                )}
+              </div>
+
+              {/* Desktop: tabla */}
+              <div className="hidden md:block p-4 border rounded-2xl bg-white card overflow-x-auto">
+                <table className="w-full text-sm table-minimal">
+                  <thead>
+                    <tr>
+                      <th>Jugador</th>
+                      <th>Email</th>
+                      <th>Vidas</th>
+                      <th>Estado</th>
+                      <th>Pagó</th>
+                      <th></th>
                     </tr>
-                  ))}
-                  {!players?.length && (
-                    <tr><td colSpan={6} className="py-3 text-gray-500">Sin jugadores todavía.</td></tr>
-                  )}
-                </tbody>
-              </table>
-            )}
-          </div>
+                  </thead>
+                  <tbody>
+                    {(players || []).map((p) => (
+                      <tr key={p.id}>
+                        <td className="font-medium">{p.avatar_emoji || "🏈"} {p.display_name}{p.is_admin ? " 👑" : ""}</td>
+                        <td className="text-gray-500">{p.email}</td>
+                        <td>
+                          <div className="flex items-center gap-1">
+                            <button className="btn btn-ghost !py-0.5 !px-2" disabled={busyId === p.id} onClick={() => adjustLives(p, -1)}>-</button>
+                            <span className="w-5 text-center inline-block">{p.lives}</span>
+                            <button className="btn btn-ghost !py-0.5 !px-2" disabled={busyId === p.id} onClick={() => adjustLives(p, 1)}>+</button>
+                          </div>
+                        </td>
+                        <td>
+                          {p.eliminated_at ? (
+                            <span className="badge badge-danger">Eliminado</span>
+                          ) : (
+                            <span className="badge">Activo</span>
+                          )}
+                        </td>
+                        <td>
+                          <label className="inline-flex items-center gap-1.5">
+                            <input
+                              type="checkbox"
+                              checked={!!p.paid}
+                              disabled={busyId === p.id}
+                              onChange={() => togglePaid(p)}
+                            />
+                            {p.paid ? "✅" : "—"}
+                          </label>
+                        </td>
+                        <td>
+                          <button className="text-xs underline" disabled={busyId === p.id} onClick={() => toggleEliminated(p)}>
+                            {p.eliminated_at ? "Reactivar" : "Eliminar"}
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                    {!players?.length && (
+                      <tr><td colSpan={6} className="py-3 text-gray-500">Sin jugadores todavía.</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
         </div>
       )}
     </div>

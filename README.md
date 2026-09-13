@@ -94,9 +94,17 @@ export default {
 - Revisa Logs en Vercel → Functions.
 
 ## 6) Notificaciones push (opcional)
-Cada jugador puede activarlas desde Ajustes → "Activar notificaciones"; se
-mandan junto con el recordatorio de correo (`api/sendReminders.mjs`, mismo
-cron de la sección 3) cuando falta poco para que cierre su pick.
+Cada jugador puede activarlas desde Ajustes → "Activar notificaciones". Hay
+dos disparadores:
+- Recordatorio de pick (`api/sendReminders.mjs`, junto con el correo) cuando
+  falta poco para que cierre su pick.
+- Resultado (`api/control.mjs`, dentro de `settleWeek`) en cuanto un pick
+  pasa de pendiente a ganado/perdido/push -- incluye un aviso especial si
+  esa pérdida lo deja eliminado. Se manda como mucho una vez por pick, sin
+  importar cuántas veces corra `settleWeek` (es idempotente: solo evalúa
+  picks todavía en `result='pending'`), y sin importar si quien la disparó
+  fue el cron o cualquier jugador con la app abierta -- `settleWeek` corre
+  para todos, no solo para quien la llama.
 
 - Genera un par de llaves VAPID una sola vez (no se vuelve a repetir salvo
   que quieras rotarlas):
