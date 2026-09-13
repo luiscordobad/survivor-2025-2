@@ -1449,15 +1449,22 @@ function GamesTab({ session }) {
     const record = teamRecord(teamId);
     const streak = teamStreak(teamId);
 
+    // .card fija border-color: var(--border) en styles.css *después* de las
+    // utilidades de Tailwind en el bundle final -- misma especificidad, gana
+    // la que carga después, así que un border-emerald-500 de Tailwind nunca
+    // se ve encima de .card (mismo bug que ya pasó una vez con .pick-cell).
+    // Se fuerza con estilo inline, que siempre gana sobre cualquier clase.
+    const highlightColor = isWinner || selected ? "#22c55e" : null;
+
     return (
       <button
         title={alreadyUsed ? `${teamId} · ya lo usaste esta temporada` : titleTxt}
         onClick={() => confirmPick(game, teamId)}
         disabled={disabled}
+        style={highlightColor ? { borderColor: highlightColor } : undefined}
         className={clsx(
           "w-full text-left rounded-xl border-2 transition px-4 py-3",
-          isWinner ? "border-emerald-500 card"
-            : selected ? "border-emerald-500 bg-emerald-50 card"
+          selected ? "bg-emerald-50 card"
             : alreadyUsed ? "border-gray-200 card"
             : "border-gray-200 hover:bg-gray-50 card",
           disabled && "opacity-50 cursor-not-allowed"
@@ -1906,11 +1913,6 @@ function GamesTab({ session }) {
             const badge = timeBadge(g);
             const w = weatherMap[g.id];
             const m = metaMap[g.id];
-            const tps = tipsMap[g.id] || [];
-
-            const h2h = lastMatchupsSummary(g.home_team, g.away_team, 3);
-            const stHome = teamStreak(g.home_team);
-            const stAway = teamStreak(g.away_team);
 
             const lpForGame = (leaguePicks || []).filter(p => p.game_id === g.id);
             const whoPickedHome = lpForGame.filter(p => p.team_id === g.home_team).map(p => userNames[p.user_id] || p.user_id.slice(0,6));
@@ -1983,28 +1985,6 @@ function GamesTab({ session }) {
                     return (<>{dHome != null && pill(`${g.home_team}`, dHome)}{dAway != null && pill(`${g.away_team}`, dAway)}</>);
                   })()}
                 </div>
-
-                {(tps.length || true) && (
-                  <div className="mt-3 grid sm:grid-cols-2 lg:grid-cols-3 gap-2">
-                    {(tps || []).slice(0,3).map((t,i) => (
-                      <div key={i} className="p-2 border rounded-lg text-xs text-gray-700 bg-white">
-                        <span className="font-semibold">{t.kind ? `${t.kind}: ` : ""}</span>{t.tip}
-                      </div>
-                    ))}
-                    <div className="p-2 border rounded-lg text-xs text-gray-700 bg-white">
-                      <span className="font-semibold">Racha: </span>
-                      {g.home_team} {stHome}, {g.away_team} {stAway}
-                    </div>
-                    {h2h.length > 0 && (
-                      <div className="p-2 border rounded-lg text-xs text-gray-700 bg-white">
-                        <span className="font-semibold">H2H: </span>
-                        {h2h.map((r,ix) => (
-                          <span key={ix} className="mr-2">{r.when}: {r.a} {r.as}–{r.hs} {r.h} ({r.winner})</span>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )}
 
                 {lpForGame.length > 0 && (
                   <div className="mt-3 text-xs text-gray-700 flex gap-3 flex-wrap">
