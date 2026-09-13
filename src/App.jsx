@@ -1495,7 +1495,7 @@ function GamesTab({ session }) {
         disabled={disabled}
         style={highlightColor ? { borderColor: highlightColor } : undefined}
         className={clsx(
-          "w-full text-left rounded-xl border-2 transition px-4 py-3",
+          "w-full text-left rounded-xl border-2 transition-all px-4 py-3 active:scale-[0.98]",
           selected ? "bg-emerald-50 card"
             : alreadyUsed ? "border-gray-200 card"
             : "border-gray-200 hover:bg-gray-50 card",
@@ -1809,19 +1809,42 @@ function GamesTab({ session }) {
             </p>
           )}
         </div>
-        <div className="flex items-center flex-wrap gap-3">
-          <p className="text-sm text-gray-700">
-            Hola, <b>{me?.avatar_emoji || "🏈"} {me?.display_name}</b> · Vidas:{" "}
+        <div className="flex items-center flex-wrap gap-2">
+          <div
+            className="flex items-center gap-2 pl-1.5 pr-3 py-1.5 rounded-full border text-sm"
+            style={{ borderColor: "var(--border)", background: "var(--bg-elev)" }}
+          >
+            <span
+              className="w-7 h-7 flex items-center justify-center rounded-full text-sm shrink-0"
+              style={{ background: "var(--bg-elev-2)" }}
+              aria-hidden="true"
+            >
+              {me?.avatar_emoji || "🏈"}
+            </span>
+            <span className="font-medium truncate max-w-[9rem]">{me?.display_name}</span>
             <span
               className={clsx(
-                "inline-block px-2 py-0.5 rounded",
+                "inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold shrink-0",
                 (me?.lives ?? 0) > 0 ? "bg-emerald-100 text-emerald-800" : "bg-rose-100 text-rose-800"
               )}
+              title={`${me?.lives ?? 0} vida${(me?.lives ?? 0) === 1 ? "" : "s"}`}
             >
-              {me?.lives ?? 0}
+              {(me?.lives ?? 0) > 0 ? "❤️" : "💀"} {me?.lives ?? 0}
             </span>
-          </p>
-          <button className="text-sm underline" onClick={() => supabase.auth.signOut()}>Salir</button>
+          </div>
+          <button
+            className="w-9 h-9 flex items-center justify-center rounded-full border hover:bg-gray-50 shrink-0"
+            style={{ borderColor: "var(--border)", color: "var(--fg-muted)" }}
+            onClick={() => supabase.auth.signOut()}
+            title="Cerrar sesión"
+            aria-label="Cerrar sesión"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+              <polyline points="16 17 21 12 16 7" />
+              <line x1="21" y1="12" x2="9" y2="12" />
+            </svg>
+          </button>
         </div>
       </header>
 
@@ -3211,9 +3234,19 @@ function SettingsTab({ session }) {
                     <div className="mt-2 flex items-center justify-between flex-wrap gap-2">
                       <div className="flex items-center gap-1">
                         <span className="text-xs text-gray-500 mr-1">Vidas</span>
-                        <button className="btn btn-ghost !py-0.5 !px-2" disabled={busyId === p.id} onClick={() => adjustLives(p, -1)}>-</button>
-                        <span className="w-5 text-center inline-block">{p.lives}</span>
-                        <button className="btn btn-ghost !py-0.5 !px-2" disabled={busyId === p.id} onClick={() => adjustLives(p, 1)}>+</button>
+                        <button
+                          className="btn btn-ghost !w-9 !h-9 !p-0 text-base"
+                          disabled={busyId === p.id}
+                          onClick={() => adjustLives(p, -1)}
+                          aria-label={`Quitar vida a ${p.display_name}`}
+                        >−</button>
+                        <span className="w-6 text-center inline-block font-medium">{p.lives}</span>
+                        <button
+                          className="btn btn-ghost !w-9 !h-9 !p-0 text-base"
+                          disabled={busyId === p.id}
+                          onClick={() => adjustLives(p, 1)}
+                          aria-label={`Dar vida a ${p.display_name}`}
+                        >+</button>
                       </div>
                       <label className="inline-flex items-center gap-1.5 text-xs">
                         <input

@@ -105,12 +105,13 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
 
 /* ====== Botones base ====== */
 .btn{
-  @apply inline-flex items-center justify-center gap-2 px-3 py-1.5 rounded-lg border transition;
+  @apply inline-flex items-center justify-center gap-2 px-3 py-1.5 rounded-lg border transition-all;
   border-color: var(--border);
   color: var(--fg);
   background: var(--bg-elev);
 }
 .btn:hover{ background: var(--bg-elev-2); }
+.btn:active{ transform: scale(0.97); }
 .btn-primary{
   border-color: var(--accent);
   background: var(--accent);
