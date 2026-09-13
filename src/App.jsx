@@ -1907,8 +1907,6 @@ function GamesTab({ session }) {
             const spreadAway = last?.spread_away ?? null;
             const mlHome = last?.ml_home ?? null;
             const mlAway = last?.ml_away ?? null;
-            const wpHome = winProbFromSpread(spreadHome) ?? null;
-            const wpAway = winProbFromSpread(-spreadHome) ?? (wpHome != null ? 100 - wpHome : null);
 
             const badge = timeBadge(g);
             const w = weatherMap[g.id];
@@ -1969,9 +1967,6 @@ function GamesTab({ session }) {
                   )}
                   {mlHome != null && mlAway != null && (
                     <span className="badge">ML: {g.home_team} {mlHome}, {g.away_team} {mlAway}</span>
-                  )}
-                  {(wpHome != null || wpAway != null) && (
-                    <span className="badge">Win%: {g.home_team} {wpHome ?? "—"}% · {g.away_team} {wpAway ?? "—"}%</span>
                   )}
                   {(() => {
                     const dHome = spreadDeltaFor(g.id, "home");
