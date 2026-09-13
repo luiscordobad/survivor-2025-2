@@ -1,142 +1,98 @@
 // api/syncGames.mjs
+// Descubre el calendario NFL (partidos + marcadores) desde The Odds API.
+// Antes usaba la API pública de ESPN, pero ESPN bloquea por IP a los
+// servidores de Vercel/AWS (confirmado: la misma URL funciona desde un
+// navegador normal pero no desde la función serverless). The Odds API sí
+// acepta tráfico de servidor -- requiere ODDS_API_KEY (the-odds-api.com,
+// tiene plan gratuito).
+//
+// A diferencia de ESPN, The Odds API no tiene concepto de "semana": el
+// número de semana se calcula por fecha (ver _theoddsapi.mjs). Por eso este
+// endpoint ya no recibe `week` -- sincroniza de una vez todo lo que The Odds
+// API tiene visible (próximos partidos + los últimos 3 días).
 import { createClient } from '@supabase/supabase-js';
+import { abbrFor, weekForDate, fetchOddsApiJSON } from './_theoddsapi.mjs';
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.VITE_SUPABASE_URL;
-const SERVICE_KEY  = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_SERVICE_KEY;
+const SERVICE_KEY  = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_ROLE || process.env.VITE_SUPABASE_SERVICE_KEY;
 const CRON_TOKEN   = process.env.CRON_TOKEN || process.env.VITE_CRON_TOKEN;
 const SEASON       = Number(process.env.SEASON || '2026');
 
 const sb = createClient(SUPABASE_URL, SERVICE_KEY);
 
-// Helpers
-// ESPN devuelve 403 a peticiones que parecen bots (User-Agent genérico, sin
-// Referer/Origin de espn.com). Estos headers imitan un navegador real.
-const ESPN_HEADERS = {
-  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
-  'Accept': 'application/json, text/plain, */*',
-  'Accept-Language': 'en-US,en;q=0.9',
-  'Referer': 'https://www.espn.com/',
-  'Origin': 'https://www.espn.com',
-};
-
-async function fetchJSON(url) {
-  const r = await fetch(url, { headers: ESPN_HEADERS });
-  if (!r.ok) throw new Error(`HTTP ${r.status} for ${url}`);
-  return r.json();
-}
-const U = (s) => String(s || '').toUpperCase().trim();
-
-function asYMD(iso) {
-  const d = new Date(iso);
-  const y = d.getUTCFullYear();
-  const m = String(d.getUTCMonth()+1).padStart(2, '0');
-  const day = String(d.getUTCDate()).padStart(2, '0');
-  return `${y}${m}${day}`;
+function scoreFor(scores, teamName) {
+  const row = (scores || []).find((s) => s.name === teamName);
+  return row?.score != null ? Number(row.score) : null;
 }
 
-async function loadScoreboard(yyyymmdd) {
-  const url = `https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=${yyyymmdd}`;
-  return fetchJSON(url);
-}
+async function syncFromOddsApi() {
+  // /odds trae próximos partidos (h2h es el market más barato, solo
+  // necesitamos el calendario aquí; los spreads/ML los llena syncOdds.mjs).
+  // /scores trae partidos en vivo/terminados de los últimos días.
+  const [upcoming, recent] = await Promise.all([
+    fetchOddsApiJSON('odds', { regions: 'us', markets: 'h2h', oddsFormat: 'american', dateFormat: 'iso' }),
+    fetchOddsApiJSON('scores', { daysFrom: '3', dateFormat: 'iso' }).catch(() => []),
+  ]);
 
-function mapStatus(es) {
-  const t = (es?.status?.type?.name || '').toUpperCase();
-  if (t.includes('FINAL')) return 'final';
-  if (t.includes('IN') || t.includes('LIVE')) return 'in_progress';
-  if (t.includes('POST')) return 'final';
-  return 'scheduled';
-}
-
-/**
- * Estrategia simple (la que te funcionaba):
- * - Si pasas ?week=N: toma los juegos de esa semana en tu BD para obtener las fechas (YMD) y consulta scoreboard por día.
- * - Si la semana NO tiene juegos aún (sembrado en blanco), usa un arreglo de YMDs conocido (Jue..Lun de la semana 1 o actualiza a las fechas reales).
- */
-async function syncGamesWeek(week) {
-  // 1) Intentar derivar fechas del propio calendario local
-  const { data: myGames } = await sb
-    .from('games')
-    .select('start_time')
-    .eq('season', SEASON)
-    .eq('week', week);
-
-  let ymds = [...new Set((myGames || []).map(g => asYMD(g.start_time)))];
-
-  // 2) Si no hay fechas locales, usa un set de días “base” (ajústalo según necesites)
-  if (ymds.length === 0) {
-    // Para W1 2026 (ajústalo si quieres otras semanas semilla)
-    ymds = ['20260910','20260911','20260912','20260913','20260914']; // Thu..Mon apertura 2026
-  }
+  const byId = new Map();
+  for (const ev of upcoming || []) byId.set(ev.id, { ...ev, _live: false });
+  for (const ev of recent || []) byId.set(ev.id, { ...ev, _live: true });
 
   let upserts = 0;
+  const weeksSeen = new Set();
 
-  for (const ymd of ymds) {
-    const sbJson = await loadScoreboard(ymd);
-    for (const ev of (sbJson?.events || [])) {
-      const cmp = ev?.competitions?.[0];
-      const comps = cmp?.competitors || [];
-      const home = comps.find(c => (c.homeAway || c.homeaway) === 'home');
-      const away = comps.find(c => (c.homeAway || c.homeaway) === 'away');
-      if (!home || !away) continue;
+  for (const ev of byId.values()) {
+    if (!ev.home_team || !ev.away_team || !ev.commence_time) continue;
 
-      const homeAbbr = U(home?.team?.abbreviation);
-      const awayAbbr = U(away?.team?.abbreviation);
-      const startIso = cmp?.date || ev?.date;
-      if (!homeAbbr || !awayAbbr || !startIso) continue;
+    const home_team = abbrFor(ev.home_team);
+    const away_team = abbrFor(ev.away_team);
+    const week = weekForDate(ev.commence_time, SEASON);
+    weeksSeen.add(week);
 
-      const status = mapStatus(cmp || ev);
-      const homeScore = home?.score != null ? Number(home.score) : null;
-      const awayScore = away?.score != null ? Number(away.score) : null;
+    const row = {
+      id: ev.id,
+      season: SEASON,
+      week,
+      home_team,
+      away_team,
+      start_time: ev.commence_time,
+      external_id: ev.id,
+      updated_at: new Date().toISOString(),
+    };
 
-      // UPSERT por (id si viene) o por combinación (season, week, home, away, start_time)
-      const row = {
-        id: ev.id || null,
-        season: SEASON,
-        week,
-        home_team: homeAbbr,
-        away_team: awayAbbr,
-        start_time: startIso,
-        status,
-        home_score: homeScore,
-        away_score: awayScore
-      };
-
-      // Si hay id usamos id; si no, intentamos evitar duplicados buscando por llaves "naturales"
-      if (row.id) {
-        const { error } = await sb.from('games').upsert(row, { onConflict: 'id' });
-        if (!error) upserts++;
-      } else {
-        const { data: exists } = await sb
-          .from('games')
-          .select('id')
-          .eq('season', SEASON)
-          .eq('week', week)
-          .eq('home_team', homeAbbr)
-          .eq('away_team', awayAbbr)
-          .eq('start_time', startIso)
-          .maybeSingle();
-        if (!exists) {
-          const { error } = await sb.from('games').insert(row);
-          if (!error) upserts++;
-        } else {
-          const { error } = await sb.from('games').update(row).eq('id', exists.id);
-          if (!error) upserts++;
-        }
-      }
+    if (ev._live) {
+      row.home_score = scoreFor(ev.scores, ev.home_team);
+      row.away_score = scoreFor(ev.scores, ev.away_team);
+      row.status = ev.completed ? 'final' : (ev.scores ? 'in_progress' : 'scheduled');
+    } else {
+      // Viene solo de /odds (todavía no arranca): no pisar un estado o
+      // marcador que ya hayamos guardado por otra vía.
+      const { data: existing } = await sb
+        .from('games')
+        .select('status, home_score, away_score')
+        .eq('id', ev.id)
+        .maybeSingle();
+      row.status = existing?.status || 'scheduled';
+      row.home_score = existing?.home_score ?? null;
+      row.away_score = existing?.away_score ?? null;
     }
+
+    const { error } = await sb.from('games').upsert(row, { onConflict: 'id' });
+    if (!error) upserts++;
   }
-  return { updated: upserts, weeks: [week] };
+
+  return { updated: upserts, weeks: [...weeksSeen].sort((a, b) => a - b) };
 }
 
 export default async function handler(req, res) {
   try {
-    const { token, week } = req.query;
-    if (!token || token !== CRON_TOKEN) return res.status(401).json({ ok:false, error:'bad token' });
+    const { token } = req.query;
+    if (!token || token !== CRON_TOKEN) return res.status(401).json({ ok: false, error: 'bad token' });
 
-    const wk = Number(week || '1');
-    const r = await syncGamesWeek(wk);
-    return res.json({ ok:true, action:'syncGames', ...r });
+    const r = await syncFromOddsApi();
+    return res.json({ ok: true, action: 'syncGames', season: SEASON, ...r });
   } catch (e) {
-    return res.status(500).json({ ok:false, error:e.message });
+    console.error('syncGames error:', e);
+    return res.status(500).json({ ok: false, error: e.message });
   }
 }
