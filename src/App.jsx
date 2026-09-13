@@ -1408,15 +1408,7 @@ function GamesTab({ session }) {
                     <TeamChip id={g.home_team} />
                     {badge && <span className="badge">{badge}</span>}
                   </div>
-                  <div className="text-xs text-gray-600 flex items-center gap-2">
-                    <a
-                      href={`https://www.espn.com/nfl/game/_/gameId/${g.id}`}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="underline text-gray-500"
-                    >
-                      Stats
-                    </a>
+                  <div className="text-xs text-gray-600 flex flex-wrap items-center gap-2">
                     <button className="underline text-gray-700" onClick={() => openDetails(g)}>Detalles</button>
                     <button className="px-2 py-0.5 rounded border" onClick={() => copyGameLink(g)}>Copiar link</button>
                     <button
@@ -1768,14 +1760,6 @@ function GamesTab({ session }) {
                 </p>
               </div>
               <div className="flex gap-2">
-                <a
-                  href={`https://www.espn.com/nfl/game/_/gameId/${details.game.id}`}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="px-3 py-1 rounded border text-sm"
-                >
-                  Ver en ESPN
-                </a>
                 <button
                   className="px-3 py-1 rounded border text-sm"
                   onClick={() => setDetails(null)}
