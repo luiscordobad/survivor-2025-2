@@ -38,12 +38,14 @@ export async function ensureProfile(userId, email) {
   }
 
   if ((prof.season ?? SEASON) < SEASON) {
-    const { data: updated, error: updErr } = await supabase
-      .from('profiles')
-      .update({ season: SEASON, lives: 2, eliminated_at: null })
-      .eq('id', userId)
-      .select('*')
-      .single();
+    // El cliente ya no tiene permiso de UPDATE sobre season/lives/eliminated_at
+    // (ver migración lock_down_profiles_self_update_and_add_rollover_rpc):
+    // cualquiera podía re-escribir esas columnas en su propia fila vía RLS
+    // porque profiles_update_self solo restringe la fila, no la columna. El
+    // rollover ahora lo hace esta función de Postgres (SECURITY DEFINER),
+    // que decide la temporada objetivo desde app_config en vez de confiar en
+    // un valor que mande el navegador.
+    const { data: updated, error: updErr } = await supabase.rpc('rollover_my_season');
     if (updErr) throw updErr;
     return updated;
   }

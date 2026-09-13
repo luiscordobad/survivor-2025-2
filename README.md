@@ -7,6 +7,18 @@
   - SUPABASE_SERVICE_ROLE_KEY (o SUPABASE_SERVICE_ROLE), SEASON=2026
   - **ODDS_API_KEY** (the-odds-api.com, tiene plan gratuito ~500 requests/mes) — fuente de partidos/marcadores/líneas
   - (opcional) SEASON_WEEK1_START (fecha ISO del martes previo al primer jueves de temporada; ya trae default para 2025/2026)
+
+### Al arrancar una temporada nueva (2027, 2028, ...)
+Además de `VITE_SEASON`/`SEASON` en Vercel, actualiza también la fila que usa
+el rollover automático de perfiles (reinicia vidas a 2 y limpia eliminación
+la primera vez que cada jugador entra en la temporada nueva):
+```sql
+update public.app_config set value = '2027' where key = 'season';
+```
+Se dejó en una tabla aparte (en vez de confiar en un valor que mande el
+navegador) porque `profiles` ya no permite que el cliente escriba
+`season`/`lives`/`eliminated_at` directamente -- ver la nota de seguridad
+más abajo.
   - (opcional) RESEND_API_KEY, EMAIL_FROM
   - **CRON_TOKEN** = (elige un token seguro, ej. `luis-123-xyz`)
 
@@ -72,3 +84,4 @@ export default {
 
 ## Seguridad
 - Los endpoints exigen el `CRON_TOKEN` por query `?token=` o header `x-cron-token`.
+- `profiles`: RLS solo deja que cada quien edite su propia fila (`auth.uid() = id`), pero eso no distingue columnas -- por defecto Postgres deja editar cualquier columna de esa fila. Se restringió el `GRANT UPDATE` de `authenticated` a solo `display_name` y `notify_email`; `lives`, `is_admin`, `eliminated_at` y `season` solo los puede tocar el service role (endpoint admin en `api/control.mjs`) o la función `rollover_my_season()` (que no confía en un valor mandado por el navegador, lee la temporada objetivo de `public.app_config`). Antes de este cambio cualquier jugador podía, desde la consola del navegador, hacer `supabase.from('profiles').update({is_admin:true})` sobre su propia fila.
