@@ -1,118 +1,64 @@
 // api/syncScores.mjs
+// Refresca marcadores/estado de partidos ya conocidos usando el endpoint
+// /scores de The Odds API (barato en cuota: sin markets, 1 crédito por
+// llamada), pensado para correr con más frecuencia que syncGames.mjs
+// (que sí paga el costo de /odds). Reemplaza a ESPN por el mismo motivo que
+// syncGames.mjs: ESPN bloquea por IP a los servidores de Vercel/AWS.
 import { createClient } from '@supabase/supabase-js';
+import { fetchOddsApiJSON } from './_theoddsapi.mjs';
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.VITE_SUPABASE_URL;
-const SERVICE_KEY  = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_SERVICE_KEY;
+const SERVICE_KEY  = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_ROLE || process.env.VITE_SUPABASE_SERVICE_KEY;
 const CRON_TOKEN   = process.env.CRON_TOKEN || process.env.VITE_CRON_TOKEN;
-const FIXED_SEASON = Number(process.env.SEASON || '2026');
+const SEASON       = Number(process.env.SEASON || '2026');
 
 const sb = createClient(SUPABASE_URL, SERVICE_KEY);
 
-// ESPN devuelve 403 a peticiones que parecen bots (User-Agent genérico, sin
-// Referer/Origin de espn.com). Estos headers imitan un navegador real.
-const ESPN_HEADERS = {
-  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
-  'Accept': 'application/json, text/plain, */*',
-  'Accept-Language': 'en-US,en;q=0.9',
-  'Referer': 'https://www.espn.com/',
-  'Origin': 'https://www.espn.com',
-};
-
-async function fetchJSON(url) {
-  const r = await fetch(url, { headers: ESPN_HEADERS });
-  if (!r.ok) throw new Error(`HTTP ${r.status} for ${url}`);
-  return r.json();
-}
-const U = (s) => String(s || '').toUpperCase().trim();
-
-function asYMD(iso) {
-  const d = new Date(iso);
-  const y = d.getUTCFullYear();
-  const m = String(d.getUTCMonth()+1).padStart(2, '0');
-  const day = String(d.getUTCDate()).padStart(2, '0');
-  return `${y}${m}${day}`;
-}
-function mapStatus(es) {
-  const t = (es?.status?.type?.name || '').toUpperCase();
-  if (t.includes('FINAL')) return 'final';
-  if (t.includes('IN') || t.includes('LIVE')) return 'in_progress';
-  if (t.includes('POST')) return 'final';
-  return 'scheduled';
+function scoreFor(scores, teamName) {
+  const row = (scores || []).find((s) => s.name === teamName);
+  return row?.score != null ? Number(row.score) : null;
 }
 
-async function updateFromScoreboard(ymd, games) {
-  const url = `https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=${ymd}`;
-  const sbJson = await fetchJSON(url);
-  const events = sbJson?.events || [];
-  let updated = 0;
-
-  for (const g of games) {
-    const home = U(g.home_team), away = U(g.away_team);
-    const start = new Date(g.start_time).getTime();
-
-    const ev = events.find(ev => {
-      const cmp = ev?.competitions?.[0];
-      const comps = cmp?.competitors || [];
-      const H = U((comps.find(c=> (c.homeAway||c.homeaway)==='home')?.team?.abbreviation));
-      const A = U((comps.find(c=> (c.homeAway||c.homeaway)==='away')?.team?.abbreviation));
-      const dt = new Date(cmp?.date || ev?.date || g.start_time).getTime();
-      return H === home && A === away && Math.abs(dt - start) < 6*3600*1000;
-    });
-    if (!ev) continue;
-
-    const cmp = ev?.competitions?.[0];
-    const comps = cmp?.competitors || [];
-    const homeC = comps.find(c => (c.homeAway || c.homeaway) === 'home');
-    const awayC = comps.find(c => (c.homeAway || c.homeaway) === 'away');
-
-    const status = mapStatus(cmp || ev);
-    const homeScore = homeC?.score != null ? Number(homeC.score) : null;
-    const awayScore = awayC?.score != null ? Number(awayC.score) : null;
-
-    const patch = { updated_at: new Date().toISOString() };
-    if (status && status !== g.status) patch.status = status;
-    if (homeScore != null) patch.home_score = homeScore;
-    if (awayScore != null) patch.away_score = awayScore;
-
-    if (Object.keys(patch).length > 1) {
-      const { error } = await sb.from('games').update(patch).eq('id', g.id);
-      if (!error) updated++;
-    }
-  }
-  return updated;
-}
-
-async function syncScoresWeek(week) {
-  const { data: games } = await sb
+async function syncScores() {
+  const { data: pending, error: pErr } = await sb
     .from('games')
-    .select('id, home_team, away_team, start_time, status')
-    .eq('season', FIXED_SEASON)
-    .eq('week', week);
+    .select('id')
+    .eq('season', SEASON)
+    .neq('status', 'final');
+  if (pErr) throw pErr;
 
-  if (!games?.length) return { updated: 0, weeks: [week] };
+  const pendingIds = new Set((pending || []).map((g) => g.id));
+  if (!pendingIds.size) return { updated: 0, checked: 0 };
 
-  const byDay = {};
-  for (const g of games) {
-    const ymd = asYMD(g.start_time);
-    (byDay[ymd] ||= []).push(g);
+  const recent = await fetchOddsApiJSON('scores', { daysFrom: '3', dateFormat: 'iso' });
+
+  let updated = 0;
+  for (const ev of recent || []) {
+    if (!pendingIds.has(ev.id)) continue;
+
+    const home_score = scoreFor(ev.scores, ev.home_team);
+    const away_score = scoreFor(ev.scores, ev.away_team);
+    const status = ev.completed ? 'final' : (ev.scores ? 'in_progress' : 'scheduled');
+
+    const patch = { status, updated_at: new Date().toISOString() };
+    if (home_score != null) patch.home_score = home_score;
+    if (away_score != null) patch.away_score = away_score;
+
+    const { error } = await sb.from('games').update(patch).eq('id', ev.id);
+    if (!error) updated++;
   }
-
-  let total = 0;
-  for (const [ymd, gs] of Object.entries(byDay)) {
-    total += await updateFromScoreboard(ymd, gs);
-  }
-  return { updated: total, weeks: [week] };
+  return { updated, checked: pendingIds.size };
 }
 
 export default async function handler(req, res) {
   try {
-    const { token, week } = req.query;
-    if (!token || token !== CRON_TOKEN) return res.status(401).json({ ok:false, error:'bad token' });
+    const { token } = req.query;
+    if (!token || token !== CRON_TOKEN) return res.status(401).json({ ok: false, error: 'bad token' });
 
-    const wk = Number(week || '1');
-    const r = await syncScoresWeek(wk);
-    return res.json({ ok:true, action:'syncScores', ...r });
+    const r = await syncScores();
+    return res.json({ ok: true, action: 'syncScores', season: SEASON, ...r });
   } catch (e) {
-    return res.status(500).json({ ok:false, error:e.message });
+    console.error('syncScores error:', e);
+    return res.status(500).json({ ok: false, error: e.message });
   }
 }

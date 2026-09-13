@@ -471,7 +471,6 @@ function GamesTab({ session }) {
 
   // ---- Datos del modal Detalles ----
   const [oddsHistory, setOddsHistory] = useState([]); // historial odds
-  const [leaders, setLeaders] = useState([]);         // líderes
   const [notes, setNotes] = useState([]);             // comentarios
   const [newNote, setNewNote] = useState("");
   const [detailsTab, setDetailsTab] = useState("resumen"); // resumen | odds | leaders | notes
@@ -494,11 +493,8 @@ function GamesTab({ session }) {
   const [metaMap, setMetaMap] = useState({});       // game_id -> { stadium, city, tv }
   const [tipsMap, setTipsMap] = useState({});       // game_id -> [ { tip, kind } ]
 
-  // ---- Detalles avanzados tipo ESPN ----
+  // ---- Detalles avanzados ----
   const [betSplits, setBetSplits] = useState(null);       // tickets/money split
-  const [teamStats, setTeamStats] = useState(null);       // comparativa temporada
-  const [injuries, setInjuries] = useState([]);           // lesionados
-  const [recentForm, setRecentForm] = useState({ home: [], away: [] });
 
   // ---- Realtime ----
   useEffect(() => {
@@ -1072,14 +1068,6 @@ function GamesTab({ session }) {
       .limit(200);
     setOddsHistory(oh || []);
 
-    // Líderes
-    const { data: gl } = await supabase
-      .from("game_leaders")
-      .select("side, player, stat, value")
-      .eq("game_id", g.id)
-      .order("side").order("stat");
-    setLeaders(gl || []);
-
     // Notas
     const { data: ns } = await supabase
       .from("game_notes")
@@ -1098,38 +1086,6 @@ function GamesTab({ session }) {
         .single();
       setBetSplits(bs || null);
     } catch { setBetSplits(null); }
-
-    // Team stats temporada
-    try {
-      const { data: stats } = await supabase
-        .from("season_team_stats")
-        .select("team_id, ppg, ypg, pass_ypg, rush_ypg, opp_ppg, opp_ypg, third_down, red_zone, to_diff, sacks")
-        .in("team_id", [g.home_team, g.away_team]);
-      const home = (stats || []).find(s => s.team_id === g.home_team) || {};
-      const away = (stats || []).find(s => s.team_id === g.away_team) || {};
-      setTeamStats({ home, away });
-    } catch { setTeamStats(null); }
-
-    // Lesiones
-    try {
-      const { data: inj } = await supabase
-        .from("injuries")
-        .select("team_id, player, status, note")
-        .in("team_id", [g.home_team, g.away_team])
-        .order("team_id");
-      setInjuries(inj || []);
-    } catch { setInjuries([]); }
-
-    // Últimos 5
-    try {
-      const { data: recs } = await supabase
-        .from("team_recent_games")
-        .select("team_id, date, opp, is_home, result, score")
-        .in("team_id", [g.home_team, g.away_team])
-        .order("date", { ascending: false });
-      const take5 = (t) => (recs || []).filter(r => r.team_id === t).slice(0, 5);
-      setRecentForm({ home: take5(g.home_team), away: take5(g.away_team) });
-    } catch { setRecentForm({ home: [], away: [] }); }
   }
 
   async function addNote() {
@@ -1737,7 +1693,15 @@ function GamesTab({ session }) {
             </div>
 
             {/* GRID principal */}
-            <div className="mt-4 grid grid-cols-1 lg:grid-cols-3 gap-4">
+            {/*
+              Nota: las secciones de Líderes, Comparativa de equipos, Lesionados
+              y Últimos 5 dependían de la API de ESPN (season_team_stats,
+              game_leaders, injuries, team_recent_games). ESPN bloquea por IP a
+              los servidores de Vercel/AWS y no hay reemplazo para esos datos
+              en The Odds API, así que esas secciones se quitaron del modal en
+              vez de mostrarlas siempre vacías.
+            */}
+            <div className="mt-4 grid grid-cols-1 lg:grid-cols-2 gap-4">
               {/* Columna izquierda */}
               <div className="space-y-4">
                 {/* Probabilidades & Popularidad */}
@@ -1820,91 +1784,6 @@ function GamesTab({ session }) {
                     </div>
                   </div>
                 </div>
-
-                {/* Últimos 5 */}
-                <div className="p-4 border rounded-xl bg-white">
-                  <div className="text-sm font-semibold mb-3">Últimos 5</div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
-                    {["home","away"].map(side => {
-                      const rows = (recentForm?.[side] || []);
-                      const label = side === "home" ? details.game.home_team : details.game.away_team;
-                      return (
-                        <div key={side}>
-                          <div className="font-semibold mb-1">{label}</div>
-                          <div className="space-y-1">
-                            {rows.length ? rows.map((r, i) => (
-                              <div key={i} className="flex items-center justify-between">
-                                <span className="text-gray-600">
-                                  {DateTime.fromISO(r.date).setZone(TZ).toFormat("dd LLL")}
-                                </span>
-                                <span className="font-mono">{r.result}</span>
-                                <span className="text-gray-700">{r.opp}</span>
-                                <span className="font-mono">{r.score}</span>
-                              </div>
-                            )) : <div className="text-xs text-gray-500">Sin datos.</div>}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              </div>
-
-              {/* Columna central */}
-              <div className="space-y-4">
-                {/* Líderes */}
-                <div className="p-4 border rounded-2xl bg-white">
-                  <div className="text-sm font-semibold mb-3">Líderes</div>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    {["home","away"].map(side => {
-                      const rows = (leaders || []).filter(x => x.side === side);
-                      const label = side === "home" ? details.game.home_team : details.game.away_team;
-                      return (
-                        <div key={side}>
-                          <div className="font-semibold mb-1">{label}</div>
-                          {rows.length ? (
-                            <ul className="text-sm space-y-1">
-                              {rows.map((r, i) => (
-                                <li key={i} className="flex justify-between">
-                                  <span className="text-gray-700">{r.player} · {r.stat}</span>
-                                  <span className="font-mono">{r.value}</span>
-                                </li>
-                              ))}
-                            </ul>
-                          ) : <p className="text-xs text-gray-500">Sin datos de líderes.</p>}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                {/* Comparativa temporada */}
-                <div className="p-4 border rounded-2xl bg-white">
-                  <div className="text-sm font-semibold mb-3">Comparativa de equipos (temporada)</div>
-                  <table className="w-full text-sm">
-                    <thead className="text-xs text-gray-500">
-                      <tr>
-                        <th className="text-left">Métrica</th>
-                        <th className="text-left">{details.game.home_team}</th>
-                        <th className="text-left">{details.game.away_team}</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {[
-                        ["PPG","ppg"],["Yds/G","ypg"],["Pass Y/G","pass_ypg"],["Rush Y/G","rush_ypg"],
-                        ["Opp PPG","opp_ppg"],["Opp Y/G","opp_ypg"],["3rd down %","third_down"],
-                        ["Red zone %","red_zone"],["TO Diff","to_diff"],["Sacks","sacks"],
-                      ].map(([label,key]) => (
-                        <tr key={key}>
-                          <td className="py-1 text-gray-600">{label}</td>
-                          <td className="py-1 font-mono">{teamStats?.home?.[key] ?? "—"}</td>
-                          <td className="py-1 font-mono">{teamStats?.away?.[key] ?? "—"}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                  <p className="mt-2 text-xs text-gray-500">Fuente: <code>season_team_stats</code>.</p>
-                </div>
               </div>
 
               {/* Columna derecha */}
@@ -1948,26 +1827,6 @@ function GamesTab({ session }) {
                     })()}
                   </div>
                   <p className="mt-2 text-xs text-gray-500">Fuente: <code>betting_splits</code>.</p>
-                </div>
-
-                {/* Lesiones */}
-                <div className="p-4 border rounded-2xl bg-white">
-                  <div className="text-sm font-semibold mb-3">Lesionados</div>
-                  {["home","away"].map(side => {
-                    const team = side === "home" ? details.game.home_team : details.game.away_team;
-                    const rows = (injuries || []).filter(i => i.team_id === team);
-                    return (
-                      <div key={side} className="mb-3">
-                        <div className="font-semibold text-xs mb-1">{team}</div>
-                        {rows.length ? rows.slice(0,5).map((r,i) => (
-                          <div key={i} className="text-sm flex items-center justify-between">
-                            <span>{r.player}</span>
-                            <span className="text-gray-600">{r.status}</span>
-                          </div>
-                        )) : <p className="text-xs text-gray-500">Sin datos.</p>}
-                      </div>
-                    );
-                  })}
                 </div>
               </div>
             </div>
