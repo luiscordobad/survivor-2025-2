@@ -29,9 +29,19 @@ función serverless). `syncGames.mjs` y `syncScores.mjs` ahora usan The Odds
 API. Esa fuente no tiene estadísticas de equipo, líderes de partido, lesiones
 ni "últimos 5 juegos" — esas secciones del modal de detalles se quitaron.
 
+### Partidos que no aparecían (ej. Seattle vs Patriots)
+`syncGames.mjs` armaba el calendario únicamente a partir de `/odds`, que solo
+devuelve partidos con línea de apuesta (mercado h2h) ya publicada. Las casas
+de apuestas no postean líneas de todos los partidos con semanas de
+anticipación, así que partidos reales del calendario simplemente no
+existían todavía en la tabla `games` -- no había forma de pickearlos. Se
+agregó `/events` (calendario completo de la temporada, no gasta cuota de la
+API) como fuente de verdad de qué partidos existen; `/odds` sigue llenando
+spread/moneyline solo para los que ya tienen mercado abierto.
+
 ## 2) Cron diario en Vercel (permitido en Hobby)
-- Settings → Functions → Cron Jobs:
-  - `/api/syncGames?token=CRON_TOKEN` → `0 6 * * *` (descubre calendario nuevo; usa el endpoint `/odds` de The Odds API, el que más cuota consume, por eso una vez al día basta)
+- Ya configurado en `vercel.json` (Cron Jobs de Vercel, no necesitas tocar nada):
+  - `/api/syncGames?token=CRON_TOKEN` → `0 6 * * *` (descubre calendario nuevo; usa `/odds`, el endpoint de The Odds API que más cuota consume, por eso una vez al día basta)
 
 ## 3) Cron cada 30 min con GitHub Actions (recomendado, ya está en el repo)
 `.github/workflows/cron.yml` corre `syncScores` + `settleWeek` + `autopick`
