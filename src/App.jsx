@@ -924,12 +924,12 @@ function GamesTab({ session }) {
         </div>
       </div>
     );
-    if (ended) return (<div className="flex items-center justify-between">{score}<span className="badge">FINAL</span></div>);
+    if (ended) return (<div className="flex flex-wrap items-center justify-between gap-2">{score}<span className="badge">FINAL</span></div>);
     if (isLiveStatus(g.status))
       return (
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           {score}
-          <div className="text-xs flex items-center gap-2">
+          <div className="text-xs flex flex-wrap items-center gap-2">
             {g.period != null && <span className="badge badge-warn">Q{g.period} {g.clock || ""}</span>}
             {g.down != null && g.distance != null && <span className="badge">@ {g.down}&amp;{g.distance}</span>}
             {g.possession && <span className="badge">⬤ {g.possession}</span>}
@@ -938,9 +938,9 @@ function GamesTab({ session }) {
         </div>
       );
     return (
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         {score}
-        <span className="badge">Kickoff en&nbsp;<Countdown iso={g.start_time} /></span>
+        <span className="badge whitespace-nowrap">Kickoff en&nbsp;<Countdown iso={g.start_time} /></span>
       </div>
     );
   };
@@ -1230,16 +1230,16 @@ function GamesTab({ session }) {
   return (
     <div className="max-w-6xl mx-auto p-4 md:p-6">{/* container */}
       {/* ===== Header ===== */}
-      <header className="flex items-center justify-between gap-4">
+      <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
         <div>
-          <h1 className="text-3xl font-extrabold tracking-tight">{LEAGUE}</h1>
+          <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">{LEAGUE}</h1>
           {lastUpdated && (
             <p className="text-xs text-gray-500">
               Actualizado: {DateTime.fromISO(lastUpdated).setZone(TZ).toFormat("dd LLL HH:mm:ss")}
             </p>
           )}
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center flex-wrap gap-3">
           <p className="text-sm text-gray-700">
             Hola, <b>{me?.display_name}</b> · Vidas:{" "}
             <span
@@ -1270,7 +1270,7 @@ function GamesTab({ session }) {
       {/* ===== Toolbar ===== */}
       <section className="mt-4 grid md:grid-cols-3 gap-4">
         <div className="p-4 border rounded-2xl bg-white card">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
             <div className="flex items-center gap-2">
               <label className="text-xs text-gray-500">Semana</label>
               <select className="select" value={week} onChange={(e) => setWeek(Number(e.target.value))}>
@@ -1279,7 +1279,7 @@ function GamesTab({ session }) {
                 ))}
               </select>
             </div>
-            <div className="flex gap-1 text-xs">
+            <div className="flex flex-wrap gap-1 text-xs">
               {["ALL", "THU", "FRI", "SAT", "SUN", "MON"].map((d) => (
                 <button
                   key={d}
@@ -1301,7 +1301,7 @@ function GamesTab({ session }) {
           />
 
           {/* Estado */}
-          <div className="mt-3 flex gap-1 text-xs">
+          <div className="mt-3 flex flex-wrap gap-1 text-xs">
             {["ALL","LIVE","FINAL","UPCOMING"].map(s => (
               <button
                 key={s}

@@ -27,6 +27,7 @@ body {
   background: var(--bg);
   color: var(--fg);
   -webkit-tap-highlight-color: transparent;
+  overflow-x: hidden;
 }
 ::selection { background: var(--accent); color: var(--accent-fg); }
 input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
